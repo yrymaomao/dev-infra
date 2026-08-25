@@ -280,12 +280,14 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
         raise ValueError(
             "OpenAI config must contain key name, endpoint, enabled_operations, and network limits"
         )
-    if config.get("api_key_secret_name") != "openai_api_key":
+    # The symbolic secret name matches the adapter manifest's declared secret
+    # slot ("api_key"); the composition layer verifies that equality at start.
+    if config.get("api_key_secret_name") != "api_key":
         raise ValueError("OpenAI model secret must use the approved symbolic name")
     if config.get("enabled_operations") != ["responses.create_structured"]:
         raise ValueError("OpenAI config must enable only responses.create_structured")
-    if provider.secret_names != ("openai_api_key",):
-        raise ValueError("OpenAI secret_names must contain only openai_api_key")
+    if provider.secret_names != ("api_key",):
+        raise ValueError("OpenAI secret_names must contain only api_key")
     _validate_endpoint_host(config.get("base_url"), provider.egress_hosts, "OpenAI")
 
 

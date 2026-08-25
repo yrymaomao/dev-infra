@@ -50,8 +50,8 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         },
         "secrets": {
             "allowed_env": {
+                "api_key": "DEPLOY_OPENAI_API_KEY",
                 "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
-                "openai_api_key": "DEPLOY_OPENAI_API_KEY",
             }
         },
         "credential_broker": {
@@ -121,9 +121,9 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "api_version": "responses/v1",
                 "enabled_operations": ["responses.create_structured"],
                 "egress_hosts": ["api.openai.com"],
-                "secret_names": ["openai_api_key"],
+                "secret_names": ["api_key"],
                 "config": {
-                    "api_key_secret_name": "openai_api_key",
+                    "api_key_secret_name": "api_key",
                     "base_url": "https://api.openai.com/v1",
                     "enabled_operations": ["responses.create_structured"],
                     "network": {

@@ -196,8 +196,8 @@ def _deployment_config(plugin_policy: Path) -> dict[str, Any]:
         },
         "secrets": {
             "allowed_env": {
+                "api_key": "DEPLOY_OPENAI_API_KEY",
                 "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
-                "openai_api_key": "DEPLOY_OPENAI_API_KEY",
             }
         },
         "credential_broker": {
@@ -260,9 +260,9 @@ def _deployment_config(plugin_policy: Path) -> dict[str, Any]:
                 "api_version": "responses/v1",
                 "enabled_operations": ["responses.create_structured"],
                 "egress_hosts": ["127.0.0.1"],
-                "secret_names": ["openai_api_key"],
+                "secret_names": ["api_key"],
                 "config": {
-                    "api_key_secret_name": "openai_api_key",
+                    "api_key_secret_name": "api_key",
                     "base_url": "https://127.0.0.1:18080/v1",
                     "enabled_operations": ["responses.create_structured"],
                     "network": network,

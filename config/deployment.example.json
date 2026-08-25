@@ -6,8 +6,8 @@
   },
   "secrets": {
     "allowed_env": {
-      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
-      "openai_api_key": "DEPLOY_OPENAI_API_KEY"
+      "api_key": "DEPLOY_OPENAI_API_KEY",
+      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN"
     }
   },
   "credential_broker": {
@@ -100,10 +100,10 @@
         "${OPENAI_EGRESS_HOST}"
       ],
       "secret_names": [
-        "openai_api_key"
+        "api_key"
       ],
       "config": {
-        "api_key_secret_name": "openai_api_key",
+        "api_key_secret_name": "api_key",
         "base_url": "${OPENAI_ENDPOINT}",
         "enabled_operations": [
           "responses.create_structured"

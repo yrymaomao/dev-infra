@@ -70,7 +70,7 @@ def test_missing_model_or_broker_secret_fails_before_composition(tmp_path: Path)
     with pytest.raises(ValueError) as error:
         composition_module().build_provider_composition(config, environ)
 
-    assert "openai_api_key" in str(error.value)
+    assert "api_key" in str(error.value)
     assert "broker-secret-value" not in str(error.value)
 
 
