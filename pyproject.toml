@@ -21,6 +21,48 @@ ebiz-local-dev-assets = "ebiz_deployment.local_dev_assets:main"
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
+# TEMPORARY wiring for the capability-publisher extraction (Task 5): install the
+# Runtime from the in-review worktree because the frozen v1.2 wheelhouse wheel
+# predates agent_runtime.registry.capability_manifest/capability_publication.
+# Revert to the wheelhouse-published wheel once the publisher lands on the
+# Runtime mainline and a new wheel is built.
+[tool.uv.sources]
+ebizhub-agent-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" }
+
+# The worktree package declares development-only tool.uv.sources (a neutral
+# base-ai test fixture, editable contracts/workflow paths). Supplying its
+# metadata statically keeps resolution on the frozen wheelhouse artifacts for
+# base-ai, ebiz-runtime-contracts, and ebiz-workflow-runtime.
+[[tool.uv.dependency-metadata]]
+name = "ebizhub-agent-runtime"
+version = "0.1.0"
+requires-dist = [
+  "alembic>=1.14,<2",
+  "asyncpg>=0.30,<1",
+  "boto3>=1.35,<2",
+  "ebiz-runtime-contracts",
+  "ebiz-workflow-runtime",
+  "fastapi>=0.128,<1",
+  "httpx>=0.27,<1",
+  "jsonschema>=4.26,<4.27",
+  "langgraph>=1.2,<2",
+  "langgraph-checkpoint-postgres>=3.1,<4",
+  "opentelemetry-api>=1.29,<2",
+  "opentelemetry-exporter-otlp>=1.29,<2",
+  "opentelemetry-instrumentation-fastapi>=0.50b0,<1",
+  "opentelemetry-instrumentation-httpx>=0.50b0,<1",
+  "opentelemetry-instrumentation-sqlalchemy>=0.50b0,<1",
+  "opentelemetry-sdk>=1.29,<2",
+  "psycopg[binary,pool]>=3.2,<4",
+  "pydantic-settings>=2.7,<3",
+  "PyJWT>=2.10,<3",
+  "PyYAML>=6,<7",
+  "redis>=5,<7",
+  "sqlalchemy[asyncio]>=2,<3",
+  "base-ai>=0.1,<0.2; extra == 'base-ai'",
+]
+provides-extras = ["base-ai"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ebiz_deployment"]
 

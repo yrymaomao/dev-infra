@@ -6,6 +6,14 @@ resolution-markers = [
     "python_full_version < '3.12' or sys_platform != 'emscripten'",
 ]
 
+[manifest]
+
+[[manifest.dependency-metadata]]
+name = "ebizhub-agent-runtime"
+version = "0.1.0"
+requires-dist = ["alembic>=1.14,<2", "asyncpg>=0.30,<1", "boto3>=1.35,<2", "ebiz-runtime-contracts", "ebiz-workflow-runtime", "fastapi>=0.128,<1", "httpx>=0.27,<1", "jsonschema>=4.26,<4.27", "langgraph>=1.2,<2", "langgraph-checkpoint-postgres>=3.1,<4", "opentelemetry-api>=1.29,<2", "opentelemetry-exporter-otlp>=1.29,<2", "opentelemetry-instrumentation-fastapi>=0.50b0,<1", "opentelemetry-instrumentation-httpx>=0.50b0,<1", "opentelemetry-instrumentation-sqlalchemy>=0.50b0,<1", "opentelemetry-sdk>=1.29,<2", "psycopg[binary,pool]>=3.2,<4", "pydantic-settings>=2.7,<3", "pyjwt>=2.10,<3", "pyyaml>=6,<7", "redis>=5,<7", "sqlalchemy[asyncio]>=2,<3", "base-ai>=0.1,<0.2 ; extra == 'base-ai'"]
+provides-extras = ["base-ai"]
+
 [[package]]
 name = "alembic"
 version = "1.19.1"
@@ -402,7 +410,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "base-ai", specifier = ">=0.1,<0.2" },
-    { name = "ebizhub-agent-runtime", extras = ["base-ai"], specifier = ">=0.1,<0.2" },
+    { name = "ebizhub-agent-runtime", extras = ["base-ai"], directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pydantic", specifier = ">=2.10,<3" },
 ]
@@ -456,7 +464,7 @@ wheels = [
 [[package]]
 name = "ebizhub-agent-runtime"
 version = "0.1.0"
-source = { registry = "wheelhouse" }
+source = { directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
@@ -477,18 +485,43 @@ dependencies = [
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "pyyaml" },
     { name = "redis" },
     { name = "sqlalchemy", extra = ["asyncio"] },
-]
-sdist = { path = "ebizhub_agent_runtime-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebizhub_agent_runtime-0.1.0-py3-none-any.whl" },
 ]
 
 [package.optional-dependencies]
 base-ai = [
     { name = "base-ai" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.14,<2" },
+    { name = "asyncpg", specifier = ">=0.30,<1" },
+    { name = "base-ai", marker = "extra == 'base-ai'", specifier = ">=0.1,<0.2" },
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "ebiz-runtime-contracts" },
+    { name = "ebiz-workflow-runtime" },
+    { name = "fastapi", specifier = ">=0.128,<1" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "jsonschema", specifier = ">=4.26,<4.27" },
+    { name = "langgraph", specifier = ">=1.2,<2" },
+    { name = "langgraph-checkpoint-postgres", specifier = ">=3.1,<4" },
+    { name = "opentelemetry-api", specifier = ">=1.29,<2" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.29,<2" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.50b0,<1" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.50b0,<1" },
+    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.50b0,<1" },
+    { name = "opentelemetry-sdk", specifier = ">=1.29,<2" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2,<4" },
+    { name = "pydantic-settings", specifier = ">=2.7,<3" },
+    { name = "pyjwt", specifier = ">=2.10,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "redis", specifier = ">=5,<7" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2,<3" },
+]
+provides-extras = ["base-ai"]
 
 [[package]]
 name = "fastapi"

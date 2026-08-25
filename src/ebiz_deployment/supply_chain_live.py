@@ -3,34 +3,41 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from importlib.metadata import version as distribution_version
+from pathlib import Path
 from time import monotonic
 from types import MappingProxyType
-from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 import jwt
-import yaml
 from agent_runtime.cli.smoke_read import SmokeConfig, SmokeFailure, run_smoke
 from agent_runtime.db.models import (
-    CapabilityDefinition,
-    CapabilityVersion,
     EvidenceRefRecord,
     NodeExecution,
     SessionEventRecord,
     WorkflowExecution,
     WorkflowNode,
 )
+from agent_runtime.db.unit_of_work import UnitOfWork
+from agent_runtime.registry.capability_manifest import (
+    CapabilityPublicationError,
+    CapabilitySetPublication,
+    load_capability_set,
+)
+from agent_runtime.registry.capability_publication import (
+    CapabilityPublicationReport,
+    CapabilityPublicationService,
+)
+from ebiz_runtime_contracts import ActorRef
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -49,35 +56,10 @@ _SMOKE_SCOPES = (
 )
 _MARKETPLACES = frozenset({"US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP", "AU"})
 
-
-@dataclass(frozen=True, slots=True)
-class CapabilityPublication:
-    """One exact Runtime Capability Registry publication."""
-
-    code: str
-    version: int
-    name: str
-    owner: str
-    risk_level: str
-    effect: str
-    provider_id: str
-    provider_version: str
-    input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
-    permissions: tuple[str, ...]
-    timeout_ms: int
-    retry_limit: int
-    business_idempotency_required: bool
-    evidence_required: bool
-    content_digest: str
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationReport:
-    """Count newly published and already verified immutable versions."""
-
-    created: int
-    verified: int
+# Deployment-owned identity for administrative capability publication. The
+# actor id matches the operator subject used by the smoke token.
+_PUBLICATION_ACTOR = ActorRef(actor_id=UUID(int=0x5C), actor_type="DEPLOYMENT")
+_PUBLICATION_TRACE_ID = "supply-chain-live-publish"
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,72 +161,32 @@ class LiveSmokeSettings:
         }
 
 
-def load_capability_publications(
+def _installed_contract_root() -> Path:
+    """Resolve the contract directory packaged inside the installed wheel.
+
+    Selecting the business contract root is a deployment responsibility: the
+    Runtime publisher never discovers business distributions itself, so the
+    deployment layer resolves the installed ``inventory_supply_chain``
+    distribution directory and hands it to the public loader explicitly.
+    """
+
+    root = Path(str(resources.files("inventory_supply_chain")))
+    if not root.is_dir():
+        raise ValueError("Supply Chain contracts are not installed as a real directory")
+    return root
+
+
+def load_supply_chain_capability_set(
     *, provider_versions: Mapping[str, str]
-) -> tuple[CapabilityPublication, ...]:
-    """Load the installed wheel contracts and derive immutable registry rows."""
+) -> CapabilitySetPublication:
+    """Project the installed wheel contracts through the public Runtime loader."""
 
-    package = resources.files("inventory_supply_chain")
-    capabilities = yaml.safe_load(package.joinpath("capabilities.yaml").read_text("utf-8"))
-    schema = yaml.safe_load(
-        package.joinpath("schemas/supply-chain-inventory.schema.yaml").read_text("utf-8")
+    root = _installed_contract_root()
+    return load_capability_set(
+        manifest_path=root / "capabilities.yaml",
+        contract_root=root,
+        provider_versions=provider_versions,
     )
-    if not isinstance(capabilities, dict) or not isinstance(schema, dict):
-        raise ValueError("Supply Chain wheel contracts are invalid")
-    items = capabilities.get("capabilities")
-    definitions = schema.get("$defs")
-    if not isinstance(items, list) or not isinstance(definitions, dict):
-        raise ValueError("Supply Chain wheel contracts are incomplete")
-
-    publications: list[CapabilityPublication] = []
-    for raw in items:
-        if not isinstance(raw, dict):
-            raise ValueError("Supply Chain capability entry is invalid")
-        provider_id = _required_string(raw, "provider_id")
-        provider_version = provider_versions.get(provider_id, "")
-        if not provider_version:
-            raise ValueError(f"provider version is not pinned for {provider_id}")
-        input_schema = _standalone_schema(schema, _required_string(raw, "input_schema_ref"))
-        output_schema = _standalone_schema(schema, _required_string(raw, "output_schema_ref"))
-        retry = raw.get("retry")
-        idempotency = raw.get("idempotency")
-        evidence = raw.get("evidence")
-        permissions = raw.get("permission_scopes")
-        if (
-            not isinstance(retry, dict)
-            or not isinstance(idempotency, dict)
-            or not isinstance(evidence, dict)
-            or not isinstance(permissions, list)
-            or not all(isinstance(item, str) and item for item in permissions)
-        ):
-            raise ValueError("Supply Chain capability governance is invalid")
-        unsigned = CapabilityPublication(
-            code=_required_string(raw, "capability_id"),
-            version=_required_integer(raw, "version"),
-            name=_required_string(raw, "purpose"),
-            owner=_required_string(raw, "owner"),
-            risk_level=_required_string(raw, "risk_level"),
-            effect=_required_string(raw, "effect"),
-            provider_id=provider_id,
-            provider_version=provider_version,
-            input_schema=input_schema,
-            output_schema=output_schema,
-            permissions=tuple(sorted(permissions)),
-            timeout_ms=_required_integer(raw, "timeout_seconds") * 1000,
-            retry_limit=_required_integer(retry, "max_attempts") - 1,
-            business_idempotency_required=bool(idempotency.get("business_required")),
-            evidence_required=bool(evidence.get("required")),
-            content_digest="",
-        )
-        digest_payload = asdict(unsigned)
-        digest_payload.pop("content_digest")
-        digest = hashlib.sha256(
-            json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-        publications.append(
-            CapabilityPublication(**{**digest_payload, "content_digest": digest})
-        )
-    return tuple(publications)
 
 
 def issue_smoke_token(
@@ -289,77 +231,26 @@ async def publish_capabilities(
     database_url: str,
     tenant_id: str,
     provider_versions: Mapping[str, str],
-) -> PublicationReport:
+) -> CapabilityPublicationReport:
     """Idempotently publish the installed Supply Chain contracts to PostgreSQL."""
 
     if not database_url.startswith("postgresql+asyncpg://"):
         raise ValueError("database_url must use postgresql+asyncpg")
     if not tenant_id or len(tenant_id) > 256:
         raise ValueError("tenant_id must be bounded and non-empty")
-    publications = load_capability_publications(provider_versions=provider_versions)
+    publication = load_supply_chain_capability_set(provider_versions=provider_versions)
     engine = create_async_engine(database_url)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    created = 0
-    verified = 0
     try:
-        async with sessions() as session:
-            for item in publications:
-                definition = await session.scalar(
-                    select(CapabilityDefinition).where(
-                        CapabilityDefinition.tenant_id == tenant_id,
-                        CapabilityDefinition.code == item.code,
-                    )
-                )
-                if definition is None:
-                    definition = CapabilityDefinition(
-                        tenant_id=tenant_id,
-                        code=item.code,
-                        name=item.name,
-                        owner=item.owner,
-                        risk_level=item.risk_level,
-                        status="ACTIVE",
-                    )
-                    session.add(definition)
-                    await session.flush()
-                else:
-                    _verify_definition(definition, item)
-                version = await session.scalar(
-                    select(CapabilityVersion).where(
-                        CapabilityVersion.tenant_id == tenant_id,
-                        CapabilityVersion.capability_definition_id == definition.id,
-                        CapabilityVersion.version == item.version,
-                    )
-                )
-                if version is None:
-                    session.add(
-                        CapabilityVersion(
-                            id=uuid4(),
-                            tenant_id=tenant_id,
-                            capability_definition_id=definition.id,
-                            version=item.version,
-                            status="PUBLISHED",
-                            effect=item.effect,
-                            provider_id=item.provider_id,
-                            provider_version=item.provider_version,
-                            input_schema=item.input_schema,
-                            output_schema=item.output_schema,
-                            permissions=list(item.permissions),
-                            idempotency_policy="invocation",
-                            timeout_ms=item.timeout_ms,
-                            retry_limit=item.retry_limit,
-                            business_idempotency_required=item.business_idempotency_required,
-                            evidence_required=item.evidence_required,
-                            content_digest=item.content_digest,
-                        )
-                    )
-                    created += 1
-                else:
-                    _verify_version(version, item)
-                    verified += 1
-            await session.commit()
+        service = CapabilityPublicationService(lambda: UnitOfWork(sessions))
+        return await service.publish_set(
+            tenant_id=tenant_id,
+            publication=publication,
+            actor=_PUBLICATION_ACTOR,
+            trace_id=_PUBLICATION_TRACE_ID,
+        )
     finally:
         await engine.dispose()
-    return PublicationReport(created=created, verified=verified)
 
 
 def verify_complete_snapshot(snapshot: Mapping[str, object]) -> str:
@@ -584,91 +475,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = LiveSmokeSettings.from_environment(os.environ)
         result = asyncio.run(run_live_smoke(settings))
-    except (OSError, ValueError, httpx.HTTPError, SmokeFailure):
+    except (OSError, ValueError, httpx.HTTPError, SmokeFailure, CapabilityPublicationError):
         print("Supply Chain live Runtime smoke failed", file=sys.stderr)
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0
-
-
-def _verify_definition(
-    existing: CapabilityDefinition, expected: CapabilityPublication
-) -> None:
-    observed = (
-        existing.name,
-        existing.owner,
-        existing.risk_level,
-        existing.status,
-    )
-    wanted = (expected.name, expected.owner, expected.risk_level, "ACTIVE")
-    if observed != wanted:
-        raise ValueError(f"published capability definition conflicts with {expected.code}")
-
-
-def _verify_version(existing: CapabilityVersion, expected: CapabilityPublication) -> None:
-    observed = (
-        existing.status,
-        existing.effect,
-        existing.provider_id,
-        existing.provider_version,
-        dict(existing.input_schema),
-        dict(existing.output_schema),
-        tuple(existing.permissions),
-        existing.idempotency_policy,
-        existing.timeout_ms,
-        existing.retry_limit,
-        existing.business_idempotency_required,
-        existing.evidence_required,
-        existing.content_digest,
-    )
-    wanted = (
-        "PUBLISHED",
-        expected.effect,
-        expected.provider_id,
-        expected.provider_version,
-        expected.input_schema,
-        expected.output_schema,
-        expected.permissions,
-        "invocation",
-        expected.timeout_ms,
-        expected.retry_limit,
-        expected.business_idempotency_required,
-        expected.evidence_required,
-        expected.content_digest,
-    )
-    if observed != wanted:
-        raise ValueError(
-            f"published capability version conflicts with {expected.code}@{expected.version}"
-        )
-
-
-def _standalone_schema(root: dict[str, Any], reference: str) -> dict[str, Any]:
-    prefix = "schemas/supply-chain-inventory.schema.yaml#/$defs/"
-    if not reference.startswith(prefix):
-        raise ValueError("capability schema reference is outside the installed contract")
-    definition = reference.removeprefix(prefix)
-    definitions = root.get("$defs")
-    if not isinstance(definitions, dict) or definition not in definitions:
-        raise ValueError("capability schema definition is missing")
-    return {
-        "$schema": root.get("$schema", "https://json-schema.org/draft/2020-12/schema"),
-        "$ref": f"#/$defs/{definition}",
-        "$defs": json.loads(json.dumps(definitions)),
-    }
-
-
-def _required_string(value: Mapping[str, Any], key: str) -> str:
-    item = value.get(key)
-    if not isinstance(item, str) or not item:
-        raise ValueError(f"{key} must be a non-empty string")
-    return item
-
-
-def _required_integer(value: Mapping[str, Any], key: str) -> int:
-    item = value.get(key)
-    if not isinstance(item, int) or isinstance(item, bool) or item < 1:
-        raise ValueError(f"{key} must be a positive integer")
-    return item
 
 
 def _required_environment(environ: Mapping[str, str], name: str) -> str:
