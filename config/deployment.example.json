@@ -1,0 +1,120 @@
+{
+  "schema_version": "1",
+  "runtime": {
+    "supported_api_version": "ebizhub.runtime/v1",
+    "plugin_policy_path": "${RUNTIME_PLUGIN_POLICY_PATH}"
+  },
+  "secrets": {
+    "allowed_env": {
+      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+      "openai_api_key": "DEPLOY_OPENAI_API_KEY"
+    }
+  },
+  "credential_broker": {
+    "url": "${CREDENTIAL_BROKER_URL}",
+    "auth_secret_name": "broker_client_token",
+    "allowed_provider_ids": [
+      "mcp.streamable_http",
+      "yeaher.erp"
+    ],
+    "timeout_seconds": 5.0
+  },
+  "base_ai_providers": [
+    {
+      "provider_id": "mcp.streamable_http",
+      "package_name": "ebiz-adapter-mcp",
+      "package_version": "${MCP_PACKAGE_VERSION}",
+      "record_digest": "${MCP_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_mcp:McpProviderFactory",
+      "api_version": "streamable-http/1",
+      "enabled_operations": [
+        "tools.call",
+        "tools.list"
+      ],
+      "egress_hosts": [
+        "${MCP_EGRESS_HOST}"
+      ],
+      "secret_names": [],
+      "config": {
+        "server_name": "erp-production-read",
+        "url": "${MCP_ENDPOINT}",
+        "allowed_tools": [
+          "query_inventory_by_warehouse",
+          "query_inventory_summary",
+          "query_purchase_in_transit_details"
+        ],
+        "network": {
+          "timeout_seconds": 30,
+          "connect_timeout_seconds": 10,
+          "max_connections": 100,
+          "verify_tls": true
+        }
+      }
+    },
+    {
+      "provider_id": "yeaher.erp",
+      "package_name": "ebiz-adapter-erp",
+      "package_version": "${ERP_PACKAGE_VERSION}",
+      "record_digest": "${ERP_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
+      "api_version": "v1",
+      "enabled_operations": [
+        "inventory.get_total_snapshot",
+        "sales_profit.get_sku_windows"
+      ],
+      "egress_hosts": [
+        "${COCKPIT_EGRESS_HOST}"
+      ],
+      "secret_names": [],
+      "config": {
+        "cockpit": {
+          "base_url": "${COCKPIT_ENDPOINT}",
+          "network": {
+            "timeout_seconds": 30,
+            "connect_timeout_seconds": 10,
+            "max_connections": 100,
+            "verify_tls": true
+          }
+        },
+        "mcp": {
+          "tools": {
+            "inventory.get_total_snapshot": "query_inventory_summary"
+          }
+        }
+      }
+    },
+    {
+      "provider_id": "openai.responses",
+      "package_name": "ebiz-adapter-model-openai",
+      "package_version": "${OPENAI_ADAPTER_PACKAGE_VERSION}",
+      "record_digest": "${OPENAI_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_model_openai:OpenAIProviderFactory",
+      "api_version": "responses/v1",
+      "enabled_operations": [
+        "responses.create_structured"
+      ],
+      "egress_hosts": [
+        "${OPENAI_EGRESS_HOST}"
+      ],
+      "secret_names": [
+        "openai_api_key"
+      ],
+      "config": {
+        "api_key_secret_name": "openai_api_key",
+        "base_url": "${OPENAI_ENDPOINT}",
+        "enabled_operations": [
+          "responses.create_structured"
+        ],
+        "network": {
+          "timeout_seconds": 30,
+          "connect_timeout_seconds": 10,
+          "max_connections": 100,
+          "verify_tls": true
+        }
+      }
+    }
+  ]
+}

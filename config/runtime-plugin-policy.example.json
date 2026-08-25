@@ -1,0 +1,23 @@
+{
+  "plugins": [
+    {
+      "plugin_id": "ebizhub.inventory-supply-chain",
+      "version": "1.0.0",
+      "package_name": "ebiz-agent-inventory-supply-chain",
+      "entry_point": "inventory_supply_chain.plugin:factory",
+      "package_digest": "${SUPPLY_CHAIN_RECORD_DIGEST}",
+      "permissions": [
+        "replenishment.preview",
+        "supply_chain.compute",
+        "supply_chain.preview",
+        "supply_chain.skill.read"
+      ],
+      "network_targets": [],
+      "secret_names": [],
+      "config": {
+        "skill_root": "${SUPPLY_CHAIN_SKILL_ROOT}"
+      }
+    }
+  ]
+}
+
