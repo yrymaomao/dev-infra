@@ -9,8 +9,13 @@ resolution-markers = [
 [manifest]
 
 [[manifest.dependency-metadata]]
+name = "ebiz-capability-supply-chain"
+version = "2.0.0"
+requires-dist = ["ebizhub-agent-runtime>=0.1,<0.2"]
+
+[[manifest.dependency-metadata]]
 name = "ebizhub-agent-runtime"
-version = "0.1.0"
+version = "0.1.5"
 requires-dist = ["alembic>=1.14,<2", "asyncpg>=0.30,<1", "boto3>=1.35,<2", "ebiz-runtime-contracts", "ebiz-workflow-runtime", "fastapi>=0.128,<1", "httpx>=0.27,<1", "jsonschema>=4.26,<4.27", "langgraph>=1.2,<2", "langgraph-checkpoint-postgres>=3.1,<4", "opentelemetry-api>=1.29,<2", "opentelemetry-exporter-otlp>=1.29,<2", "opentelemetry-instrumentation-fastapi>=0.50b0,<1", "opentelemetry-instrumentation-httpx>=0.50b0,<1", "opentelemetry-instrumentation-sqlalchemy>=0.50b0,<1", "opentelemetry-sdk>=1.29,<2", "psycopg[binary,pool]>=3.2,<4", "pydantic-settings>=2.7,<3", "pyjwt>=2.10,<3", "pyyaml>=6,<7", "redis>=5,<7", "sqlalchemy[asyncio]>=2,<3", "base-ai>=0.1,<0.2 ; extra == 'base-ai'"]
 provides-extras = ["base-ai"]
 
@@ -113,41 +118,46 @@ wheels = [
 [[package]]
 name = "base-ai"
 version = "0.1.0"
-source = { registry = "wheelhouse" }
+source = { editable = "../base-ai-erp-supply-chain-v4/packages/base-ai" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyjwt" },
     { name = "redis" },
 ]
-sdist = { path = "base_ai-0.1.0.tar.gz" }
-wheels = [
-    { path = "base_ai-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.9,<3" },
+    { name = "pyjwt", specifier = ">=2.10.0,<3" },
+    { name = "redis", specifier = ">=5.2.0,<6" },
 ]
 
 [[package]]
 name = "boto3"
 version = "1.43.75"
-source = { registry = "wheelhouse" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/dd/b93be617dd5d1c6a3a248066030a450e62d211c0af0f49ed3a0d761383c9/boto3-1.43.75.tar.gz", hash = "sha256:86da93d3d5b46a58b03fa51b598ffa4aeaff485a3000affacf78491c105e44f0", size = 112673, upload-time = "2026-08-19T19:54:17.236Z" }
 wheels = [
-    { path = "boto3-1.43.75-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/52/89/d0baf1269e57ac548387c11e5d9ba78d1e118ceb43f1e5e5114bdd2e8391/boto3-1.43.75-py3-none-any.whl", hash = "sha256:08a79edb68e6a0d65d305eb90188639313650e155aed015e86eef59d8475dde0", size = 140026, upload-time = "2026-08-19T19:54:15.509Z" },
 ]
 
 [[package]]
 name = "botocore"
 version = "1.43.75"
-source = { registry = "wheelhouse" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/80/5e39eda5dfb66df691d71212799a9f9d35aa9e447511604030447a00e9d6/botocore-1.43.75.tar.gz", hash = "sha256:e8ed6b0f3cd398dfb9e08d7ca3a0b964152166a317a04e89c45ec91003327ffe", size = 15973868, upload-time = "2026-08-19T19:54:12.318Z" }
 wheels = [
-    { path = "botocore-1.43.75-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/94/46/19d3178e70f37fda251f3d9560f29654f09c6eedbe1c8b790adeee84da49/botocore-1.43.75-py3-none-any.whl", hash = "sha256:121abc8b0b529bc4e29a28d1e8b096b20f26708cabe3d5ae4b3446747712aece", size = 15667237, upload-time = "2026-08-19T19:54:08.802Z" },
 ]
 
 [[package]]
@@ -328,56 +338,73 @@ wheels = [
 [[package]]
 name = "ebiz-adapter-erp"
 version = "0.1.0"
-source = { registry = "wheelhouse" }
+source = { directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/erp" }
 dependencies = [
     { name = "base-ai" },
     { name = "httpx" },
 ]
-sdist = { path = "ebiz_adapter_erp-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebiz_adapter_erp-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "base-ai", editable = "../base-ai-erp-supply-chain-v4/packages/base-ai" },
+    { name = "httpx", specifier = ">=0.28,<1" },
 ]
 
 [[package]]
 name = "ebiz-adapter-mcp"
 version = "0.1.0"
-source = { registry = "wheelhouse" }
+source = { directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/mcp" }
 dependencies = [
     { name = "base-ai" },
     { name = "mcp" },
 ]
-sdist = { path = "ebiz_adapter_mcp-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebiz_adapter_mcp-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "base-ai", editable = "../base-ai-erp-supply-chain-v4/packages/base-ai" },
+    { name = "mcp", specifier = ">=2,<3" },
 ]
 
 [[package]]
 name = "ebiz-adapter-model-openai"
 version = "0.1.0"
-source = { registry = "wheelhouse" }
+source = { directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/models/openai" }
 dependencies = [
     { name = "base-ai" },
     { name = "openai" },
 ]
-sdist = { path = "ebiz_adapter_model_openai-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebiz_adapter_model_openai-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "base-ai", editable = "../base-ai-erp-supply-chain-v4/packages/base-ai" },
+    { name = "openai", specifier = ">=3.3,<4" },
 ]
 
 [[package]]
 name = "ebiz-agent-inventory-supply-chain"
-version = "1.0.0"
-source = { registry = "wheelhouse" }
+version = "4.0.0"
+source = { directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain" }
+
+[[package]]
+name = "ebiz-capability-commerce-sales-catalog"
+version = "2.0.0"
+source = { directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/commerce-sales" }
+
+[[package]]
+name = "ebiz-capability-inventory-catalog"
+version = "2.0.0"
+source = { directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/inventory" }
+
+[[package]]
+name = "ebiz-capability-supply-chain"
+version = "2.0.0"
+source = { directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain" }
 dependencies = [
-    { name = "ebiz-runtime-contracts" },
     { name = "ebizhub-agent-runtime" },
-    { name = "jsonschema" },
-    { name = "pyyaml" },
 ]
-sdist = { path = "ebiz_agent_inventory_supply_chain-1.0.0.tar.gz" }
-wheels = [
-    { path = "ebiz_agent_inventory_supply_chain-1.0.0-py3-none-any.whl" },
-]
+
+[package.metadata]
+requires-dist = [{ name = "ebizhub-agent-runtime", specifier = ">=0.1,<0.2" }]
 
 [[package]]
 name = "ebiz-deployment-composition"
@@ -385,6 +412,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "base-ai" },
+    { name = "ebiz-runtime-contracts" },
+    { name = "ebiz-workflow-runtime" },
     { name = "ebizhub-agent-runtime", extra = ["base-ai"] },
     { name = "httpx" },
     { name = "pydantic" },
@@ -398,6 +427,9 @@ contract = [
     { name = "ebiz-adapter-mcp" },
     { name = "ebiz-adapter-model-openai" },
     { name = "ebiz-agent-inventory-supply-chain" },
+    { name = "ebiz-capability-commerce-sales-catalog" },
+    { name = "ebiz-capability-inventory-catalog" },
+    { name = "ebiz-capability-supply-chain" },
 ]
 dev = [
     { name = "mypy" },
@@ -409,8 +441,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "base-ai", specifier = ">=0.1,<0.2" },
-    { name = "ebizhub-agent-runtime", extras = ["base-ai"], directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" },
+    { name = "base-ai", editable = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/packages/base-ai" },
+    { name = "ebiz-runtime-contracts", editable = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/shared-schemas/python" },
+    { name = "ebiz-workflow-runtime", editable = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/workflow_runtime" },
+    { name = "ebizhub-agent-runtime", extras = ["base-ai"], directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/agent_runtime" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pydantic", specifier = ">=2.10,<3" },
 ]
@@ -419,10 +453,13 @@ requires-dist = [
 contract = [
     { name = "boto3", specifier = "==1.43.75" },
     { name = "botocore", specifier = "==1.43.75" },
-    { name = "ebiz-adapter-erp", specifier = "==0.1.0" },
-    { name = "ebiz-adapter-mcp", specifier = "==0.1.0" },
-    { name = "ebiz-adapter-model-openai", specifier = "==0.1.0" },
-    { name = "ebiz-agent-inventory-supply-chain", specifier = "==1.0.0" },
+    { name = "ebiz-adapter-erp", directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/erp" },
+    { name = "ebiz-adapter-mcp", directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/mcp" },
+    { name = "ebiz-adapter-model-openai", directory = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/models/openai" },
+    { name = "ebiz-agent-inventory-supply-chain", directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain" },
+    { name = "ebiz-capability-commerce-sales-catalog", directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/commerce-sales" },
+    { name = "ebiz-capability-inventory-catalog", directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/inventory" },
+    { name = "ebiz-capability-supply-chain", directory = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain" },
 ]
 dev = [
     { name = "mypy", specifier = ">=1.13,<2" },
@@ -434,21 +471,32 @@ dev = [
 
 [[package]]
 name = "ebiz-runtime-contracts"
-version = "0.1.0"
-source = { registry = "wheelhouse" }
+version = "0.1.5"
+source = { editable = "../ebizhub-agent-runtime-workflow-v13-result/packages/shared-schemas/python" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pydantic" },
 ]
-sdist = { path = "ebiz_runtime_contracts-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebiz_runtime_contracts-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.26,<4.27" },
+    { name = "pydantic", specifier = ">=2.12,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "jsonschema", specifier = ">=4.26,<4.27" },
+    { name = "mypy", specifier = ">=1.13,<2" },
+    { name = "pytest", specifier = ">=8,<9" },
+    { name = "ruff", specifier = ">=0.8,<1" },
+    { name = "types-jsonschema", specifier = ">=4.26,<4.27" },
 ]
 
 [[package]]
 name = "ebiz-workflow-runtime"
-version = "0.1.0"
-source = { registry = "wheelhouse" }
+version = "0.1.5"
+source = { editable = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/workflow_runtime" }
 dependencies = [
     { name = "ebiz-runtime-contracts" },
     { name = "jsonschema" },
@@ -456,15 +504,30 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { path = "ebiz_workflow_runtime-0.1.0.tar.gz" }
-wheels = [
-    { path = "ebiz_workflow_runtime-0.1.0-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "ebiz-runtime-contracts", editable = "../ebizhub-agent-runtime-workflow-v13-result/packages/shared-schemas/python" },
+    { name = "jsonschema", specifier = ">=4.26,<4.27" },
+    { name = "langgraph", specifier = ">=1.2,<2" },
+    { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.13,<2" },
+    { name = "pytest", specifier = ">=8,<9" },
+    { name = "pytest-asyncio", specifier = ">=0.24,<1" },
+    { name = "ruff", specifier = ">=0.8,<1" },
+    { name = "types-jsonschema", specifier = ">=4.26,<4.27" },
+    { name = "types-pyyaml", specifier = ">=6,<7" },
 ]
 
 [[package]]
 name = "ebizhub-agent-runtime"
-version = "0.1.0"
-source = { directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" }
+version = "0.1.5"
+source = { directory = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/agent_runtime" }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },

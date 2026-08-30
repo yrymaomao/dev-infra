@@ -4,37 +4,18 @@ services:
     container_name: dev-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: devdb
-      POSTGRES_USER: devuser
-      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: ${LOCAL_POSTGRES_DB:?required}
+      POSTGRES_USER: ${LOCAL_POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:?required}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devuser -d devdb"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  mysql:
-    image: mysql:8.4
-    container_name: dev-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_DATABASE: devdb
-      MYSQL_USER: devuser
-      MYSQL_PASSWORD: devpass
-      MYSQL_ROOT_PASSWORD: rootpass
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -prootpass"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
 
   redis:
     image: redis:7-alpine
@@ -42,7 +23,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${LOCAL_REDIS_PORT:?required}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -57,15 +38,14 @@ services:
     restart: unless-stopped
     command: ["server", "/data"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin-ci-password}
+      MINIO_ROOT_USER: ${LOCAL_MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${LOCAL_MINIO_ROOT_PASSWORD:?required}
     ports:
-      - "${MINIO_PORT:-9000}:9000"
+      - "${LOCAL_MINIO_PORT:?required}:9000"
     volumes:
       - minio_data:/data
 
 volumes:
   postgres_data:
-  mysql_data:
   redis_data:
   minio_data:

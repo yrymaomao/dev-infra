@@ -10,7 +10,11 @@ from agent_runtime.plugins.manifest import AllowedPlugin, PluginHostPolicy
 from base_ai.providers import ProviderBootstrapContext
 
 from .config import DeploymentCompositionConfig
-from .credentials import EnvironmentSecretResolver, HttpsCredentialBrokerResolver
+from .credentials import (
+    EnvironmentSecretResolver,
+    HttpsBoundCredentialBrokerResolver,
+    HttpsCredentialBrokerResolver,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +39,13 @@ def build_provider_composition(
         required_secret_names.update(provider.secret_names)
     secret_resolver.require_available(tuple(sorted(required_secret_names)))
     credential_resolver = HttpsCredentialBrokerResolver(
+        url=config.credential_broker.url,
+        auth_secret_name=config.credential_broker.auth_secret_name,
+        allowed_provider_ids=config.credential_broker.allowed_provider_ids,
+        timeout_seconds=config.credential_broker.timeout_seconds,
+        secret_resolver=secret_resolver,
+    )
+    bound_credential_resolver = HttpsBoundCredentialBrokerResolver(
         url=config.credential_broker.url,
         auth_secret_name=config.credential_broker.auth_secret_name,
         allowed_provider_ids=config.credential_broker.allowed_provider_ids,
@@ -79,6 +90,7 @@ def build_provider_composition(
         bootstrap_context=ProviderBootstrapContext(
             secret_resolver=secret_resolver,
             request_credential_resolver=credential_resolver,
+            bound_request_credential_resolver=bound_credential_resolver,
         ),
         supported_runtime_api_version=config.runtime.supported_api_version,
     )

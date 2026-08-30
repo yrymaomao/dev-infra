@@ -48,14 +48,19 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert result.runtime_plugin_policy.plugins[0].package_digest == "d" * 64
     by_id = {deployment.provider_id: deployment for deployment in result.deployments}
     assert by_id["mcp.streamable_http"].config["allowed_tools"] == [
-        "query_inventory_by_warehouse",
         "query_inventory_summary",
-        "query_purchase_in_transit_details",
+        "query_sku_boston_cohort",
+        "query_sku_identity",
+        "query_sku_sales_profit_windows",
+        "query_sku_sales_profit_windows_batch",
     ]
     assert by_id["yeaher.erp"].enabled_operations == (
+        "catalog.resolve_sku_identity",
         "inventory.get_total_snapshot",
+        "sales_profit.get_boston_cohort",
         "sales_profit.get_sku_windows",
     )
+    assert by_id["yeaher.erp"].egress_hosts == ()
     assert by_id["openai.responses"].enabled_operations == ("responses.create_structured",)
     assert str(runtime_policy.resolve()) == environ["APP_PLUGIN_POLICY_PATH"]
 

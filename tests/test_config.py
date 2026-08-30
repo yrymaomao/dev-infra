@@ -7,32 +7,30 @@ from pathlib import Path
 import pytest
 
 READ_TOOLS = [
-    "query_inventory_by_warehouse",
     "query_inventory_summary",
-    "query_purchase_in_transit_details",
+    "query_sku_boston_cohort",
+    "query_sku_identity",
+    "query_sku_sales_profit_windows",
+    "query_sku_sales_profit_windows_batch",
 ]
 
 
 def write_runtime_policy(path: Path, skill_root: Path) -> None:
+    del skill_root
     path.write_text(
         json.dumps(
             {
                 "plugins": [
                     {
-                        "plugin_id": "ebizhub.inventory-supply-chain",
-                        "version": "1.0.0",
-                        "package_name": "ebiz-agent-inventory-supply-chain",
-                        "entry_point": "inventory_supply_chain.plugin:factory",
-                        "package_digest": "${SUPPLY_CHAIN_RECORD_DIGEST}",
-                        "permissions": [
-                            "replenishment.preview",
-                            "supply_chain.compute",
-                            "supply_chain.preview",
-                            "supply_chain.skill.read",
-                        ],
+                        "plugin_id": "supply-chain-planning",
+                        "version": "2.0.0",
+                        "package_name": "ebiz-capability-supply-chain",
+                        "entry_point": "ebiz_capability_supply_chain.plugin:factory",
+                        "package_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",
+                        "permissions": ["supply_chain.preview"],
                         "network_targets": [],
                         "secret_names": [],
-                        "config": {"skill_root": str(skill_root)},
+                        "config": {},
                     }
                 ]
             }
@@ -43,7 +41,7 @@ def write_runtime_policy(path: Path, skill_root: Path) -> None:
 
 def deployment_document(runtime_policy: Path) -> dict[str, object]:
     return {
-        "schema_version": "1",
+        "schema_version": "2",
         "runtime": {
             "supported_api_version": "ebizhub.runtime/v1",
             "plugin_policy_path": str(runtime_policy),
@@ -76,6 +74,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                     "server_name": "erp-read",
                     "url": "https://mcp.example.com/mcp",
                     "allowed_tools": READ_TOOLS,
+                    "auth_profile": "X_MCP_KEY",
                     "network": {
                         "timeout_seconds": 30,
                         "connect_timeout_seconds": 10,
@@ -93,22 +92,22 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
                 "api_version": "v1",
                 "enabled_operations": [
+                    "catalog.resolve_sku_identity",
                     "inventory.get_total_snapshot",
+                    "sales_profit.get_boston_cohort",
                     "sales_profit.get_sku_windows",
                 ],
-                "egress_hosts": ["cockpit.example.com"],
+                "egress_hosts": [],
                 "secret_names": [],
                 "config": {
-                    "cockpit": {
-                        "base_url": "https://cockpit.example.com",
-                        "network": {
-                            "timeout_seconds": 30,
-                            "connect_timeout_seconds": 10,
-                            "max_connections": 100,
-                            "verify_tls": True,
-                        },
+                    "mcp": {
+                        "tools": {
+                            "catalog.resolve_sku_identity": "query_sku_identity",
+                            "inventory.get_total_snapshot": "query_inventory_summary",
+                            "sales_profit.get_boston_cohort": "query_sku_boston_cohort",
+                            "sales_profit.get_sku_windows": "query_sku_sales_profit_windows",
+                        }
                     },
-                    "mcp": {"tools": {"inventory.get_total_snapshot": "query_inventory_summary"}},
                 },
             },
             {
@@ -135,13 +134,59 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 },
             },
         ],
+        "supply_chain_release": {
+            "agent_id": "inventory-supply-chain",
+            "agent_version": 4,
+            "agent_distribution": "ebiz-agent-inventory-supply-chain",
+            "agent_distribution_version": "4.0.0",
+            "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
+            "workflow_code": "inventory-supply-chain-daily",
+            "workflow_version": 4,
+            "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
+            "capability_sets": [
+                {
+                    "set_id": "inventory.core",
+                    "version": 2,
+                    "distribution_name": "ebiz-capability-inventory-catalog",
+                    "distribution_version": "2.0.0",
+                    "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}",
+                },
+                {
+                    "set_id": "commerce-sales.analytics",
+                    "version": 2,
+                    "distribution_name": "ebiz-capability-commerce-sales-catalog",
+                    "distribution_version": "2.0.0",
+                    "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}",
+                },
+                {
+                    "set_id": "supply-chain.planning",
+                    "version": 2,
+                    "distribution_name": "ebiz-capability-supply-chain",
+                    "distribution_version": "2.0.0",
+                    "record_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",
+                },
+            ],
+            "provider_versions": {
+                "yeaher.erp": "0.1.0",
+                "supply-chain-planning.fulfillment-resolver": "2.0.0",
+                "supply-chain-planning.forecast-engine": "2.0.0",
+                "supply-chain-planning.classification-engine": "2.0.0",
+                "supply-chain-planning.action-router": "2.0.0",
+                "supply-chain-planning.replenishment-engine": "2.0.0",
+                "supply-chain-planning.clearance-engine": "2.0.0",
+            },
+        },
     }
 
 
 def deployment_env(runtime_policy: Path) -> dict[str, str]:
     return {
         "APP_PLUGIN_POLICY_PATH": str(runtime_policy.resolve()),
-        "SUPPLY_CHAIN_RECORD_DIGEST": "d" * 64,
+        "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": "d" * 64,
+        "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": "e" * 64,
+        "SUPPLY_CHAIN_WORKFLOW_DIGEST": "f" * 64,
+        "INVENTORY_CATALOG_RECORD_DIGEST": "1" * 64,
+        "COMMERCE_SALES_CATALOG_RECORD_DIGEST": "2" * 64,
         "MCP_RECORD_DIGEST": "a" * 64,
         "ERP_RECORD_DIGEST": "b" * 64,
         "OPENAI_RECORD_DIGEST": "c" * 64,
@@ -169,7 +214,14 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
         "openai.responses",
         "yeaher.erp",
     ]
-    assert config.runtime_plugin_policy.plugins[0].plugin_id == ("ebizhub.inventory-supply-chain")
+    assert config.runtime_plugin_policy.plugins[0].plugin_id == "supply-chain-planning"
+    assert "cockpit" not in json.dumps(config.model_dump(mode="json")).lower()
+    assert config.supply_chain_release.agent_version == 4
+    assert [item.set_id for item in config.supply_chain_release.capability_sets] == [
+        "commerce-sales.analytics",
+        "inventory.core",
+        "supply-chain.planning",
+    ]
     assert config.base_ai_providers[0].package_digest == "a" * 64
 
 

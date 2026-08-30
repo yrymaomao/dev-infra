@@ -11,7 +11,10 @@ from agent_runtime.plugins.registry import PluginRegistry
 from base_ai.providers import discover_provider_factory_descriptors
 from test_config import deployment_document, deployment_env, write_runtime_policy
 
-from ebiz_deployment.attestation import attest_installed_supply_chain
+from ebiz_deployment.attestation import (
+    attest_installed_supply_chain,
+    attest_installed_supply_chain_planning,
+)
 from ebiz_deployment.composition import build_provider_composition
 from ebiz_deployment.config import load_deployment_config
 
@@ -29,6 +32,7 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
     assert all(item.production_eligible is True for item in descriptors)
 
     supply_chain = attest_installed_supply_chain()
+    planning = attest_installed_supply_chain_planning()
     skill_root = tmp_path / "skills"
     skill_root.mkdir()
     runtime_policy = tmp_path / "runtime-policy.json"
@@ -46,7 +50,8 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
             "MCP_RECORD_DIGEST": by_id["mcp.streamable_http"].distribution_digest,
             "ERP_RECORD_DIGEST": by_id["yeaher.erp"].distribution_digest,
             "OPENAI_RECORD_DIGEST": by_id["openai.responses"].distribution_digest,
-            "SUPPLY_CHAIN_RECORD_DIGEST": supply_chain.canonical_digest,
+            "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": supply_chain.canonical_digest,
+            "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": planning.canonical_digest,
         }
     )
     config = load_deployment_config(config_path, environ)
@@ -56,8 +61,8 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
     # plugin startup occurs in a fresh interpreter, so recreate that boundary
     # before exercising descriptor re-attestation and entry-point loading.
     for module_name in tuple(sys.modules):
-        if module_name == "inventory_supply_chain" or module_name.startswith(
-            "inventory_supply_chain."
+        if module_name == "ebiz_capability_supply_chain" or module_name.startswith(
+            "ebiz_capability_supply_chain."
         ):
             sys.modules.pop(module_name, None)
 
@@ -69,8 +74,8 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
     composition = await artifacts.root.start()
 
     assert len(agent_snapshot.plugins) == 1
-    assert agent_snapshot.plugins[0].package_digest == supply_chain.canonical_digest
-    assert len(agent_snapshot.providers) == 8
+    assert agent_snapshot.plugins[0].package_digest == planning.canonical_digest
+    assert len(agent_snapshot.providers) == 6
     assert all(binding.plugin == agent_snapshot.plugins[0] for binding in agent_snapshot.providers)
     assert agent_registry.health_report.healthy is True
     assert len(composition.snapshot.plugins) == 3
@@ -114,6 +119,7 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
 def test_two_launcher_processes_do_not_create_unrecorded_agent_bytecode(tmp_path: Path) -> None:
     descriptors = tuple(discover_provider_factory_descriptors())
     supply_chain = attest_installed_supply_chain()
+    planning = attest_installed_supply_chain_planning()
     skill_root = tmp_path / "skills-restart"
     skill_root.mkdir()
     runtime_policy = tmp_path / "runtime-policy-restart.json"
@@ -133,7 +139,8 @@ def test_two_launcher_processes_do_not_create_unrecorded_agent_bytecode(tmp_path
             "MCP_RECORD_DIGEST": by_id["mcp.streamable_http"].distribution_digest,
             "ERP_RECORD_DIGEST": by_id["yeaher.erp"].distribution_digest,
             "OPENAI_RECORD_DIGEST": by_id["openai.responses"].distribution_digest,
-            "SUPPLY_CHAIN_RECORD_DIGEST": supply_chain.canonical_digest,
+            "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": supply_chain.canonical_digest,
+            "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": planning.canonical_digest,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
@@ -149,8 +156,8 @@ from ebiz_deployment.config import load_deployment_config
 from ebiz_deployment.launcher import launch
 
 assert sys.dont_write_bytecode is True
-distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
-root = Path(distribution.locate_file("inventory_supply_chain")).resolve(strict=True)
+distribution = metadata.distribution("ebiz-capability-supply-chain")
+root = Path(distribution.locate_file("ebiz_capability_supply_chain")).resolve(strict=True)
 assert not tuple(root.rglob("*.pyc"))
 assert not tuple(root.rglob("__pycache__"))
 
@@ -164,7 +171,7 @@ def runtime_main(argv, *, provider_composition):
     )
     snapshot = asyncio.run(registry.load_startup())
     assert len(snapshot.plugins) == 1
-    assert len(snapshot.providers) == 8
+    assert len(snapshot.providers) == 6
     return 0
 
 

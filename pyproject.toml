@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-  "base-ai>=0.1,<0.2",
-  "ebizhub-agent-runtime[base-ai]>=0.1,<0.2",
+  "base-ai==0.1.0",
+  "ebizhub-agent-runtime[base-ai]==0.1.5",
+  "ebiz-runtime-contracts==0.1.5",
+  "ebiz-workflow-runtime==0.1.5",
   "httpx>=0.28,<1",
   "pydantic>=2.10,<3",
 ]
@@ -21,13 +23,18 @@ ebiz-local-dev-assets = "ebiz_deployment.local_dev_assets:main"
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
-# TEMPORARY wiring for the capability-publisher extraction (Task 5): install the
-# Runtime from the in-review worktree because the frozen v1.2 wheelhouse wheel
-# predates agent_runtime.registry.capability_manifest/capability_publication.
-# Revert to the wheelhouse-published wheel once the publisher lands on the
-# Runtime mainline and a new wheel is built.
 [tool.uv.sources]
-ebizhub-agent-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-capability-publisher/packages/agent_runtime" }
+base-ai = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/packages/base-ai", editable = true }
+ebizhub-agent-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/agent_runtime" }
+ebiz-runtime-contracts = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/shared-schemas/python", editable = true }
+ebiz-workflow-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/workflow_runtime", editable = true }
+ebiz-adapter-mcp = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/mcp" }
+ebiz-adapter-erp = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/erp" }
+ebiz-adapter-model-openai = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/models/openai" }
+ebiz-agent-inventory-supply-chain = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain" }
+ebiz-capability-inventory-catalog = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/inventory" }
+ebiz-capability-commerce-sales-catalog = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/commerce-sales" }
+ebiz-capability-supply-chain = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain" }
 
 # The worktree package declares development-only tool.uv.sources (a neutral
 # base-ai test fixture, editable contracts/workflow paths). Supplying its
@@ -35,7 +42,7 @@ ebizhub-agent-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-cap
 # base-ai, ebiz-runtime-contracts, and ebiz-workflow-runtime.
 [[tool.uv.dependency-metadata]]
 name = "ebizhub-agent-runtime"
-version = "0.1.0"
+version = "0.1.5"
 requires-dist = [
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
@@ -63,6 +70,11 @@ requires-dist = [
 ]
 provides-extras = ["base-ai"]
 
+[[tool.uv.dependency-metadata]]
+name = "ebiz-capability-supply-chain"
+version = "2.0.0"
+requires-dist = ["ebizhub-agent-runtime>=0.1,<0.2"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ebiz_deployment"]
 
@@ -80,7 +92,10 @@ contract = [
   "ebiz-adapter-erp==0.1.0",
   "ebiz-adapter-mcp==0.1.0",
   "ebiz-adapter-model-openai==0.1.0",
-  "ebiz-agent-inventory-supply-chain==1.0.0",
+  "ebiz-agent-inventory-supply-chain==4.0.0",
+  "ebiz-capability-inventory-catalog==2.0.0",
+  "ebiz-capability-commerce-sales-catalog==2.0.0",
+  "ebiz-capability-supply-chain==2.0.0",
 ]
 
 [tool.pytest.ini_options]

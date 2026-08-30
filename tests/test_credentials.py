@@ -134,6 +134,48 @@ async def test_broker_resolves_per_call_over_real_http_without_cache() -> None:
     assert "token-two" not in repr(resolver)
 
 
+async def test_bound_broker_rejects_tenant_mismatch_and_returns_registry_binding() -> None:
+    response = {
+        "provider_id": "mcp.streamable_http",
+        "access_token": "mcp-key-value",
+        "tenant_id": "tenant-a",
+        "tenant_binding_digest": "a" * 64,
+        "expires_at": future_expiry(),
+    }
+    with BrokerServer([(200, response)]) as server:
+        secret_resolver = credentials_module().EnvironmentSecretResolver(
+            {"broker_auth": "BROKER_AUTH_ENV"}, {"BROKER_AUTH_ENV": "broker-auth-value"}
+        )
+        resolver = credentials_module().HttpsBoundCredentialBrokerResolver(
+            url=server.url,
+            auth_secret_name="broker_auth",
+            allowed_provider_ids=("mcp.streamable_http",),
+            timeout_seconds=2,
+            secret_resolver=secret_resolver,
+        )
+
+        resolved = await resolver.resolve(
+            "opaque:first",
+            provider_id="mcp.streamable_http",
+            expected_tenant_id="tenant-a",
+        )
+        with pytest.raises(ValueError, match="credential broker resolution failed"):
+            await resolver.resolve(
+                "opaque:first",
+                provider_id="mcp.streamable_http",
+                expected_tenant_id="tenant-b",
+            )
+
+    assert resolved.tenant_id == "tenant-a"
+    assert resolved.tenant_binding_digest == "a" * 64
+    assert resolved.secret_value == "mcp-key-value"
+    assert server.requests[0]["body"] == {
+        "credential_ref": "opaque:first",
+        "provider_id": "mcp.streamable_http",
+        "expected_tenant_id": "tenant-a",
+    }
+
+
 async def test_broker_concurrent_calls_each_hit_real_http() -> None:
     responses = [
         (

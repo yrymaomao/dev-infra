@@ -12,11 +12,11 @@ import json
 import os
 import sys
 import time
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import uvicorn
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException
 from mcp.server import MCPServer
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -27,7 +27,6 @@ OPENAI_API_KEY = "local-dev-openai-key-not-production"
 LOCAL_TENANT_ID = "tenant-local-dev"
 
 _ALLOWED_CREDENTIAL_PROVIDERS = frozenset({"mcp.streamable_http", "yeaher.erp"})
-_COCKPIT_PATH = "/ai/read/v1/cockpit/product-performance/sku-windows"
 
 
 def _bearer(authorization: str | None) -> str:
@@ -37,7 +36,7 @@ def _bearer(authorization: str | None) -> str:
 
 
 def create_provider_app() -> FastAPI:
-    """Create credential broker, Cockpit, health, and Responses API routes."""
+    """Create deterministic credential, ERP MCP, health, and model routes."""
     app = FastAPI(title="eBizHub LOCAL_DEV_E2E Providers", docs_url=None, redoc_url=None)
 
     @app.get("/healthz")
@@ -59,31 +58,9 @@ def create_provider_app() -> FastAPI:
         return {
             "provider_id": cast(str, provider_id),
             "access_token": REQUEST_ACCESS_TOKEN,
+            "tenant_id": LOCAL_TENANT_ID,
+            "tenant_binding_digest": "a" * 64,
             "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
-        }
-
-    @app.post(_COCKPIT_PATH)
-    async def cockpit_windows(request: Request, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        if request.cookies.get("_token_") != REQUEST_ACCESS_TOKEN:
-            raise HTTPException(status_code=401, detail="invalid local ERP session")
-        try:
-            marketplace = _required_text(body, "marketplace")
-            sku = _required_text(body, "sku")
-            snapshot_time = _required_text(body, "snapshotTime")
-            snapshot = datetime.fromisoformat(snapshot_time.replace("Z", "+00:00"))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="invalid Cockpit request") from exc
-        if snapshot.tzinfo is None or snapshot.utcoffset() is None or body.get("pageSize") != 200:
-            raise HTTPException(status_code=422, detail="invalid Cockpit request")
-        return {
-            "success": True,
-            "result": _sales_profit_result(
-                tenant_id=LOCAL_TENANT_ID,
-                marketplace=marketplace,
-                sku=sku,
-                snapshot_time=snapshot.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-                snapshot_date=snapshot.astimezone(UTC).date(),
-            ),
         }
 
     @app.post("/v1/responses")
@@ -164,84 +141,82 @@ def create_mcp_app() -> ASGIApp:
     """Create a bearer-protected, stateless MCP inventory service."""
     server = MCPServer("ebiz-local-dev-inventory", version="1.0.0", log_level="WARNING")
 
+    @server.tool(name="query_sku_identity", structured_output=True)
+    async def sku_identity(marketScope: str, sku: str, snapshotTime: str) -> dict[str, Any]:  # noqa: N803
+        return _envelope(
+            marketScope,
+            snapshotTime,
+            {"status": "UNIQUE", "canonicalSku": sku, "sellerSkus": [], "mskus": []},
+            "sku-identity-v1",
+        )
+
     @server.tool(name="query_inventory_summary", structured_output=True)
-    async def inventory_summary(  # noqa: N803
-        skuCodes: list[str], pageIndex: int, pageSize: int
-    ) -> dict[str, Any]:
-        if len(skuCodes) != 1 or pageIndex != 1 or pageSize != 1:
-            raise ValueError("invalid deterministic inventory summary request")
-        sku = skuCodes[0]
-        return {
-            "code": 200,
-            "success": True,
-            "message": "success",
-            "result": {
-                "pageData": {
-                    "records": [{"skuCode": sku, "availableInventory": 18}],
-                    "total": 1,
-                    "size": 1,
-                    "current": 1,
-                    "pages": 1,
-                },
-                "statistics": {"totalAvailableInventory": 18},
+    async def inventory_summary(marketScope: str, sku: str, snapshotTime: str) -> dict[str, Any]:  # noqa: N803
+        return _envelope(
+            marketScope,
+            snapshotTime,
+            {
+                "sku": sku,
+                "availableQuantity": 18,
+                "holdQuantity": 0,
+                "transferInTransitQuantity": 0,
+                "purchaseInTransitQuantity": 12,
+                "agedInventoryQuantity": 0,
+                "daysSinceLastSale": 1,
+                "sourceSnapshotId": "local-inventory-snapshot-1",
+                "asOf": snapshotTime,
             },
+            "inventory-summary-v1",
+        )
+
+    @server.tool(name="query_sku_sales_profit_windows", structured_output=True)
+    async def sales_windows(marketScope: str, sku: str, snapshotTime: str) -> dict[str, Any]:  # noqa: N803
+        return _sales_windows_envelope(marketScope, sku, snapshotTime)
+
+    @server.tool(name="query_sku_sales_profit_windows_batch", structured_output=True)
+    async def sales_windows_batch(
+        marketScope: str,
+        skus: list[str],
+        snapshotTime: str,  # noqa: N803
+    ) -> dict[str, Any]:
+        if not 1 <= len(skus) <= 1000:
+            raise ValueError("batch size must be 1..1000")
+        return {
+            "contractVersion": "erp-supply-chain/v1",
+            "marketScope": marketScope,
+            "snapshotTime": snapshotTime,
+            "items": [_sales_windows_envelope(marketScope, sku, snapshotTime) for sku in skus],
         }
 
-    @server.tool(name="query_inventory_by_warehouse", structured_output=True)
-    async def inventory_by_warehouse(skuCode: str) -> dict[str, Any]:  # noqa: N803
-        return {
-            "code": 200,
-            "success": True,
-            "message": "success",
-            "result": [
-                {
-                    "skuCode": skuCode,
-                    "warehouseId": "W-LOCAL-1",
-                    "warehouseName": "Local deterministic warehouse 1",
-                    "warehouseType": "OWNED",
-                    "availableInventory": 10,
-                },
-                {
-                    "skuCode": skuCode,
-                    "warehouseId": "W-LOCAL-2",
-                    "warehouseName": "Local deterministic warehouse 2",
-                    "warehouseType": "THIRD_PARTY",
-                    "availableInventory": 8,
-                },
-            ],
-        }
-
-    @server.tool(name="query_purchase_in_transit_details", structured_output=True)
-    async def purchase_in_transit(
-        skuCode: str, pageIndex: int, pageSize: int  # noqa: N803
+    @server.tool(name="query_sku_boston_cohort", structured_output=True)
+    async def boston_cohort(
+        marketScope: str,
+        snapshotTime: str,
+        targetSku: str,  # noqa: N803
     ) -> dict[str, Any]:
-        if pageIndex != 1 or pageSize != 200:
-            raise ValueError("invalid deterministic purchase-in-transit request")
-        return {
-            "code": 200,
-            "success": True,
-            "message": "success",
-            "result": {
-                "records": [
-                    {
-                        "poCode": "PO-LOCAL-1",
-                        "invoice": "INV-LOCAL-1",
-                        "skuCode": skuCode,
-                        "shipmentDate": "2026-08-20",
-                        "estimatedDeliveryDate": "2026-08-28",
-                        "shipmentQuantity": 12,
-                        "inboundQuantity": 5,
-                        "warehouseId": "W-LOCAL-1",
-                        "trackingNumber": "LOCAL-TRACK-1",
-                        "status": "IN_TRANSIT",
-                    }
-                ],
-                "total": 1,
-                "size": 200,
-                "current": 1,
-                "pages": 1,
+        members = [
+            {
+                "sku": f"SKU-LOCAL-PEER-{index}",
+                "windows": _window_rows(),
+                "activeDays": 120,
+                "growthRatio": 0.05 + index / 100,
+            }
+            for index in range(1, 6)
+        ]
+        return _envelope(
+            marketScope,
+            snapshotTime,
+            {
+                "targetSku": targetSku,
+                "status": "AVAILABLE",
+                "filterDefinition": "NA_COMPANY_ACTIVE_60D_V1",
+                "totalEligible": len(members),
+                "members": members,
+                "nextCursor": None,
+                "cohortSnapshotId": "local-cohort-snapshot-1",
             },
-        }
+            "sku-sales-profit-v1",
+        )
 
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
@@ -259,76 +234,59 @@ def _required_text(body: dict[str, Any], name: str) -> str:
     return value
 
 
-def _sales_profit_result(
-    *, tenant_id: str, marketplace: str, sku: str, snapshot_time: str, snapshot_date: date
+def _envelope(
+    market_scope: str, snapshot_time: str, result: dict[str, Any], statistics_version: str
 ) -> dict[str, Any]:
-    first_day = snapshot_date - timedelta(days=729)
-    cohort = [f"SKU-LOCAL-PEER-{index}" for index in range(1, 6)]
     return {
-        "tenantId": tenant_id,
-        "marketplace": marketplace,
-        "sku": sku,
-        "observedAt": snapshot_time,
-        "contractVersion": "cockpit-sku-windows-v1",
-        "statisticsVersion": "cockpit-window-statistics-v1",
+        "contractVersion": "erp-supply-chain/v1",
+        "statisticsVersion": statistics_version,
         "statisticsDefinition": {
             "variance": "POPULATION",
-            "missingDays": "ZERO",
+            "missingDays": "ZERO_WITH_COMPLETE_WATERMARK",
             "windowBoundary": "CLOSED_INCLUSIVE",
             "timezone": "UTC",
         },
-        "windows": [
-            {
-                "days": days,
-                "weight": weight,
-                "mean": float(days),
-                "variance": float(days) / 2,
-                "unitsSold": days * 2,
-            }
-            for days, weight in zip(
-                (7, 14, 30, 60, 90, 180, 365, 730),
-                (0.20, 0.18, 0.16, 0.14, 0.12, 0.10, 0.06, 0.04),
-                strict=True,
-            )
-        ],
-        "profit": {
-            "currency": "USD",
-            "saleAmount": 1000.0,
-            "purchaseCost": 600.0,
-            "grossProfit": 400.0,
-            "grossProfitRatio": 0.4,
-        },
-        "lifecycleInputs": {"activeDays": 240, "growth": 0.12},
-        "seasonality": {
-            "status": "AVAILABLE",
-            "model": "cockpit-seasonality-v1",
-            "points": [
-                {
-                    "date": (first_day + timedelta(days=index)).isoformat(),
-                    "observed": 10.0 + index / 100,
-                    "factor": 1.0 + (index % 7) / 100,
-                }
-                for index in range(730)
-            ],
-        },
-        "bostonCohort": [
-            {
-                "tenantId": tenant_id,
-                "marketplace": marketplace,
-                "sku": peer,
-                "observedAt": snapshot_time,
-                "deseasonalizedMean": 8.0 + index,
-                "riskCv": 0.2,
-                "growth": 0.05 + index / 100,
-                "currency": "USD",
-            }
-            for index, peer in enumerate(cohort)
-        ],
-        "nextCursor": None,
-        "pageSize": 200,
-        "returnedSize": len(cohort),
-        "totalSize": len(cohort),
+        "marketScope": market_scope,
+        "snapshotTime": snapshot_time,
+        "observedAt": snapshot_time,
+        "result": result,
     }
+
+
+def _window_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "windowDays": days,
+            "unitsSum": float(days * 2),
+            "meanDailyUnits": 2.0,
+            "populationVariance": 0.25,
+            "revenue": float(days * 20),
+            "purchaseCost": float(days * 12),
+            "grossProfit": float(days * 8),
+            "grossMarginRatio": 0.4,
+            "grossMarginUnavailableReason": "NONE",
+        }
+        for days in (7, 14, 30, 60, 90, 180, 365)
+    ]
+
+
+def _sales_windows_envelope(market_scope: str, sku: str, snapshot_time: str) -> dict[str, Any]:
+    return _envelope(
+        market_scope,
+        snapshot_time,
+        {
+            "sku": sku,
+            "status": "FOUND",
+            "windows": _window_rows(),
+            "activeDays": 120,
+            "growthRatio": 0.1,
+            "growthUnavailableReason": "NONE",
+            "currency": "USD",
+            "dataAsOf": snapshot_time,
+            "sourceWatermark": "local-sales-watermark-1",
+        },
+        "sku-sales-profit-v1",
+    )
 
 
 async def _serve(

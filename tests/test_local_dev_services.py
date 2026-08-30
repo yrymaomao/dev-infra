@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from inventory_supply_chain.contracts import validate_skill_input
 
 from ebiz_deployment.local_dev_assets import build_skill_document, write_local_dev_assets
 from ebiz_deployment.local_dev_services import (
@@ -35,6 +34,8 @@ def test_credential_broker_is_authenticated_scoped_and_short_lived() -> None:
         assert response.status_code == 200
         assert response.json()["provider_id"] == "yeaher.erp"
         assert response.json()["access_token"] == REQUEST_ACCESS_TOKEN
+        assert response.json()["tenant_id"] == "tenant-local-dev"
+        assert len(response.json()["tenant_binding_digest"]) == 64
         assert response.json()["expires_at"].endswith("Z")
 
         rejected = client.post(
@@ -45,34 +46,13 @@ def test_credential_broker_is_authenticated_scoped_and_short_lived() -> None:
         assert rejected.status_code == 403
 
 
-def test_cockpit_returns_deterministic_contract_for_requested_scope() -> None:
-    request = {
-        "marketplace": "US",
-        "sku": "SKU-LOCAL-1",
-        "snapshotTime": "2026-08-24T00:00:00Z",
-        "pageSize": 200,
-    }
+def test_provider_app_has_no_supply_chain_cockpit_route() -> None:
     with TestClient(create_provider_app()) as client:
-        unauthorized = client.post(
-            "/ai/read/v1/cockpit/product-performance/sku-windows", json=request
-        )
-        assert unauthorized.status_code == 401
-
         response = client.post(
             "/ai/read/v1/cockpit/product-performance/sku-windows",
-            headers={"Cookie": f"_token_={REQUEST_ACCESS_TOKEN}"},
-            json=request,
+            json={},
         )
-
-    assert response.status_code == 200
-    result = response.json()["result"]
-    assert result["tenantId"] == "tenant-local-dev"
-    assert result["marketplace"] == "US"
-    assert result["sku"] == "SKU-LOCAL-1"
-    assert result["observedAt"] == "2026-08-24T00:00:00Z"
-    assert len(result["seasonality"]["points"]) == 730
-    assert len(result["bostonCohort"]) == 5
-    assert result["returnedSize"] == result["totalSize"] == 5
+    assert response.status_code == 404
 
 
 def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
@@ -111,7 +91,7 @@ def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
     }
 
 
-def test_mcp_requires_broker_token_and_exposes_only_inventory_tools() -> None:
+def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools() -> None:
     init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -127,9 +107,7 @@ def test_mcp_requires_broker_token_and_exposes_only_inventory_tools() -> None:
         "Accept": "application/json, text/event-stream",
     }
     with TestClient(create_mcp_app(), base_url="http://127.0.0.1:18081") as client:
-        unauthorized = client.post(
-            "/mcp", json=init, headers={"Accept": headers["Accept"]}
-        )
+        unauthorized = client.post("/mcp", json=init, headers={"Accept": headers["Accept"]})
         assert unauthorized.status_code == 401
         initialized = client.post("/mcp", json=init, headers=headers)
         assert initialized.status_code == 200
@@ -143,8 +121,10 @@ def test_mcp_requires_broker_token_and_exposes_only_inventory_tools() -> None:
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
     assert names == {
         "query_inventory_summary",
-        "query_inventory_by_warehouse",
-        "query_purchase_in_transit_details",
+        "query_sku_identity",
+        "query_sku_sales_profit_windows",
+        "query_sku_sales_profit_windows_batch",
+        "query_sku_boston_cohort",
     }
 
 
@@ -152,11 +132,12 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(tmp_path: P
     skill = build_skill_document(
         snapshot_time="2026-08-24T00:00:00Z",
         tenant_id="tenant-local-dev",
-        marketplace="US",
+        market_scope="NA_COMPANY",
         sku="SKU-LOCAL-1",
     )
-    assert validate_skill_input(skill, runtime_tenant_id="tenant-local-dev") == []
-    assert len(skill["inputs"]["seasonality_profile"]["factors"]) == 730
+    assert skill["policy_version"] == "local-dev-v4"
+    assert len(skill["seasonality_profile"]["monthly_indices"]) == 12
+    assert sum(item["index"] for item in skill["seasonality_profile"]["monthly_indices"]) == 12
 
     assets = write_local_dev_assets(tmp_path)
     assert assets.deployment_config.is_file()
@@ -168,9 +149,13 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(tmp_path: P
     assert assets.skill_root.joinpath("SKU-LOCAL-1.json").is_file()
     policy = json.loads(assets.plugin_policy.read_text(encoding="utf-8"))
     assert "${" not in policy["plugins"][0]["package_digest"]
+    assert len(set(policy["plugins"][0]["package_digest"])) > 1
     environment = json.loads(assets.environment.read_text(encoding="utf-8"))
     assert environment["APP_ENV"] == "local_dev"
     assert environment["LOCAL_DEV_E2E"] == "true"
     assert environment["CREDENTIAL_BROKER_URL"] == "http://127.0.0.1:18082/v1/resolve"
     assert environment["MCP_ENDPOINT"] == "http://127.0.0.1:18081/mcp"
     assert environment["OPENAI_ENDPOINT"] == "https://127.0.0.1:18080/v1"
+    assert environment["SUPPLY_CHAIN_MARKET_SCOPE"] == "NA_COMPANY"
+    assert environment["SUPPLY_CHAIN_RUN_ID"] == "supply-chain-v4-local-1"
+    assert "COCKPIT_ENDPOINT" not in environment

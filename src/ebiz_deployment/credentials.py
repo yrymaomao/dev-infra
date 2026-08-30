@@ -9,6 +9,7 @@ from types import MappingProxyType
 from urllib.parse import urlsplit
 
 import httpx
+from base_ai.providers import ResolvedRequestCredential
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 _OPAQUE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
@@ -46,6 +47,11 @@ class _BrokerResponse(BaseModel):
     provider_id: str = Field(min_length=1, max_length=128)
     access_token: str = Field(min_length=1, max_length=16384)
     expires_at: AwareDatetime
+
+
+class _BoundBrokerResponse(_BrokerResponse):
+    tenant_id: str = Field(min_length=1, max_length=128)
+    tenant_binding_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class HttpsCredentialBrokerResolver:
@@ -114,4 +120,93 @@ class HttpsCredentialBrokerResolver:
         return parsed.access_token
 
 
-__all__ = ["EnvironmentSecretResolver", "HttpsCredentialBrokerResolver"]
+class HttpsBoundCredentialBrokerResolver:
+    """Resolve an MCP key only when the broker proves the expected tenant binding."""
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        auth_secret_name: str,
+        allowed_provider_ids: Sequence[str],
+        timeout_seconds: float,
+        secret_resolver: EnvironmentSecretResolver,
+    ) -> None:
+        parsed = urlsplit(url)
+        is_loopback = parsed.scheme == "http" and parsed.hostname in {
+            "127.0.0.1",
+            "::1",
+            "localhost",
+        }
+        if not parsed.netloc or (parsed.scheme != "https" and not is_loopback):
+            raise ValueError("credential broker must use HTTPS")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("credential broker URL must not contain credentials")
+        if not 0 < timeout_seconds <= 30:
+            raise ValueError("credential broker timeout is invalid")
+        self._url = url
+        self._auth_secret_name = auth_secret_name
+        self._allowed_provider_ids = frozenset(allowed_provider_ids)
+        self._timeout_seconds = timeout_seconds
+        self._secret_resolver = secret_resolver
+
+    def __repr__(self) -> str:
+        providers = tuple(sorted(self._allowed_provider_ids))
+        return (
+            "HttpsBoundCredentialBrokerResolver("
+            f"providers={providers!r}, timeout_seconds={self._timeout_seconds!r})"
+        )
+
+    async def resolve(
+        self,
+        credential_ref: str,
+        *,
+        provider_id: str,
+        expected_tenant_id: str,
+    ) -> ResolvedRequestCredential:
+        if provider_id not in self._allowed_provider_ids or not expected_tenant_id.strip():
+            raise ValueError("credential broker resolution failed")
+        if _OPAQUE_REF.fullmatch(credential_ref) is None:
+            raise ValueError("credential broker resolution failed")
+        broker_authorization = await self._secret_resolver.resolve(self._auth_secret_name)
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout_seconds,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                response = await client.post(
+                    self._url,
+                    json={
+                        "credential_ref": credential_ref,
+                        "provider_id": provider_id,
+                        "expected_tenant_id": expected_tenant_id,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {broker_authorization}",
+                        "Accept": "application/json",
+                    },
+                )
+            response.raise_for_status()
+            parsed = _BoundBrokerResponse.model_validate(response.json())
+        except (httpx.HTTPError, ValueError, ValidationError):
+            raise ValueError("credential broker resolution failed") from None
+        if (
+            parsed.provider_id != provider_id
+            or parsed.tenant_id != expected_tenant_id
+            or parsed.expires_at <= datetime.now(UTC)
+        ):
+            raise ValueError("credential broker resolution failed")
+        return ResolvedRequestCredential(
+            secret_value=parsed.access_token,
+            tenant_id=parsed.tenant_id,
+            tenant_binding_digest=parsed.tenant_binding_digest,
+            expires_at=parsed.expires_at,
+        )
+
+
+__all__ = [
+    "EnvironmentSecretResolver",
+    "HttpsBoundCredentialBrokerResolver",
+    "HttpsCredentialBrokerResolver",
+]

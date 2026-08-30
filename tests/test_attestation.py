@@ -15,7 +15,10 @@ from typing import Any
 
 import pytest
 
-SUPPLY_CHAIN_PROJECT = Path("C:/ebizhub/workspace/ebiz-agents/supply-chain")
+SUPPLY_CHAIN_PROJECT = Path("C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain")
+PLANNING_PROJECT = Path(
+    "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain"
+)
 UV_COMMAND = Path(os.environ.get("UV_EXECUTABLE", shutil.which("uv") or "uv"))
 
 
@@ -52,6 +55,19 @@ def clean_supply_chain_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "--no-deps",
         str(wheel),
     )
+    return site_packages
+
+
+@pytest.fixture(scope="session")
+def clean_planning_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("supply-chain-planning-clean-wheel")
+    wheel_dir = root / "wheel"
+    site_packages = root / "site-packages"
+    wheel_dir.mkdir()
+    site_packages.mkdir()
+    run_uv("build", "--project", str(PLANNING_PROJECT), "--out-dir", str(wheel_dir), "--no-sources")
+    wheel = next(wheel_dir.glob("ebiz_capability_supply_chain-*.whl"))
+    run_uv("pip", "install", "--target", str(site_packages), "--no-deps", str(wheel))
     return site_packages
 
 
@@ -135,12 +151,25 @@ def test_attests_real_non_editable_supply_chain_wheel(clean_supply_chain_site: P
     result = attest(module, clean_supply_chain_site)
 
     assert result.distribution_name == "ebiz-agent-inventory-supply-chain"
-    assert result.distribution_version == "1.0.0"
-    assert result.entry_point_group == "ebiz_agents.providers"
-    assert result.entry_point_name == "ebizhub.inventory-supply-chain"
-    assert result.entry_point_value == "inventory_supply_chain.plugin:factory"
-    assert result.import_root == "inventory_supply_chain"
+    assert result.distribution_version == "4.0.0"
+    assert result.entry_point_group is None
+    assert result.entry_point_name is None
+    assert result.entry_point_value is None
+    assert result.import_root == "inventory_supply_chain_agent"
     assert result.canonical_digest == expected_canonical_digest(clean_supply_chain_site)
+
+
+def test_attests_public_planning_provider_wheel(clean_planning_site: Path) -> None:
+    module = importlib.import_module("ebiz_deployment.attestation")
+
+    result = module.attest_installed_supply_chain_planning(search_paths=(clean_planning_site,))
+
+    assert result.distribution_name == "ebiz-capability-supply-chain"
+    assert result.distribution_version == "2.0.0"
+    assert result.entry_point_group == "ebiz_agents.providers"
+    assert result.entry_point_name == "supply-chain-planning"
+    assert result.entry_point_value == "ebiz_capability_supply_chain.plugin:factory"
+    assert result.import_root == "ebiz_capability_supply_chain"
 
 
 def test_environment_uses_installed_supply_chain_digest_not_a_caller_value(
@@ -153,10 +182,19 @@ def test_environment_uses_installed_supply_chain_digest_not_a_caller_value(
     )
 
     assert result == {
+        "COMMERCE_SALES_CATALOG_RECORD_DIGEST": (
+            module.attest_installed_commerce_sales_catalog().canonical_digest
+        ),
         "ERP_RECORD_DIGEST": "b" * 64,
+        "INVENTORY_CATALOG_RECORD_DIGEST": (
+            module.attest_installed_inventory_catalog().canonical_digest
+        ),
         "MCP_RECORD_DIGEST": "a" * 64,
         "OPENAI_RECORD_DIGEST": "c" * 64,
-        "SUPPLY_CHAIN_RECORD_DIGEST": expected_canonical_digest(clean_supply_chain_site),
+        "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": expected_canonical_digest(clean_supply_chain_site),
+        "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": (
+            module.attest_installed_supply_chain_planning().canonical_digest
+        ),
     }
 
 
@@ -181,7 +219,7 @@ def test_rejects_tampered_recorded_supply_chain_file(
 ) -> None:
     module = importlib.import_module("ebiz_deployment.attestation")
     site = copied_site(clean_supply_chain_site, tmp_path)
-    (site / "inventory_supply_chain" / "plugin.py").write_text(
+    (site / "inventory_supply_chain_agent" / "__init__.py").write_text(
         "raise RuntimeError('tampered')\n", encoding="utf-8"
     )
 
@@ -192,7 +230,7 @@ def test_rejects_tampered_recorded_supply_chain_file(
 def test_rejects_unrecorded_import_shadow(clean_supply_chain_site: Path, tmp_path: Path) -> None:
     module = importlib.import_module("ebiz_deployment.attestation")
     site = copied_site(clean_supply_chain_site, tmp_path)
-    shadow = site / "inventory_supply_chain" / "factory.py"
+    shadow = site / "inventory_supply_chain_agent" / "factory.py"
     shadow.write_text("factory = object()\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="attestation"):
@@ -202,9 +240,12 @@ def test_rejects_unrecorded_import_shadow(clean_supply_chain_site: Path, tmp_pat
 def test_rejects_symlink_inside_import_root(clean_supply_chain_site: Path, tmp_path: Path) -> None:
     module = importlib.import_module("ebiz_deployment.attestation")
     site = copied_site(clean_supply_chain_site, tmp_path)
-    source = site / "inventory_supply_chain" / "plugin.py"
-    shadow = site / "inventory_supply_chain" / "shadow.py"
-    shadow.symlink_to(source)
+    source = site / "inventory_supply_chain_agent" / "__init__.py"
+    shadow = site / "inventory_supply_chain_agent" / "shadow.py"
+    try:
+        shadow.symlink_to(source)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error.winerror}")
 
     with pytest.raises(ValueError, match="attestation"):
         attest(module, site)
@@ -214,19 +255,12 @@ def test_rejects_symlink_inside_import_root(clean_supply_chain_site: Path, tmp_p
     ("relative_path", "replacement"),
     [
         (
-            "ebiz_agent_inventory_supply_chain-1.0.0.dist-info/METADATA",
+            "ebiz_agent_inventory_supply_chain-4.0.0.dist-info/METADATA",
             ("Name: ebiz-agent-inventory-supply-chain", "Name: wrong-package"),
         ),
         (
-            "ebiz_agent_inventory_supply_chain-1.0.0.dist-info/METADATA",
-            ("Version: 1.0.0", "Version: 9.9.9"),
-        ),
-        (
-            "ebiz_agent_inventory_supply_chain-1.0.0.dist-info/entry_points.txt",
-            (
-                "ebizhub.inventory-supply-chain = inventory_supply_chain.plugin:factory",
-                "ebizhub.inventory-supply-chain = inventory_supply_chain.shadow:factory",
-            ),
+            "ebiz_agent_inventory_supply_chain-4.0.0.dist-info/METADATA",
+            ("Version: 4.0.0", "Version: 9.9.9"),
         ),
     ],
 )

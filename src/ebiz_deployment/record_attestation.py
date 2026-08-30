@@ -30,9 +30,9 @@ _IMPORT_SUFFIXES = (".py", ".pyc", ".pyd", ".so", ".dll", ".dylib")
 class InstalledDistributionAttestation:
     distribution_name: str
     distribution_version: str
-    entry_point_group: str
-    entry_point_name: str
-    entry_point_value: str
+    entry_point_group: str | None
+    entry_point_name: str | None
+    entry_point_value: str | None
     import_root: str
     canonical_digest: str
     attestation_algorithm: str = CANONICAL_RECORD_ATTESTATION
@@ -78,6 +78,42 @@ def attest_installed_distribution(
             entry_point_group=entry_point_group,
             entry_point_name=entry_point_name,
             entry_point_value=entry_point_value,
+            import_root=import_root,
+            canonical_digest=digest,
+        )
+    except Exception:
+        raise ValueError("installed distribution attestation failed") from None
+
+
+def attest_installed_resource_distribution(
+    *,
+    distribution_name: str,
+    distribution_version: str,
+    import_root: str,
+    forbidden_entry_point_group: str,
+    search_paths: Sequence[Path] | None = None,
+) -> InstalledDistributionAttestation:
+    """Attest an immutable resource wheel that must not expose a Provider entry point."""
+
+    try:
+        distribution = _exact_distribution(distribution_name, search_paths)
+        actual_name = distribution.metadata["Name"]
+        actual_version = distribution.version
+        if actual_name != distribution_name or actual_version != distribution_version:
+            raise ValueError
+        if any(item.group == forbidden_entry_point_group for item in distribution.entry_points):
+            raise ValueError
+        digest, production_eligible = _verified_record_attestation(
+            distribution, import_root=import_root
+        )
+        if not production_eligible:
+            raise ValueError
+        return InstalledDistributionAttestation(
+            distribution_name=actual_name,
+            distribution_version=actual_version,
+            entry_point_group=None,
+            entry_point_name=None,
+            entry_point_value=None,
             import_root=import_root,
             canonical_digest=digest,
         )
@@ -283,4 +319,5 @@ __all__ = [
     "CANONICAL_RECORD_ATTESTATION",
     "InstalledDistributionAttestation",
     "attest_installed_distribution",
+    "attest_installed_resource_distribution",
 ]

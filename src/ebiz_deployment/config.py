@@ -24,9 +24,11 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
-    "query_inventory_by_warehouse",
     "query_inventory_summary",
-    "query_purchase_in_transit_details",
+    "query_sku_boston_cohort",
+    "query_sku_identity",
+    "query_sku_sales_profit_windows",
+    "query_sku_sales_profit_windows_batch",
 )
 _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     "mcp.streamable_http": {
@@ -40,7 +42,9 @@ _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
         "api_version": "v1",
         "enabled_operations": (
+            "catalog.resolve_sku_identity",
             "inventory.get_total_snapshot",
+            "sales_profit.get_boston_cohort",
             "sales_profit.get_sku_windows",
         ),
     },
@@ -150,12 +154,82 @@ class ProviderDeploymentConfig(StrictModel):
         return self
 
 
+class CapabilitySetPin(StrictModel):
+    set_id: str = Field(min_length=1, max_length=128)
+    version: int = Field(ge=1)
+    distribution_name: str = Field(min_length=1, max_length=128)
+    distribution_version: str = Field(min_length=1, max_length=128)
+    record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+_EXPECTED_CAPABILITY_SETS = {
+    "inventory.core": (2, "ebiz-capability-inventory-catalog", "2.0.0"),
+    "commerce-sales.analytics": (2, "ebiz-capability-commerce-sales-catalog", "2.0.0"),
+    "supply-chain.planning": (2, "ebiz-capability-supply-chain", "2.0.0"),
+}
+_EXPECTED_PLANNING_PROVIDERS = {
+    "supply-chain-planning.action-router",
+    "supply-chain-planning.classification-engine",
+    "supply-chain-planning.clearance-engine",
+    "supply-chain-planning.forecast-engine",
+    "supply-chain-planning.fulfillment-resolver",
+    "supply-chain-planning.replenishment-engine",
+}
+
+
+class SupplyChainReleaseConfig(StrictModel):
+    agent_id: str = Field(pattern=r"^inventory-supply-chain$")
+    agent_version: int = Field(ge=4, le=4)
+    agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
+    agent_distribution_version: str = Field(pattern=r"^4\.0\.0$")
+    agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    workflow_code: str = Field(pattern=r"^inventory-supply-chain-daily$")
+    workflow_version: int = Field(ge=4, le=4)
+    workflow_artifact_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
+    provider_versions: dict[str, str] = Field(min_length=7, max_length=7)
+
+    @field_validator("capability_sets")
+    @classmethod
+    def validate_capability_sets(
+        cls, value: tuple[CapabilitySetPin, ...]
+    ) -> tuple[CapabilitySetPin, ...]:
+        by_id = {item.set_id: item for item in value}
+        if len(by_id) != len(value) or set(by_id) != set(_EXPECTED_CAPABILITY_SETS):
+            raise ValueError("capability_sets must be the exact three Supply Chain v4 sets")
+        for set_id, (
+            version,
+            distribution,
+            distribution_version,
+        ) in _EXPECTED_CAPABILITY_SETS.items():
+            item = by_id[set_id]
+            if (item.version, item.distribution_name, item.distribution_version) != (
+                version,
+                distribution,
+                distribution_version,
+            ):
+                raise ValueError("capability set identity differs from the immutable v4 release")
+        return tuple(sorted(value, key=lambda item: item.set_id))
+
+    @field_validator("provider_versions")
+    @classmethod
+    def validate_provider_versions(cls, value: dict[str, str]) -> dict[str, str]:
+        if set(value) != {"yeaher.erp", *_EXPECTED_PLANNING_PROVIDERS}:
+            raise ValueError("provider_versions must contain the exact v4 provider pins")
+        if value["yeaher.erp"] != "0.1.0" or any(
+            value[provider] != "2.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS
+        ):
+            raise ValueError("provider_versions differ from the reviewed v4 wheels")
+        return dict(sorted(value.items()))
+
+
 class DeploymentCompositionConfig(StrictModel):
-    schema_version: str = Field(pattern=r"^1$")
+    schema_version: str = Field(pattern=r"^2$")
     runtime: RuntimeConfig
     secrets: SecretEnvironmentConfig
     credential_broker: CredentialBrokerConfig
     base_ai_providers: tuple[ProviderDeploymentConfig, ...] = Field(min_length=3, max_length=3)
+    supply_chain_release: SupplyChainReleaseConfig
     runtime_plugin_policy: PluginHostPolicy | None = Field(default=None, exclude=True)
 
     @field_validator("base_ai_providers")
@@ -231,50 +305,46 @@ def _validate_supply_chain_policy(policy: PluginHostPolicy) -> None:
     if len(policy.plugins) != 1:
         raise ValueError("Runtime plugin policy must contain only the Supply Chain plugin")
     plugin = policy.plugins[0]
-    expected_permissions = frozenset(
-        {
-            "replenishment.preview",
-            "supply_chain.compute",
-            "supply_chain.preview",
-            "supply_chain.skill.read",
-        }
-    )
+    expected_permissions = frozenset({"supply_chain.preview"})
     if (
-        plugin.plugin_id != "ebizhub.inventory-supply-chain"
-        or plugin.version != "1.0.0"
-        or plugin.package_name != "ebiz-agent-inventory-supply-chain"
-        or plugin.entry_point != "inventory_supply_chain.plugin:factory"
+        plugin.plugin_id != "supply-chain-planning"
+        or plugin.version != "2.0.0"
+        or plugin.package_name != "ebiz-capability-supply-chain"
+        or plugin.entry_point != "ebiz_capability_supply_chain.plugin:factory"
         or plugin.permissions != expected_permissions
         or plugin.network_targets
         or plugin.secret_names
-        or set(plugin.config) != {"skill_root"}
+        or plugin.config
     ):
         raise ValueError("Runtime plugin policy is not the exact read-only Supply Chain pin")
-    skill_root = plugin.config["skill_root"]
-    if not isinstance(skill_root, str) or not Path(skill_root).resolve().is_dir():
-        raise ValueError("Supply Chain skill_root must be an existing directory")
 
 
 def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
     config = provider.config
     if provider.provider_id == "mcp.streamable_http":
-        if set(config) != {"server_name", "url", "allowed_tools", "network"}:
+        if set(config) != {"server_name", "url", "allowed_tools", "auth_profile", "network"}:
             raise ValueError("MCP config fields are incomplete or unknown")
         allowed_tools = config.get("allowed_tools")
         if not isinstance(allowed_tools, list) or tuple(allowed_tools) != _READ_TOOLS:
-            raise ValueError("allowed_tools must be the exact three production read tools")
+            raise ValueError("allowed_tools must be the exact Supply Chain v4 read tools")
+        if config.get("auth_profile") != "X_MCP_KEY":
+            raise ValueError("MCP auth_profile must be X_MCP_KEY")
         _validate_endpoint_host(config.get("url"), provider.egress_hosts, "MCP")
         return
     if provider.provider_id == "yeaher.erp":
-        if set(config) != {"cockpit", "mcp"}:
-            raise ValueError("ERP config must contain only cockpit and mcp")
-        cockpit = config.get("cockpit")
+        if set(config) != {"mcp"}:
+            raise ValueError("ERP config must contain only the fixed MCP bindings")
         mcp = config.get("mcp")
-        if not isinstance(cockpit, dict) or set(cockpit) != {"base_url", "network"}:
-            raise ValueError("ERP Cockpit endpoint is required")
-        if mcp != {"tools": {"inventory.get_total_snapshot": "query_inventory_summary"}}:
-            raise ValueError("ERP MCP binding must use the production inventory summary tool")
-        _validate_endpoint_host(cockpit.get("base_url"), provider.egress_hosts, "Cockpit")
+        expected = {
+            "tools": {
+                "catalog.resolve_sku_identity": "query_sku_identity",
+                "inventory.get_total_snapshot": "query_inventory_summary",
+                "sales_profit.get_boston_cohort": "query_sku_boston_cohort",
+                "sales_profit.get_sku_windows": "query_sku_sales_profit_windows",
+            }
+        }
+        if mcp != expected or provider.egress_hosts:
+            raise ValueError("ERP MCP bindings must be the fixed Supply Chain v4 tool map")
         return
     if set(config) != {"api_key_secret_name", "base_url", "enabled_operations", "network"}:
         raise ValueError(
@@ -320,5 +390,6 @@ __all__ = [
     "CredentialBrokerConfig",
     "DeploymentCompositionConfig",
     "ProviderDeploymentConfig",
+    "SupplyChainReleaseConfig",
     "load_deployment_config",
 ]
