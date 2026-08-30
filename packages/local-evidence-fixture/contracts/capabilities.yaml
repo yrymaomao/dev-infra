@@ -1,0 +1,26 @@
+spec_version: ebizhub.capability-set/v2
+kind: CapabilitySet
+set_id: deployment.fixture.local-evidence
+version: 1
+capabilities:
+  - capability_id: deployment.fixture.seed_governed_artifact
+    version: 1
+    owner: deployment-tests
+    purpose: Establish truthful provenance for deterministic-local governed fixture artifacts.
+    input_schema_ref: schemas/governed-artifact.schema.yaml#/$defs/Request
+    input_schema_version: 1
+    output_schema_ref: schemas/governed-artifact.schema.yaml#/$defs/Response
+    output_schema_version: 1
+    effect: READ
+    side_effect_scope: none
+    risk_level: LOW
+    permission_scopes: [deployment.fixture.read]
+    provider_id: deployment.fixture.governed-artifact
+    timeout_seconds: 1
+    retry: {max_attempts: 1, retryable_error_codes: []}
+    idempotency: {invocation_required: true, business_required: false}
+    evidence: {required: true, maximum_age_seconds: 31536000}
+    pii: {classification: internal, redaction_policy: no_pii_fields}
+    approval: {required: false}
+    forbidden_actions: [external_read, external_write, production_use]
+

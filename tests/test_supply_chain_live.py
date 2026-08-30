@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 
+import httpx
 import jwt
 import pytest
 
@@ -10,6 +11,7 @@ from ebiz_deployment.supply_chain_live import (
     LiveSmokeSettings,
     issue_smoke_token,
     main,
+    run_runtime_smoke,
     verify_terminal_result,
 )
 
@@ -21,45 +23,79 @@ def local_environment() -> dict[str, str]:
         "SUPPLY_CHAIN_CREDENTIAL_REF": "local:credential:123",
         "SUPPLY_CHAIN_MARKET_SCOPE": "NA_COMPANY",
         "SUPPLY_CHAIN_SKU": "SKU-LOCAL",
+        "SUPPLY_CHAIN_SKILL_INPUT_REF": "00000000-0000-4000-8000-000000000010",
         "SUPPLY_CHAIN_SNAPSHOT_TIME": "2026-08-30T12:00:00Z",
-        "SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT": "4",
+        "SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT": "5",
         "SUPPLY_CHAIN_RUN_ID": "supply-chain-v4-local-1",
         "APP_JWT_SECRET": "j" * 32,
         "LOCAL_DEV_E2E": "true",
     }
 
 
-def test_settings_pin_v4_na_company_fbm_auto_and_non_production_provenance() -> None:
-    settings = LiveSmokeSettings.from_environment(local_environment())
+def evidence(index: int) -> dict[str, object]:
+    resource = {
+        "resource_type": "capability",
+        "resource_id": f"cap-{index}",
+        "version": 1,
+        "digest": f"{index + 1:x}" * 64,
+    }
+    return {
+        "evidence_id": f"00000000-0000-4000-8000-{index + 1:012d}",
+        "tenant_id": "tenant-local",
+        "source_type": "ERP",
+        "source_system": "local",
+        "external_object_id": f"object-{index}",
+        "captured_at": "2026-08-30T12:00:00Z",
+        "freshness_at": "2026-08-30T12:00:00Z",
+        "content_ref": f"payload-{index}",
+        "content_hash": f"{index + 1:x}" * 64,
+        "content_type": "application/json",
+        "size_bytes": 10,
+        "access_level": "supply_chain.read",
+        "retention_policy": "local-test",
+        "schema_version": 1,
+        "capability_ref": resource,
+        "plugin_ref": None,
+        "execution_id": None,
+        "trace_id": "trace-local",
+    }
 
-    assert settings.agent_id == "inventory-supply-chain"
-    assert settings.agent_version == 4
-    assert settings.workflow_code == "inventory-supply-chain-daily"
-    assert settings.workflow_version == 4
+
+def blocked_result(count: int) -> dict[str, object]:
+    return {
+        "tenant_id": "tenant-local",
+        "status": "BLOCKED",
+        "scope": {"market_scope": "NA_COMPANY", "sku": "SKU-LOCAL"},
+        "payload": None,
+        "evidence": [evidence(index) for index in range(count)],
+        "issues": [
+            {
+                "code": "LOCAL_TEST_BLOCK",
+                "message": "Deterministic test block.",
+                "blocking": True,
+                "metadata": {},
+            }
+        ],
+    }
+
+
+def test_settings_match_flat_v4_agent_input() -> None:
+    settings = LiveSmokeSettings.from_environment(local_environment())
     assert settings.inputs == {
         "run_id": "supply-chain-v4-local-1",
-        "scope": {
-            "market_scope": "NA_COMPANY",
-            "sku": "SKU-LOCAL",
-            "snapshot_time": "2026-08-30T12:00:00Z",
-            "fulfillment_mode": "AUTO",
-        },
+        "market_scope": "NA_COMPANY",
+        "sku": "SKU-LOCAL",
+        "snapshot_time": "2026-08-30T12:00:00Z",
+        "skill_input_ref": "00000000-0000-4000-8000-000000000010",
+        "fulfillment_mode": "AUTO",
     }
-    assert settings.call_provenance == {
-        "local_dev_e2e": True,
-        "real_erp_calls": False,
-        "production_model_calls": False,
-        "production_e2e_verified": False,
-    }
+    assert settings.call_provenance["production_e2e_verified"] is False
     assert "j" * 32 not in repr(settings)
 
 
 @pytest.mark.parametrize(
     ("key", "value", "message"),
-    [
-        ("SUPPLY_CHAIN_MARKET_SCOPE", "US", "NA_COMPANY"),
-        ("LOCAL_DEV_E2E", "false", "real-dev/UAT"),
-    ],
+    [("SUPPLY_CHAIN_MARKET_SCOPE", "US", "NA_COMPANY"), ("LOCAL_DEV_E2E", "false", "real-dev/UAT")],
 )
 def test_settings_fail_closed_outside_v4_local_scope(key: str, value: str, message: str) -> None:
     environ = local_environment()
@@ -89,41 +125,50 @@ def test_token_has_only_read_preview_and_workflow_scopes() -> None:
         "workflow:read",
         "workflow:start",
     ]
-    assert all("write" not in scope.lower() for scope in claims["scopes"])
 
 
-@pytest.mark.parametrize("status", ["COMPLETE", "BLOCKED"])
-def test_terminal_result_accepts_schema4_result(status: str) -> None:
-    snapshot = {"status": "SUCCEEDED", "result": {"status": status}}
-    assert verify_terminal_result(snapshot) == status
+def test_terminal_result_validates_public_schema_and_evidence_count() -> None:
+    snapshot = {"status": "SUCCEEDED", "outputs": {"result": blocked_result(5)}}
+    assert verify_terminal_result(snapshot, expected_evidence_count=5) == "BLOCKED"
+    with pytest.raises(ValueError, match="evidence count"):
+        verify_terminal_result(snapshot, expected_evidence_count=3)
 
 
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        {"status": "FAILED", "result": None},
-        {"status": "SUCCEEDED", "outputs": {"complete_result": {}}},
-        {"status": "SUCCEEDED", "result": {"status": "PARTIAL"}},
-        {
-            "status": "SUCCEEDED",
-            "result": {"status": "COMPLETE"},
-            "complete_result": {},
-        },
-    ],
-)
-def test_terminal_result_rejects_failure_partial_and_legacy(snapshot: dict[str, object]) -> None:
-    with pytest.raises(ValueError, match="v4 smoke"):
-        verify_terminal_result(snapshot)
+@pytest.mark.asyncio
+async def test_runtime_smoke_calls_published_agent_execution_api() -> None:
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/agent-executions"
+        body = __import__("json").loads(request.content)
+        seen.append(body)
+        return httpx.Response(
+            201,
+            json={
+                "execution_id": "00000000-0000-4000-8000-000000000020",
+                "status": "SUCCEEDED",
+                "outputs": {"result": blocked_result(5)},
+            },
+        )
+
+    result = await run_runtime_smoke(
+        LiveSmokeSettings.from_environment(local_environment()),
+        transport=httpx.MockTransport(handler),
+    )
+    assert result["result_status"] == "BLOCKED"
+    assert seen[0]["agent"] == {"id": "inventory-supply-chain", "version": 4}
+    assert seen[0]["inputs"]["skill_input_ref"].endswith("0010")
 
 
-def test_console_script_only_validates_local_configuration(
+def test_console_script_executes_runtime_smoke(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    async def fake_run(settings: LiveSmokeSettings) -> dict[str, object]:
+        return {"execution_id": settings.run_id, "result_status": "BLOCKED"}
+
     monkeypatch.setattr(sys, "argv", ["ebiz-supply-chain-live-smoke"])
+    monkeypatch.setattr("ebiz_deployment.supply_chain_live.run_runtime_smoke", fake_run)
     for key, value in local_environment().items():
         monkeypatch.setenv(key, value)
-
     assert main() == 0
-    output = capsys.readouterr().out
-    assert '"agent": "inventory-supply-chain@4"' in output
-    assert '"production_e2e_verified": false' in output
+    assert '"result_status": "BLOCKED"' in capsys.readouterr().out

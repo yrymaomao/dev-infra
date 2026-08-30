@@ -273,7 +273,11 @@ def load_deployment_config(
         policy = PluginHostPolicy.model_validate_json(json.dumps(policy_document))
     except ValidationError as error:
         raise ValueError(_safe_validation_message("Runtime plugin policy", error)) from None
-    _validate_supply_chain_policy(policy)
+    allow_local_fixture = (
+        environ.get("APP_ENV", "").strip() == "local_dev"
+        and environ.get("LOCAL_DEV_E2E", "").strip().lower() == "true"
+    )
+    _validate_supply_chain_policy(policy, allow_local_fixture=allow_local_fixture)
     return config.model_copy(update={"runtime_plugin_policy": policy})
 
 
@@ -301,10 +305,16 @@ def _expand_environment(value: object, environ: Mapping[str, str]) -> object:
     return value
 
 
-def _validate_supply_chain_policy(policy: PluginHostPolicy) -> None:
-    if len(policy.plugins) != 1:
-        raise ValueError("Runtime plugin policy must contain only the Supply Chain plugin")
-    plugin = policy.plugins[0]
+def _validate_supply_chain_policy(
+    policy: PluginHostPolicy, *, allow_local_fixture: bool = False
+) -> None:
+    by_id = {item.plugin_id: item for item in policy.plugins}
+    expected_ids = {"supply-chain-planning"}
+    if allow_local_fixture:
+        expected_ids.add("deployment.fixture.governed-artifact")
+    if len(by_id) != len(policy.plugins) or set(by_id) != expected_ids:
+        raise ValueError("Runtime plugin policy contains an unapproved plugin set")
+    plugin = by_id["supply-chain-planning"]
     expected_permissions = frozenset({"supply_chain.preview"})
     if (
         plugin.plugin_id != "supply-chain-planning"
@@ -317,6 +327,18 @@ def _validate_supply_chain_policy(policy: PluginHostPolicy) -> None:
         or plugin.config
     ):
         raise ValueError("Runtime plugin policy is not the exact read-only Supply Chain pin")
+    if allow_local_fixture:
+        fixture = by_id["deployment.fixture.governed-artifact"]
+        if (
+            fixture.version != "1.0.0"
+            or fixture.package_name != "ebiz-deployment-local-evidence-fixture"
+            or fixture.entry_point != "ebiz_deployment_local_fixture.plugin:factory"
+            or fixture.permissions != frozenset({"deployment.fixture.read"})
+            or fixture.network_targets
+            or fixture.secret_names
+            or fixture.config
+        ):
+            raise ValueError("Runtime local fixture policy is not the exact deterministic pin")
 
 
 def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:

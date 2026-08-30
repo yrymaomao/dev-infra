@@ -32,13 +32,16 @@ python -m agent_runtime.cli.capability_publish `
   --manifest <catalog-contract-root>\capabilities.yaml `
   --contract-root <catalog-contract-root> `
   --policy <publisher-policy> `
+  --base-ai-provider-attestation <base-ai-provider-attestation.json> `
   --tenant-id <tenant> --actor-id <uuid> --trace-id <trace>
 ```
 
-`ebiz_deployment.release.build_capability_publish_commands()` produces the
-auditable argument vectors for all three Catalogs. After publication,
-`build_agent_draft_payload()` produces the exact ten capability pins and the
-workflow pin consumed by Runtime's existing Agent draft/publish API.
+`write_base_ai_provider_attestation()` writes Runtime's closed, credential-free
+attestation document from the exact Deployment pins. It contains the three
+`BaseAIProviderDeployment` records and their `PluginHostPolicy`, never resolved
+secrets. `build_capability_publish_commands()` supplies that attestation to all
+three Runtime publisher calls. After publication, the release client uses the
+existing Workflow draft/validate/publish and Agent draft/publish APIs.
 
 ## Configuration and security
 
@@ -68,13 +71,23 @@ symlinked, wrong-version, or wrong-entry-point distributions are rejected.
 ## Deterministic local and real-dev
 
 `ebiz-local-dev-assets` creates ignored local configuration with deterministic
-ERP Evidence and a loopback structured-model endpoint. It is suitable only for
-`LOCAL_DEV_E2E`: `real_erp_calls=false`, `production_model_calls=false`, and
-`production_e2e_verified=false`.
+ERP responses, a loopback structured-model endpoint, an exact Base AI provider
+attestation, and Skill JSON seed bytes. A Skill file path is never passed to
+the Agent: `SUPPLY_CHAIN_SKILL_INPUT_REF` must be populated with a governed
+Runtime EvidenceRef UUID after those bytes are stored through Runtime's
+PayloadStore/EvidenceStore seam. The separately built
+`ebiz-deployment-local-evidence-fixture` wheel supplies a local-only Catalog
+and inert Provider for truthful provenance; it is not an Agent import or a
+production/real-dev pin. Publish that Catalog with Runtime's existing
+`agent_runtime.cli.capability_publish`, then run
+`ebiz-local-dev-skill-seed`. The seed command accepts only
+`APP_ENV=local_dev` plus `LOCAL_DEV_E2E=true`, verifies the generated file
+digest, and prints only the stable EvidenceRef UUID for
+`SUPPLY_CHAIN_SKILL_INPUT_REF`.
 
-The live-smoke command validates that local v4 input is `NA_COMPANY` and
-AUTO/FBM, then emits Runtime API launch metadata. Runtime remains responsible
-for execution and persistence:
+The live-smoke command validates flat v4 input, starts the published Agent via
+`POST /v1/agent-executions`, polls Runtime, validates the public result Schema,
+and requires the exact materialized EvidenceRef count:
 
 ```powershell
 .venv-deployment\Scripts\ebiz-supply-chain-live-smoke.exe
@@ -96,7 +109,9 @@ there is no approved Runtime Dockerfile in this repository.
 Build every local package into an artifact directory under
 `C:\ebizhub\.local`, including Runtime/contracts/workflow, Base AI and its
 three Adapters, Agent v4, the three capability wheels, and this deployment
-wheel. Install from those wheels into a new environment with `--no-index` and
+wheel. Include the separate local-evidence fixture wheel only in the
+deterministic-local wheelhouse; production and real-dev attestations must not
+contain it. Install from those wheels into a new environment with `--no-index` and
 `--no-deps` only after all dependency wheels are present; do not use editable
 sources for the clean-wheel proof.
 
@@ -119,6 +134,8 @@ uv build --wheel --no-sources --out-dir C:\ebizhub\.local\deployment-v4-wheel
 - real-dev ERP MCP, real model, UAT data, owner approval, and production
   credentials/data are pending. No result from this repository is production
   E2E.
-- Runtime must propagate the trusted bound credential resolver into the MCP
-  bootstrap context before the X-MCP-Key composition can start; Deployment
-  intentionally fails closed until that generic Runtime path is available.
+- A deterministic local Agent E2E must still publish the local fixture Catalog,
+  seed the generated Skill through Runtime's governed stores, publish the v4
+  Catalogs/Workflow/Agent, and run the live smoke against started PostgreSQL,
+  Redis, MinIO, Runtime, and providers. The implementation does not treat a raw
+  path or direct database row as evidence.

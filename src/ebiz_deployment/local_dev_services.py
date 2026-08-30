@@ -112,14 +112,14 @@ def create_provider_app() -> FastAPI:
     return app
 
 
-class _BearerProtectedApp:
+class _McpKeyProtectedApp:
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             headers = {key.lower(): value for key, value in scope.get("headers", [])}
-            if headers.get(b"authorization") != f"Bearer {REQUEST_ACCESS_TOKEN}".encode():
+            if headers.get(b"x-mcp-key") != REQUEST_ACCESS_TOKEN.encode():
                 response = HTTPException(status_code=401, detail="invalid local MCP authorization")
                 payload = json.dumps({"detail": response.detail}).encode()
                 await send(
@@ -138,7 +138,7 @@ class _BearerProtectedApp:
 
 
 def create_mcp_app() -> ASGIApp:
-    """Create a bearer-protected, stateless MCP inventory service."""
+    """Create an X-Mcp-Key protected, stateless MCP inventory service."""
     server = MCPServer("ebiz-local-dev-inventory", version="1.0.0", log_level="WARNING")
 
     @server.tool(name="query_sku_identity", structured_output=True)
@@ -224,7 +224,7 @@ def create_mcp_app() -> ASGIApp:
         json_response=True,
         host="127.0.0.1",
     )
-    return _BearerProtectedApp(cast(ASGIApp, app))
+    return _McpKeyProtectedApp(cast(ASGIApp, app))
 
 
 def _required_text(body: dict[str, Any], name: str) -> str:

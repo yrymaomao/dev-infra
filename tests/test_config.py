@@ -225,6 +225,44 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
     assert config.base_ai_providers[0].package_digest == "a" * 64
 
 
+def test_local_fixture_policy_is_allowed_only_for_deterministic_local(tmp_path: Path) -> None:
+    runtime_policy = tmp_path / "runtime-policy.json"
+    write_runtime_policy(runtime_policy, tmp_path)
+    policy = json.loads(runtime_policy.read_text(encoding="utf-8"))
+    policy["plugins"].append(
+        {
+            "plugin_id": "deployment.fixture.governed-artifact",
+            "version": "1.0.0",
+            "package_name": "ebiz-deployment-local-evidence-fixture",
+            "entry_point": "ebiz_deployment_local_fixture.plugin:factory",
+            "package_digest": "3" * 64,
+            "permissions": ["deployment.fixture.read"],
+            "network_targets": [],
+            "secret_names": [],
+            "config": {},
+        }
+    )
+    runtime_policy.write_text(json.dumps(policy), encoding="utf-8")
+    config_path = tmp_path / "deployment.json"
+    config_path.write_text(json.dumps(deployment_document(runtime_policy)), encoding="utf-8")
+    local_env = {
+        **deployment_env(runtime_policy),
+        "APP_ENV": "local_dev",
+        "LOCAL_DEV_E2E": "true",
+    }
+
+    loaded = load_module().load_deployment_config(config_path, local_env)
+    assert {item.plugin_id for item in loaded.runtime_plugin_policy.plugins} == {
+        "deployment.fixture.governed-artifact",
+        "supply-chain-planning",
+    }
+    with pytest.raises(ValueError, match="unapproved plugin set"):
+        load_module().load_deployment_config(
+            config_path,
+            {**deployment_env(runtime_policy), "APP_ENV": "production"},
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_name"),
     [

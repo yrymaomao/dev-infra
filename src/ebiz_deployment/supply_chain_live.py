@@ -8,6 +8,7 @@ directly to the Runtime database.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -15,9 +16,15 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib import metadata
+from pathlib import Path
+from time import monotonic
 from uuid import UUID
 
+import httpx
 import jwt
+import yaml
+from jsonschema import Draft202012Validator
 
 _CREDENTIAL_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _MARKET_SCOPE = "NA_COMPANY"
@@ -39,6 +46,7 @@ class LiveSmokeSettings:
     tenant_id: str
     credential_ref: str = field(repr=False)
     sku: str
+    skill_input_ref: str
     snapshot_time: str
     expected_evidence_count: int
     local_dev_e2e: bool
@@ -55,6 +63,7 @@ class LiveSmokeSettings:
         tenant_id = _required(environ, "SUPPLY_CHAIN_TENANT_ID")
         credential_ref = _required(environ, "SUPPLY_CHAIN_CREDENTIAL_REF")
         sku = _required(environ, "SUPPLY_CHAIN_SKU")
+        skill_input_ref = _required(environ, "SUPPLY_CHAIN_SKILL_INPUT_REF")
         snapshot_time = _required(environ, "SUPPLY_CHAIN_SNAPSHOT_TIME")
         jwt_secret = _required(environ, "APP_JWT_SECRET")
         market_scope = _required(environ, "SUPPLY_CHAIN_MARKET_SCOPE")
@@ -83,6 +92,7 @@ class LiveSmokeSettings:
             tenant_id=tenant_id,
             credential_ref=credential_ref,
             sku=sku,
+            skill_input_ref=skill_input_ref,
             snapshot_time=snapshot_time,
             expected_evidence_count=evidence_count,
             local_dev_e2e=True,
@@ -93,12 +103,11 @@ class LiveSmokeSettings:
     def inputs(self) -> dict[str, object]:
         return {
             "run_id": self.run_id,
-            "scope": {
-                "market_scope": self.market_scope,
-                "sku": self.sku,
-                "snapshot_time": self.snapshot_time,
-                "fulfillment_mode": "AUTO",
-            },
+            "market_scope": self.market_scope,
+            "sku": self.sku,
+            "snapshot_time": self.snapshot_time,
+            "skill_input_ref": self.skill_input_ref,
+            "fulfillment_mode": "AUTO",
         }
 
     @property
@@ -144,20 +153,90 @@ def issue_smoke_token(
     )
 
 
-def verify_terminal_result(snapshot: Mapping[str, object]) -> str:
-    """Accept one schema-4 terminal result and reject partial/legacy outputs."""
+def verify_terminal_result(snapshot: Mapping[str, object], *, expected_evidence_count: int) -> str:
+    """Validate one schema-4 public result and its materialized evidence count."""
 
     if snapshot.get("status") != "SUCCEEDED":
         raise ValueError("v4 smoke did not reach a successful terminal result")
-    result = snapshot.get("result")
-    if not isinstance(result, Mapping):
+    outputs = snapshot.get("outputs")
+    if not isinstance(outputs, Mapping) or set(outputs) != {"result"}:
         raise ValueError("v4 smoke omitted the Runtime terminal result")
+    result = outputs["result"]
+    if not isinstance(result, dict):
+        raise ValueError("v4 smoke omitted the Runtime terminal result")
+    errors = sorted(_result_validator().iter_errors(result), key=lambda item: list(item.path))
+    if errors:
+        raise ValueError("v4 smoke returned a result that violates the public contract")
+    evidence = result["evidence"]
+    if not isinstance(evidence, list) or len(evidence) != expected_evidence_count:
+        raise ValueError("v4 smoke returned the wrong materialized evidence count")
     result_status = result.get("status")
-    if result_status not in {"COMPLETE", "BLOCKED"}:
-        raise ValueError("v4 smoke returned an invalid terminal result")
-    if "complete_result" in snapshot or "blocked_result" in snapshot:
+    if "complete_result" in outputs or "blocked_result" in outputs:
         raise ValueError("v4 smoke returned legacy branch projections")
     return str(result_status)
+
+
+def _result_validator() -> Draft202012Validator:
+    distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
+    schema_path = Path(
+        str(distribution.locate_file("inventory_supply_chain_agent/schemas/result.schema.yaml"))
+    )
+    schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise ValueError("Supply Chain result schema is unavailable")
+    return Draft202012Validator(schema)
+
+
+async def run_runtime_smoke(
+    settings: LiveSmokeSettings,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, object]:
+    """Start the published Agent through Runtime and verify its terminal result."""
+
+    token = issue_smoke_token(
+        tenant_id=settings.tenant_id,
+        credential_ref=settings.credential_ref,
+        secret=settings.jwt_secret,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    timeout = httpx.Timeout(30.0)
+    async with httpx.AsyncClient(
+        base_url=settings.api_url,
+        headers=headers,
+        timeout=timeout,
+        transport=transport,
+    ) as client:
+        response = await client.post(
+            "/v1/agent-executions",
+            json={
+                "agent": {"id": settings.agent_id, "version": settings.agent_version},
+                "workflow": {"code": settings.workflow_code, "version": settings.workflow_version},
+                "inputs": settings.inputs,
+                "idempotency_key": settings.run_id,
+            },
+        )
+        response.raise_for_status()
+        snapshot = response.json()
+        execution_id = snapshot.get("execution_id")
+        if not isinstance(execution_id, str):
+            raise ValueError("v4 smoke omitted the Runtime execution id")
+        deadline = monotonic() + 120.0
+        while snapshot.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED", "REJECTED"}:
+            if monotonic() >= deadline:
+                raise ValueError("v4 smoke timed out")
+            await asyncio.sleep(0.25)
+            response = await client.get(f"/v1/executions/{execution_id}")
+            response.raise_for_status()
+            snapshot = response.json()
+    result_status = verify_terminal_result(
+        snapshot, expected_evidence_count=settings.expected_evidence_count
+    )
+    return {
+        "execution_id": execution_id,
+        "result_status": result_status,
+        **settings.call_provenance,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -171,21 +250,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         settings = LiveSmokeSettings.from_environment(os.environ)
-    except ValueError:
+        result = asyncio.run(run_runtime_smoke(settings))
+    except (ValueError, httpx.HTTPError):
         print("Supply Chain v4 local smoke configuration failed", file=sys.stderr)
         return 1
-    print(
-        json.dumps(
-            {
-                "agent": f"{settings.agent_id}@{settings.agent_version}",
-                "workflow": f"{settings.workflow_code}@{settings.workflow_version}",
-                "run_id": settings.run_id,
-                **settings.call_provenance,
-                "ready_for_runtime_api": True,
-            },
-            sort_keys=True,
-        )
-    )
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 
@@ -196,4 +265,10 @@ def _required(environ: Mapping[str, str], name: str) -> str:
     return value
 
 
-__all__ = ["LiveSmokeSettings", "issue_smoke_token", "main", "verify_terminal_result"]
+__all__ = [
+    "LiveSmokeSettings",
+    "issue_smoke_token",
+    "main",
+    "run_runtime_smoke",
+    "verify_terminal_result",
+]

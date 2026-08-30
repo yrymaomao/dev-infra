@@ -1,0 +1,19 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  Request:
+    type: object
+    additionalProperties: false
+    required: [content_sha256]
+    properties:
+      content_sha256:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+  Response:
+    type: object
+    additionalProperties: false
+    required: [content_sha256]
+    properties:
+      content_sha256:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+
