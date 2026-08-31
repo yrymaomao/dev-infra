@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 from agent_runtime.api.agents import AgentDraftRequest, AgentPublishRequest
@@ -19,6 +21,7 @@ from agent_runtime.registry.capability_manifest import (
     CapabilityCatalogPublication,
     load_capability_publication,
 )
+from ebiz_runtime_contracts import canonical_json_bytes
 from workflow_runtime.authoring.resources import load_resource_bundle
 
 from .attestation import (
@@ -35,6 +38,7 @@ _WORKFLOW_RESOURCES = (
     "schemas/seasonality-analysis.schema.yaml",
     "schemas/skill.schema.yaml",
 )
+_SHA256 = re.compile(r"^[a-f0-9]{64}$")
 
 
 def load_public_capability_catalogs(
@@ -275,6 +279,181 @@ def build_workflow_draft_payload(
     return payload
 
 
+def _response_object(response: httpx.Response, label: str) -> dict[str, object]:
+    document = response.json()
+    if not isinstance(document, dict):
+        raise ValueError(f"{label} response must be an object")
+    return dict(document)
+
+
+def _version_id(document: Mapping[str, object], label: str) -> str:
+    value = document.get("version_id")
+    if not isinstance(value, str):
+        raise ValueError(f"{label} response omitted version_id")
+    try:
+        UUID(value)
+    except ValueError:
+        raise ValueError(f"{label} response has an invalid version_id") from None
+    return value
+
+
+def _non_negative_row_version(document: Mapping[str, object], field: str, label: str) -> int:
+    value = document.get(field)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{label} response has an invalid {field}")
+    return value
+
+
+def _digest(document: Mapping[str, object], field: str, label: str) -> str:
+    value = document.get(field)
+    if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+        raise ValueError(f"{label} response has an invalid {field}")
+    return value
+
+
+def _mapping_list(
+    document: Mapping[str, object], field: str, label: str
+) -> list[dict[str, object]]:
+    value = document.get(field)
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"{label} response has invalid {field}")
+    return [dict(item) for item in value]
+
+
+def _verify_workflow_draft_response(
+    document: Mapping[str, object], payload: Mapping[str, object]
+) -> tuple[str, int]:
+    version_id = _version_id(document, "Workflow draft")
+    if (
+        document.get("code") != payload["code"]
+        or document.get("version") != payload["version"]
+        or document.get("status") != "DRAFT"
+        or document.get("resources") != payload["resources"]
+    ):
+        raise ValueError("Workflow draft response differs from the exact request")
+    row_version = _non_negative_row_version(document, "definition_row_version", "Workflow draft")
+    return version_id, row_version
+
+
+def _verify_workflow_validation_response(
+    document: Mapping[str, object], *, version_id: str, definition_row_version: int
+) -> str:
+    if (
+        _version_id(document, "Workflow validation") != version_id
+        or document.get("status") != "VALIDATED"
+        or _non_negative_row_version(document, "definition_row_version", "Workflow validation")
+        != definition_row_version
+    ):
+        raise ValueError("Workflow validation response differs from the exact draft")
+    return _digest(document, "checksum", "Workflow validation")
+
+
+def _verify_workflow_publish_response(
+    document: Mapping[str, object],
+    *,
+    payload: Mapping[str, object],
+    version_id: str,
+    checksum: str,
+    validated_row_version: int,
+) -> None:
+    if (
+        _version_id(document, "Workflow publication") != version_id
+        or document.get("code") != payload["code"]
+        or document.get("version") != payload["version"]
+        or _digest(document, "checksum", "Workflow publication") != checksum
+        or _non_negative_row_version(document, "definition_row_version", "Workflow publication")
+        != validated_row_version + 1
+    ):
+        raise ValueError("Workflow publication response differs from the exact validated draft")
+
+
+def _verify_agent_draft_response(
+    document: Mapping[str, object], payload: Mapping[str, object]
+) -> tuple[str, int, int]:
+    version_id = _version_id(document, "Agent draft")
+    manifest = payload["manifest"]
+    expected_digest = hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
+    if (
+        document.get("code") != payload["code"]
+        or document.get("version") != payload["version"]
+        or document.get("status") != "DRAFT"
+        or _digest(document, "content_digest", "Agent draft") != expected_digest
+        or document.get("max_hosting_level") != payload["max_hosting_level"]
+        or document.get("workflow_pins") != payload["workflow_pins"]
+        or document.get("capability_pins") != payload["capability_pins"]
+    ):
+        raise ValueError("Agent draft response differs from the exact request")
+    definition_row_version = _non_negative_row_version(
+        document, "definition_row_version", "Agent draft"
+    )
+    row_version = _non_negative_row_version(document, "row_version", "Agent draft")
+    return version_id, definition_row_version, row_version
+
+
+def _verify_agent_publish_response(
+    document: Mapping[str, object],
+    *,
+    payload: Mapping[str, object],
+    version_id: str,
+    workflow_checksum: str,
+    draft_definition_row_version: int,
+    draft_row_version: int,
+) -> None:
+    workflow_pins = _mapping_list(document, "workflow_pins", "Agent publication")
+    capability_pins = _mapping_list(document, "capability_pins", "Agent publication")
+    expected_workflow_pins = payload["workflow_pins"]
+    expected_capability_pins = payload["capability_pins"]
+    if len(workflow_pins) != 1 or not isinstance(expected_workflow_pins, list):
+        raise ValueError("Agent publication response has invalid workflow pins")
+    workflow_pin = workflow_pins[0]
+    if {key: workflow_pin.get(key) for key in ("code", "version")} != expected_workflow_pins[
+        0
+    ] or _digest(
+        workflow_pin, "ir_checksum", "Agent publication workflow pin"
+    ) != workflow_checksum:
+        raise ValueError("Agent publication response differs from the exact workflow pin")
+    if not isinstance(expected_capability_pins, list) or len(capability_pins) != len(
+        expected_capability_pins
+    ):
+        raise ValueError("Agent publication response differs from the exact capability pins")
+    actual_capability_identities: set[tuple[object, object]] = set()
+    for pin in capability_pins:
+        actual_capability_identities.add((pin.get("code"), pin.get("version")))
+        _digest(pin, "content_digest", "Agent publication capability pin")
+    expected_capability_identities = {
+        (pin.get("code"), pin.get("version"))
+        for pin in expected_capability_pins
+        if isinstance(pin, dict)
+    }
+    if (
+        len(actual_capability_identities) != len(capability_pins)
+        or actual_capability_identities != expected_capability_identities
+    ):
+        raise ValueError("Agent publication response differs from the exact capability pins")
+    expected_content_digest = hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "manifest": payload["manifest"],
+                "workflow_pins": workflow_pins,
+                "capability_pins": capability_pins,
+            }
+        )
+    ).hexdigest()
+    if (
+        _version_id(document, "Agent publication") != version_id
+        or document.get("code") != payload["code"]
+        or document.get("version") != payload["version"]
+        or document.get("status") != "PUBLISHED"
+        or _digest(document, "content_digest", "Agent publication") != expected_content_digest
+        or document.get("max_hosting_level") != payload["max_hosting_level"]
+        or _non_negative_row_version(document, "definition_row_version", "Agent publication")
+        != draft_definition_row_version + 1
+        or _non_negative_row_version(document, "row_version", "Agent publication")
+        != draft_row_version + 1
+    ):
+        raise ValueError("Agent publication response differs from the exact draft")
+
+
 async def publish_workflow_and_agent(
     client: httpx.AsyncClient,
     *,
@@ -290,43 +469,67 @@ async def publish_workflow_and_agent(
         or workflow_payload.get("version") != release.workflow_version
     ):
         raise ValueError("Workflow draft differs from the exact release identity")
+    DraftRequest.model_validate(workflow_payload)
     manifest = agent_payload.get("manifest")
+    expected_manifest = {
+        "distribution": release.agent_distribution,
+        "distribution_version": release.agent_distribution_version,
+        "record_digest": release.agent_record_digest,
+    }
     if (
-        not isinstance(manifest, dict)
-        or manifest.get("record_digest") != release.agent_record_digest
+        agent_payload.get("code") != release.agent_id
+        or agent_payload.get("version") != release.agent_version
+        or manifest != expected_manifest
+        or agent_payload.get("workflow_pins")
+        != [{"code": release.workflow_code, "version": release.workflow_version}]
     ):
-        raise ValueError("Agent draft differs from the exact attested release")
+        raise ValueError("Agent draft differs from the exact release identity")
+    AgentDraftRequest.model_validate(agent_payload)
 
     workflow_draft = await client.post("/v1/workflows/drafts", json=workflow_payload)
     workflow_draft.raise_for_status()
-    workflow_id = workflow_draft.json().get("version_id")
-    if not isinstance(workflow_id, str):
-        raise ValueError("Workflow draft response omitted version_id")
+    workflow_id, workflow_definition_row = _verify_workflow_draft_response(
+        _response_object(workflow_draft, "Workflow draft"), workflow_payload
+    )
     validated = await client.post(f"/v1/workflows/versions/{workflow_id}/validate")
     validated.raise_for_status()
-    workflow_row = validated.json().get("definition_row_version")
-    if not isinstance(workflow_row, int):
-        raise ValueError("Workflow validation omitted row version")
-    workflow_publish = PublishRequest(expected_row_version=workflow_row).model_dump()
+    validated_document = _response_object(validated, "Workflow validation")
+    workflow_checksum = _verify_workflow_validation_response(
+        validated_document,
+        version_id=workflow_id,
+        definition_row_version=workflow_definition_row,
+    )
+    workflow_publish = PublishRequest(expected_row_version=workflow_definition_row).model_dump()
     published = await client.post(
         f"/v1/workflows/versions/{workflow_id}/publish", json=workflow_publish
     )
     published.raise_for_status()
-    if published.json().get("checksum") != validated.json().get("checksum"):
-        raise ValueError("published Workflow checksum differs from validation")
+    _verify_workflow_publish_response(
+        _response_object(published, "Workflow publication"),
+        payload=workflow_payload,
+        version_id=workflow_id,
+        checksum=workflow_checksum,
+        validated_row_version=workflow_definition_row,
+    )
 
-    AgentDraftRequest.model_validate(agent_payload)
     agent_draft = await client.post("/v1/agents/drafts", json=agent_payload)
     agent_draft.raise_for_status()
-    agent_id = agent_draft.json().get("version_id")
-    agent_row = agent_draft.json().get("row_version")
-    if not isinstance(agent_id, str) or not isinstance(agent_row, int):
-        raise ValueError("Agent draft response omitted publication identity")
-    agent_publish = AgentPublishRequest(expected_row_version=agent_row).model_dump()
+    agent_id, agent_definition_row, agent_row = _verify_agent_draft_response(
+        _response_object(agent_draft, "Agent draft"), agent_payload
+    )
+    agent_publish = AgentPublishRequest(expected_row_version=agent_definition_row).model_dump()
     published_agent = await client.post(
         f"/v1/agents/versions/{agent_id}/publish", json=agent_publish
     )
     published_agent.raise_for_status()
+    _verify_agent_publish_response(
+        _response_object(published_agent, "Agent publication"),
+        payload=agent_payload,
+        version_id=agent_id,
+        workflow_checksum=workflow_checksum,
+        draft_definition_row_version=agent_definition_row,
+        draft_row_version=agent_row,
+    )
     return workflow_id, agent_id
 
 

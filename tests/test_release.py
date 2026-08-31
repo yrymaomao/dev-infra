@@ -12,6 +12,7 @@ from agent_runtime.base_ai.composition import (
 )
 from agent_runtime.registry.capability_manifest import CapabilityPublicationError
 from base_ai.providers import discover_provider_factory_descriptors
+from ebiz_runtime_contracts import canonical_json_bytes
 from test_config import deployment_document, deployment_env, write_runtime_policy
 
 from ebiz_deployment.config import DeploymentCompositionConfig
@@ -32,6 +33,9 @@ CONTRACT_ROOTS = {
     "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts",
     "supply-chain.planning": AGENTS / "capabilities/supply-chain/contracts",
 }
+WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
+AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
+WORKFLOW_CHECKSUM = "a" * 64
 
 
 def release_config(tmp_path: Path) -> DeploymentCompositionConfig:
@@ -51,6 +55,119 @@ def _expand_test_environment(value: object, environ: dict[str, str]) -> object:
     if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
         return environ[value[2:-1]]
     return value
+
+
+def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, object]]:
+    workflow = {
+        "code": "inventory-supply-chain-daily",
+        "name": "Supply Chain Expert v4",
+        "version": 4,
+        "source_yaml": "spec_version: ebizhub.workflow/v1.3\n",
+        "resources": {},
+    }
+    agent = {
+        "code": "inventory-supply-chain",
+        "name": "Supply Chain Expert",
+        "version": 4,
+        "manifest": {
+            "distribution": "ebiz-agent-inventory-supply-chain",
+            "distribution_version": "4.0.0",
+            "record_digest": release.agent_record_digest,  # type: ignore[attr-defined]
+        },
+        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 4}],
+        "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(10)],
+        "max_hosting_level": "ADVISORY",
+    }
+    return workflow, agent
+
+
+def _valid_release_responses(
+    workflow: dict[str, object], agent: dict[str, object]
+) -> dict[str, tuple[int, dict[str, object]]]:
+    manifest = agent["manifest"]
+    workflow_pins = [
+        {
+            "code": "inventory-supply-chain-daily",
+            "version": 4,
+            "ir_checksum": WORKFLOW_CHECKSUM,
+        }
+    ]
+    capability_pins = [
+        {**pin, "content_digest": f"{index + 1:064x}"}
+        for index, pin in enumerate(agent["capability_pins"])  # type: ignore[arg-type]
+    ]
+    published_digest = hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "manifest": manifest,
+                "workflow_pins": workflow_pins,
+                "capability_pins": capability_pins,
+            }
+        )
+    ).hexdigest()
+    draft_digest = hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
+    return {
+        "/v1/workflows/drafts": (
+            201,
+            {
+                "version_id": WORKFLOW_VERSION_ID,
+                "code": workflow["code"],
+                "version": workflow["version"],
+                "status": "DRAFT",
+                "definition_row_version": 2,
+                "resources": workflow["resources"],
+            },
+        ),
+        f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/validate": (
+            200,
+            {
+                "version_id": WORKFLOW_VERSION_ID,
+                "status": "VALIDATED",
+                "definition_row_version": 2,
+                "checksum": WORKFLOW_CHECKSUM,
+            },
+        ),
+        f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/publish": (
+            200,
+            {
+                "version_id": WORKFLOW_VERSION_ID,
+                "code": workflow["code"],
+                "version": workflow["version"],
+                "checksum": WORKFLOW_CHECKSUM,
+                "definition_row_version": 3,
+            },
+        ),
+        "/v1/agents/drafts": (
+            201,
+            {
+                "version_id": AGENT_VERSION_ID,
+                "code": agent["code"],
+                "version": agent["version"],
+                "status": "DRAFT",
+                "content_digest": draft_digest,
+                "max_hosting_level": agent["max_hosting_level"],
+                "workflow_pins": agent["workflow_pins"],
+                "capability_pins": agent["capability_pins"],
+                "definition_row_version": 4,
+                "row_version": 0,
+            },
+        ),
+        f"/v1/agents/versions/{AGENT_VERSION_ID}/publish": (
+            200,
+            {
+                "version_id": AGENT_VERSION_ID,
+                "code": agent["code"],
+                "version": agent["version"],
+                "status": "PUBLISHED",
+                "content_digest": published_digest,
+                "max_hosting_level": agent["max_hosting_level"],
+                "workflow_pins": workflow_pins,
+                "capability_pins": capability_pins,
+                "definition_row_version": 5,
+                "row_version": 1,
+            },
+        ),
+    }
 
 
 def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins(
@@ -205,44 +322,18 @@ async def test_release_uses_existing_workflow_and_agent_publish_apis(
 ) -> None:
     calls: list[str] = []
 
+    release = release_config(tmp_path).supply_chain_release
+    workflow, agent = _release_payloads(release)
+    responses = _valid_release_responses(workflow, agent)
+
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
-        responses = {
-            "/v1/workflows/drafts": (201, {"version_id": "workflow-v4"}),
-            "/v1/workflows/versions/workflow-v4/validate": (
-                200,
-                {"definition_row_version": 2, "checksum": "canonical-v4"},
-            ),
-            "/v1/workflows/versions/workflow-v4/publish": (
-                200,
-                {"checksum": "canonical-v4"},
-            ),
-            "/v1/agents/drafts": (201, {"version_id": "agent-v4", "row_version": 3}),
-            "/v1/agents/versions/agent-v4/publish": (200, {"status": "PUBLISHED"}),
-        }
         status, body = responses[request.url.path]
         return httpx.Response(status, json=body)
 
-    release = release_config(tmp_path).supply_chain_release
     monkeypatch.setattr("ebiz_deployment.release.verify_installed_release", lambda value: None)
-    workflow = {
-        "code": "inventory-supply-chain-daily",
-        "name": "Supply Chain Expert v4",
-        "version": 4,
-        "source_yaml": "spec_version: ebizhub.workflow/v1.3\n",
-        "resources": {},
-    }
-    agent = {
-        "code": "inventory-supply-chain",
-        "name": "Supply Chain Expert",
-        "version": 4,
-        "manifest": {"record_digest": release.agent_record_digest},
-        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 4}],
-        "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(10)],
-        "max_hosting_level": "ADVISORY",
-    }
     async with httpx.AsyncClient(
-        base_url="http://runtime.local", transport=httpx.MockTransport(handler)
+        base_url="http://runtime.example", transport=httpx.MockTransport(handler)
     ) as client:
         identities = await publish_workflow_and_agent(
             client,
@@ -251,14 +342,166 @@ async def test_release_uses_existing_workflow_and_agent_publish_apis(
             agent_payload=agent,
         )
 
-    assert identities == ("workflow-v4", "agent-v4")
+    assert identities == (WORKFLOW_VERSION_ID, AGENT_VERSION_ID)
     assert calls == [
         "/v1/workflows/drafts",
-        "/v1/workflows/versions/workflow-v4/validate",
-        "/v1/workflows/versions/workflow-v4/publish",
+        f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/validate",
+        f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/publish",
         "/v1/agents/drafts",
-        "/v1/agents/versions/agent-v4/publish",
+        f"/v1/agents/versions/{AGENT_VERSION_ID}/publish",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["agent_code", "agent_version", "manifest_distribution", "manifest_version", "workflow_pin"],
+)
+async def test_release_rejects_inexact_agent_input_before_any_runtime_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    release = release_config(tmp_path).supply_chain_release
+    workflow, agent = _release_payloads(release)
+    if case == "agent_code":
+        agent["code"] = "other-agent"
+    elif case == "agent_version":
+        agent["version"] = 5
+    elif case == "manifest_distribution":
+        agent["manifest"]["distribution"] = "other-distribution"  # type: ignore[index]
+    elif case == "manifest_version":
+        agent["manifest"]["distribution_version"] = "5.0.0"  # type: ignore[index]
+    else:
+        agent["workflow_pins"] = [{"code": "other-workflow", "version": 4}]
+    monkeypatch.setattr("ebiz_deployment.release.verify_installed_release", lambda value: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected Runtime call: {request.url.path}")
+
+    async with httpx.AsyncClient(
+        base_url="http://runtime.example", transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(ValueError, match="Agent draft differs"):
+            await publish_workflow_and_agent(
+                client,
+                release=release,
+                workflow_payload=workflow,
+                agent_payload=agent,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("endpoint", "field", "bad_value"),
+    [
+        ("workflow_draft", "version_id", "not-a-uuid"),
+        ("workflow_draft", "code", "other-workflow"),
+        ("workflow_draft", "version", 5),
+        ("workflow_draft", "status", "PUBLISHED"),
+        ("workflow_draft", "definition_row_version", 3),
+        ("workflow_validate", "version_id", "00000000-0000-4000-8000-000000000099"),
+        ("workflow_validate", "status", "DRAFT"),
+        ("workflow_validate", "checksum", "not-a-digest"),
+        ("workflow_validate", "definition_row_version", 3),
+        ("workflow_publish", "version_id", "00000000-0000-4000-8000-000000000099"),
+        ("workflow_publish", "code", "other-workflow"),
+        ("workflow_publish", "version", 5),
+        ("workflow_publish", "checksum", "b" * 64),
+        ("workflow_publish", "definition_row_version", 2),
+    ],
+)
+async def test_release_rejects_inexact_workflow_publication_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    field: str,
+    bad_value: object,
+) -> None:
+    release = release_config(tmp_path).supply_chain_release
+    workflow, agent = _release_payloads(release)
+    responses = _valid_release_responses(workflow, agent)
+    paths = {
+        "workflow_draft": "/v1/workflows/drafts",
+        "workflow_validate": f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/validate",
+        "workflow_publish": f"/v1/workflows/versions/{WORKFLOW_VERSION_ID}/publish",
+    }
+    responses[paths[endpoint]][1][field] = bad_value
+    monkeypatch.setattr("ebiz_deployment.release.verify_installed_release", lambda value: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status, body = responses[request.url.path]
+        return httpx.Response(status, json=body)
+
+    async with httpx.AsyncClient(
+        base_url="http://runtime.example", transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(ValueError, match="Workflow"):
+            await publish_workflow_and_agent(
+                client,
+                release=release,
+                workflow_payload=workflow,
+                agent_payload=agent,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("endpoint", "field", "bad_value"),
+    [
+        ("agent_draft", "version_id", "not-a-uuid"),
+        ("agent_draft", "code", "other-agent"),
+        ("agent_draft", "version", 5),
+        ("agent_draft", "status", "PUBLISHED"),
+        ("agent_draft", "content_digest", "b" * 64),
+        ("agent_draft", "workflow_pins", [{"code": "other-workflow", "version": 4}]),
+        ("agent_draft", "capability_pins", []),
+        ("agent_draft", "definition_row_version", -1),
+        ("agent_draft", "row_version", -1),
+        ("agent_publish", "version_id", "00000000-0000-4000-8000-000000000099"),
+        ("agent_publish", "code", "other-agent"),
+        ("agent_publish", "version", 5),
+        ("agent_publish", "status", "DRAFT"),
+        ("agent_publish", "content_digest", "b" * 64),
+        (
+            "agent_publish",
+            "workflow_pins",
+            [{"code": "other-workflow", "version": 4, "ir_checksum": WORKFLOW_CHECKSUM}],
+        ),
+        ("agent_publish", "capability_pins", []),
+        ("agent_publish", "definition_row_version", 4),
+        ("agent_publish", "row_version", 0),
+    ],
+)
+async def test_release_rejects_inexact_agent_publication_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    field: str,
+    bad_value: object,
+) -> None:
+    release = release_config(tmp_path).supply_chain_release
+    workflow, agent = _release_payloads(release)
+    responses = _valid_release_responses(workflow, agent)
+    paths = {
+        "agent_draft": "/v1/agents/drafts",
+        "agent_publish": f"/v1/agents/versions/{AGENT_VERSION_ID}/publish",
+    }
+    responses[paths[endpoint]][1][field] = bad_value
+    monkeypatch.setattr("ebiz_deployment.release.verify_installed_release", lambda value: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status, body = responses[request.url.path]
+        return httpx.Response(status, json=body)
+
+    async with httpx.AsyncClient(
+        base_url="http://runtime.example", transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(ValueError, match="Agent"):
+            await publish_workflow_and_agent(
+                client,
+                release=release,
+                workflow_payload=workflow,
+                agent_payload=agent,
+            )
 
 
 def test_runtime_publisher_rejects_the_old_incomplete_catalog_shape(tmp_path: Path) -> None:

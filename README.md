@@ -41,7 +41,9 @@ attestation document from the exact Deployment pins. It contains the three
 `BaseAIProviderDeployment` records and their `PluginHostPolicy`, never resolved
 secrets. `build_capability_publish_commands()` supplies that attestation to all
 three Runtime publisher calls. After publication, the release client uses the
-existing Workflow draft/validate/publish and Agent draft/publish APIs.
+existing Workflow draft/validate/publish and Agent draft/publish APIs. It fails
+closed unless every response preserves the exact version identity, lifecycle
+status, digest, immutable pins, and expected row-version transition.
 
 ## Configuration and security
 
@@ -160,8 +162,11 @@ uv build --wheel --no-sources --out-dir C:\ebizhub\.local\deployment-v4-wheel
 - real-dev ERP MCP, real model, UAT data, owner approval, and production
   credentials/data are pending. No result from this repository is production
   E2E.
-- A deterministic local Agent E2E must still publish the local fixture Catalog,
-  seed the generated Skill through Runtime's governed stores, publish the v4
-  Catalogs/Workflow/Agent, and run the live smoke against started PostgreSQL,
-  Redis, MinIO, Runtime, and providers. The implementation does not treat a raw
-  path or direct database row as evidence.
+- The deterministic local Agent E2E completed on 2026-08-31 with the exact
+  reviewed Runtime, Base AI, Agent/Catalog, Deployment, and fixture wheels. The
+  fresh run published the local fixture and v4 Catalogs, seeded the governed
+  Skill, published the Workflow and Agent through Runtime's public APIs, and
+  reached a terminal `COMPLETE` result with five public EvidenceRefs against
+  fresh PostgreSQL, Redis, and versioned MinIO containers. Repeat this gate for
+  every promoted wheel set. It remains `LOCAL_DEV_E2E`, not UAT or production
+  E2E, and never treats a raw path or direct database row as evidence.
