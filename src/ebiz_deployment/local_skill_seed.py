@@ -120,7 +120,7 @@ async def seed_governed_skill(
     evidence = EvidenceRef(
         evidence_id=evidence_id,
         tenant_id=tenant_id,
-        source_type="POLICY",
+        source_type="artifact",
         source_system="deployment-local-evidence-fixture",
         external_object_id=written.payload_hash,
         captured_at=captured_at.astimezone(UTC),

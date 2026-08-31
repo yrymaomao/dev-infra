@@ -8,11 +8,17 @@ import os
 import subprocess
 import sys
 import zipfile
+from copy import deepcopy
+from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
+from ebiz_deployment import local_dev_assets as local_assets_module
 from ebiz_deployment.local_dev_assets import build_skill_document, write_local_dev_assets
 from ebiz_deployment.local_dev_services import (
     BROKER_AUTH_TOKEN,
@@ -22,6 +28,7 @@ from ebiz_deployment.local_dev_services import (
     create_mcp_app,
     create_provider_app,
 )
+from ebiz_deployment.record_attestation import attest_installed_distribution
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +93,37 @@ def test_provider_app_has_no_supply_chain_cockpit_route() -> None:
     assert response.status_code == 404
 
 
+def test_classification_connector_allowlist_matches_v4_workflow_inputs() -> None:
+    operation = local_assets_module._CONNECTOR_FIELD_ALLOWLISTS[
+        "supply-chain-planning.classification-engine@2.0.0"
+    ]["supply_chain.classify_inventory"]
+
+    assert set(operation) == {
+        "cohort",
+        "cohort_total_eligible",
+        "forecast",
+        "growth_ratio",
+        "growth_unavailable_reason",
+        "seasonality_profile",
+        "snapshot_time",
+    }
+
+
 def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
+    schema = {
+        "$schema": "https://schemas.ebizhub.com/meta/runtime-contract/v1.2",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["explanation", "risk_flags"],
+        "properties": {
+            "explanation": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "risk_flags": {
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    }
     request = {
         "model": "local-dev-seasonality-model",
         "input": [{"role": "user", "content": "analyze"}],
@@ -95,7 +132,7 @@ def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
             "format": {
                 "type": "json_schema",
                 "name": "structured_output",
-                "schema": {"type": "object"},
+                "schema": schema,
                 "strict": True,
             }
         },
@@ -114,12 +151,62 @@ def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
     body = response.json()
     assert body["model"] == "local-dev-seasonality-model"
     output = json.loads(body["output"][0]["content"][0]["text"])
+    Draft202012Validator(schema).validate(output)
     assert output == {
-        "assessment": "ALIGNED",
-        "confidence": 0.96,
         "explanation": "Deterministic local development analysis.",
         "risk_flags": [],
     }
+
+
+def test_openai_responses_endpoint_rejects_non_exact_or_unsatisfied_schema() -> None:
+    valid = {
+        "model": "local-dev-seasonality-model",
+        "input": [{"role": "user", "content": "analyze"}],
+        "store": False,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "structured_output",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["explanation", "risk_flags"],
+                    "properties": {
+                        "explanation": {"type": "string"},
+                        "risk_flags": {"type": "array"},
+                    },
+                },
+            }
+        },
+    }
+    invalid_requests = []
+    for field, value in (
+        ("type", "text"),
+        ("name", "other"),
+        ("strict", False),
+    ):
+        request = deepcopy(valid)
+        request["text"]["format"][field] = value
+        invalid_requests.append(request)
+    schema_rejects_output = deepcopy(valid)
+    schema_rejects_output["text"]["format"]["schema"]["required"] = ["missing"]
+    invalid_requests.append(schema_rejects_output)
+    extra_format_field = deepcopy(valid)
+    extra_format_field["text"]["format"]["extra"] = True
+    invalid_requests.append(extra_format_field)
+
+    with TestClient(create_provider_app()) as client:
+        responses = [
+            client.post(
+                "/v1/responses",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json=request,
+            )
+            for request in invalid_requests
+        ]
+
+    assert [response.status_code for response in responses] == [422] * len(responses)
 
 
 def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools() -> None:
@@ -147,6 +234,41 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
             json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             headers=headers,
         )
+        cohort = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_boston_cohort",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotTime": "2026-08-30T12:00:00Z",
+                        "sku": "SKU-LOCAL-1",
+                        "pageSize": 1000,
+                    },
+                },
+            },
+            headers=headers,
+        )
+        sales_batch = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_sales_profit_windows_batch",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotTime": "2026-08-30T12:00:00Z",
+                        "skuCodes": ["SKU-LOCAL-1", "SKU-LOCAL-2"],
+                    },
+                },
+            },
+            headers=headers,
+        )
 
     assert listed.status_code == 200
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
@@ -157,6 +279,58 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
         "query_sku_sales_profit_windows_batch",
         "query_sku_boston_cohort",
     }
+    for tool in listed.json()["result"]["tools"]:
+        assert tool["inputSchema"]["additionalProperties"] is False
+        assert tool["outputSchema"]["additionalProperties"] is False
+    cohort_tool = next(
+        tool
+        for tool in listed.json()["result"]["tools"]
+        if tool["name"] == "query_sku_boston_cohort"
+    )
+    cohort_input = cohort_tool["inputSchema"]
+    assert set(cohort_input["required"]) == {
+        "sku",
+        "marketScope",
+        "snapshotTime",
+        "pageSize",
+    }
+    assert cohort_input["properties"]["pageSize"]["minimum"] == 5
+    assert cohort_input["properties"]["pageSize"]["maximum"] == 1000
+    assert cohort_input["properties"]["snapshotTime"]["format"] == "date-time"
+    cohort_output = cohort_tool["outputSchema"]
+    assert cohort_output["properties"]["result"]["additionalProperties"] is False
+    member_schema = cohort_output["properties"]["result"]["properties"]["members"]["items"]
+    assert member_schema["additionalProperties"] is False
+    assert cohort.status_code == 200
+    call_result = cohort.json()["result"]
+    assert call_result["isError"] is False
+    cohort_result = call_result["structuredContent"]["result"]
+    assert set(cohort_result) == {
+        "status",
+        "filterDefinition",
+        "totalEligible",
+        "cohortSnapshotId",
+        "nextCursor",
+        "members",
+        "dataAsOf",
+        "sourceWatermark",
+    }
+    assert cohort_result["dataAsOf"] == "2026-08-30T12:00:00Z"
+    assert cohort_result["sourceWatermark"] == "local-cohort-watermark-1"
+    assert cohort_result["nextCursor"] is None
+    batch_result = sales_batch.json()["result"]
+    assert batch_result["isError"] is False
+    batch_document = batch_result["structuredContent"]
+    assert set(batch_document) == {
+        "contractVersion",
+        "statisticsVersion",
+        "statisticsDefinition",
+        "marketScope",
+        "snapshotTime",
+        "observedAt",
+        "result",
+    }
+    assert len(batch_document["result"]["items"]) == 2
 
 
 def test_local_assets_are_closed_valid_and_explicitly_non_production(
@@ -172,7 +346,11 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     assert len(skill["seasonality_profile"]["monthly_indices"]) == 12
     assert sum(item["index"] for item in skill["seasonality_profile"]["monthly_indices"]) == 12
 
-    assets = write_local_dev_assets(tmp_path, fixture_search_paths=local_fixture_install)
+    assets = write_local_dev_assets(
+        tmp_path,
+        fixture_search_paths=local_fixture_install,
+        snapshot_time=datetime(2026, 8, 31, 6, 0, tzinfo=UTC),
+    )
     assert assets.deployment_config.is_file()
     assert assets.plugin_policy.is_file()
     assert assets.base_ai_attestation.is_file()
@@ -183,6 +361,13 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     assert assets.tls_cert.is_file()
     assert assets.tls_key.is_file()
     assert assets.skill_root.joinpath("SKU-LOCAL-1.json").is_file()
+    agent = metadata.distribution("ebiz-agent-inventory-supply-chain")
+    agent_schema_path = Path(
+        agent.locate_file("inventory_supply_chain_agent/schemas/seasonality-analysis.schema.yaml")
+    )
+    expected_model_schema = yaml.safe_load(agent_schema_path.read_text(encoding="utf-8"))
+    model_schemas = json.loads(assets.model_schemas.read_text(encoding="utf-8"))
+    assert model_schemas == {"schemas/seasonality-analysis.schema.yaml": expected_model_schema}
     policy = json.loads(assets.plugin_policy.read_text(encoding="utf-8"))
     assert {item["plugin_id"] for item in policy["plugins"]} == {
         "deployment.fixture.governed-artifact",
@@ -201,11 +386,14 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     assert environment["LOCAL_FIXTURE_PLUGIN_POLICY_PATH"] == str(assets.fixture_plugin_policy)
     assert environment["LOCAL_FIXTURE_CONTRACT_ROOT"] == str(assets.fixture_contract_root)
     assert environment["SUPPLY_CHAIN_SKILL_INPUT_REF"] == ""
-    assert environment["SUPPLY_CHAIN_SKILL_FILE_SHA256"] == hashlib.sha256(
-        Path(environment["SUPPLY_CHAIN_SKILL_FILE"]).read_bytes()
-    ).hexdigest()
+    assert (
+        environment["SUPPLY_CHAIN_SKILL_FILE_SHA256"]
+        == hashlib.sha256(Path(environment["SUPPLY_CHAIN_SKILL_FILE"]).read_bytes()).hexdigest()
+    )
     assert environment["SUPPLY_CHAIN_RUN_ID"] == "supply-chain-v4-local-1"
     assert environment["SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT"] == "5"
+    assert environment["SUPPLY_CHAIN_EXPECTED_RESULT_STATUS"] == "COMPLETE"
+    assert environment["SUPPLY_CHAIN_SNAPSHOT_TIME"] == "2026-08-31T06:00:00Z"
     targets = set(environment["APP_CONNECTOR_TARGETS"].split(","))
     assert targets == {
         "yeaher.erp@0.1.0",
@@ -226,11 +414,41 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
 def test_local_asset_generation_is_idempotent_without_importing_agent(
     tmp_path: Path, local_fixture_install: tuple[Path, ...]
 ) -> None:
-    first = write_local_dev_assets(tmp_path, fixture_search_paths=local_fixture_install)
-    second = write_local_dev_assets(tmp_path, fixture_search_paths=local_fixture_install)
+    snapshot = datetime(2026, 8, 31, 6, 0, tzinfo=UTC)
+    first = write_local_dev_assets(
+        tmp_path, fixture_search_paths=local_fixture_install, snapshot_time=snapshot
+    )
+    second = write_local_dev_assets(
+        tmp_path, fixture_search_paths=local_fixture_install, snapshot_time=snapshot
+    )
 
     assert first.environment == second.environment
     assert second.environment.is_file()
+
+
+def test_local_asset_default_snapshot_is_generated_at_run_time(
+    tmp_path: Path, local_fixture_install: tuple[Path, ...]
+) -> None:
+    before = datetime.now(UTC).replace(microsecond=0)
+    assets = write_local_dev_assets(tmp_path, fixture_search_paths=local_fixture_install)
+    after = datetime.now(UTC).replace(microsecond=0)
+    environment = json.loads(assets.environment.read_text(encoding="utf-8"))
+    observed = datetime.fromisoformat(
+        environment["SUPPLY_CHAIN_SNAPSHOT_TIME"].replace("Z", "+00:00")
+    )
+
+    assert before <= observed <= after
+
+
+def test_local_asset_generation_rejects_naive_snapshot_time(
+    tmp_path: Path, local_fixture_install: tuple[Path, ...]
+) -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        write_local_dev_assets(
+            tmp_path,
+            fixture_search_paths=local_fixture_install,
+            snapshot_time=datetime(2026, 8, 31, 6, 0),
+        )
 
 
 def test_local_fixture_and_planning_plugins_load_only_from_combined_local_policy(
@@ -263,3 +481,57 @@ print('local-fixture-ready')
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert completed.stdout.strip() == "local-fixture-ready"
+
+
+def test_local_assets_pin_the_final_fixture_install_and_fail_closed_after_digest_change(
+    tmp_path: Path, local_fixture_install: tuple[Path, ...]
+) -> None:
+    assets = write_local_dev_assets(tmp_path, fixture_search_paths=local_fixture_install)
+    policy = json.loads(assets.plugin_policy.read_text(encoding="utf-8"))
+    fixture = next(
+        item
+        for item in policy["plugins"]
+        if item["plugin_id"] == "deployment.fixture.governed-artifact"
+    )
+    attestation = attest_installed_distribution(
+        distribution_name="ebiz-deployment-local-evidence-fixture",
+        distribution_version="1.0.0",
+        entry_point_group="ebiz_agents.providers",
+        entry_point_name="deployment.fixture.governed-artifact",
+        entry_point_value="ebiz_deployment_local_fixture.plugin:factory",
+        search_paths=local_fixture_install,
+    )
+    assert fixture["package_digest"] == attestation.canonical_digest
+
+    fixture["package_digest"] = "0" * 64
+    stale_policy = tmp_path / "stale-runtime-plugin-policy.json"
+    stale_policy.write_text(json.dumps(policy), encoding="utf-8")
+    script = """
+import asyncio
+from pathlib import Path
+from agent_runtime.plugins.manifest import PluginHostPolicy
+from agent_runtime.plugins.registry import PluginRegistry
+from agent_runtime.plugins.contracts import PluginHostError
+
+policy = PluginHostPolicy.model_validate_json(Path(__import__('sys').argv[1]).read_text())
+registry = PluginRegistry(policy=policy, supported_api_version='ebizhub.runtime/v1')
+try:
+    asyncio.run(registry.load_startup())
+except PluginHostError as exc:
+    print(exc.error_code, file=__import__('sys').stderr)
+    raise
+"""
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPATH"] = os.pathsep.join(str(path) for path in local_fixture_install)
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(stale_policy)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        cwd=tmp_path,
+    )
+
+    assert completed.returncode != 0
+    assert "PLUGIN_PACKAGE_DIGEST_MISMATCH" in completed.stderr

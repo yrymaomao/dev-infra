@@ -126,6 +126,7 @@ async def test_seed_uses_published_fixture_and_is_stable(tmp_path: Path) -> None
     assert payload_store.committed is True
     assert evidence_store.items[0].capability_ref.resource_id == FIXTURE_CAPABILITY_CODE
     assert evidence_store.items[0].tenant_id == "tenant-a"
+    assert evidence_store.items[0].source_type == "artifact"
 
 
 @pytest.mark.asyncio
@@ -207,12 +208,10 @@ async def test_seed_fails_closed_on_cross_tenant_store_result(tmp_path: Path) ->
 
 def test_fixture_package_is_separate_and_not_a_production_pin() -> None:
     root = Path(__file__).parents[1]
-    project = (root / "packages/local-evidence-fixture/pyproject.toml").read_text(
+    project = (root / "packages/local-evidence-fixture/pyproject.toml").read_text(encoding="utf-8")
+    catalog = (root / "packages/local-evidence-fixture/contracts/capabilities.yaml").read_text(
         encoding="utf-8"
     )
-    catalog = (
-        root / "packages/local-evidence-fixture/contracts/capabilities.yaml"
-    ).read_text(encoding="utf-8")
     root_project = (root / "pyproject.toml").read_text(encoding="utf-8")
     assert '"deployment.fixture.governed-artifact"' in project
     assert "deployment.fixture.seed_governed_artifact" in catalog

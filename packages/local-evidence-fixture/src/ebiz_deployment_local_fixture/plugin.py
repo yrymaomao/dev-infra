@@ -76,4 +76,3 @@ class _Factory:
 
 
 factory = _Factory()
-

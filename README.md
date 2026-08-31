@@ -68,6 +68,23 @@ It covers the Agent, both resource-only Catalog wheels, the planning Provider
 wheel, and the three Base AI Adapter wheels. Tampered, editable, shadowed,
 symlinked, wrong-version, or wrong-entry-point distributions are rejected.
 
+Before promotion, run the narrow release-material guard with only the reviewed
+configuration/diff files and exact wheels being promoted:
+
+```powershell
+$releaseMaterial = @(
+  (Resolve-Path config\deployment.example.json).Path
+  (Get-ChildItem C:\ebizhub\.local\deployment-v4-wheel\*.whl -File).FullName
+)
+& .venv-deployment\Scripts\ebiz-release-material-guard.exe $releaseMaterial
+```
+
+The guard does not walk the repository or read operator-local directories. It
+rejects credential-shaped values and concrete non-loopback runtime endpoints
+inside the explicitly named text files and wheel members; symbolic environment
+references, reserved documentation domains, and deterministic loopback endpoints
+remain valid.
+
 ## Deterministic local and real-dev
 
 `ebiz-local-dev-assets` creates ignored local configuration with deterministic
@@ -84,6 +101,15 @@ production/real-dev pin. Publish that Catalog with Runtime's existing
 `APP_ENV=local_dev` plus `LOCAL_DEV_E2E=true`, verifies the generated file
 digest, and prints only the stable EvidenceRef UUID for
 `SUPPLY_CHAIN_SKILL_INPUT_REF`.
+
+Install or force-install every exact wheel before running `ebiz-local-dev-assets`.
+Asset generation pins the installed wheel RECORD digests into the Plugin Host
+Policy and Base AI attestation; any later reinstall invalidates those files.
+After generating assets, do not mutate the environment until the smoke finishes;
+if any wheel changes, regenerate all assets before publishing a Catalog. The
+generated happy-path snapshot uses current UTC and sets
+`SUPPLY_CHAIN_EXPECTED_RESULT_STATUS=COMPLETE`; an intentional BLOCKED test must
+set that expectation explicitly and cannot satisfy the happy-path gate.
 
 The live-smoke command validates flat v4 input, starts the published Agent via
 `POST /v1/agent-executions`, polls Runtime, validates the public result Schema,

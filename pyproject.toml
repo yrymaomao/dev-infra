@@ -21,6 +21,7 @@ ebiz-supply-chain-live-smoke = "ebiz_deployment.supply_chain_live:main"
 ebiz-local-dev-providers = "ebiz_deployment.local_dev_services:main"
 ebiz-local-dev-assets = "ebiz_deployment.local_dev_assets:main"
 ebiz-local-dev-skill-seed = "ebiz_deployment.local_skill_seed:main"
+ebiz-release-material-guard = "ebiz_deployment.release_material_guard:main"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]

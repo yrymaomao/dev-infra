@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -35,6 +36,11 @@ _SCOPES = (
     "workflow:read",
     "workflow:start",
 )
+_START_RETRYABLE_ERROR = "RUNTIME_PAYLOAD_FINALIZATION_PENDING"
+_START_MAX_ATTEMPTS = 8
+_START_RETRY_DELAY_SECONDS = 0.25
+_START_MAX_RETRY_AFTER_SECONDS = 2.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +55,7 @@ class LiveSmokeSettings:
     skill_input_ref: str
     snapshot_time: str
     expected_evidence_count: int
+    expected_result_status: str
     local_dev_e2e: bool
     run_id: str
     market_scope: str = _MARKET_SCOPE
@@ -86,6 +93,9 @@ class LiveSmokeSettings:
             raise ValueError("SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT must be an integer") from None
         if evidence_count < 1 or evidence_count > 64:
             raise ValueError("SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT must be between 1 and 64")
+        expected_result_status = _required(environ, "SUPPLY_CHAIN_EXPECTED_RESULT_STATUS")
+        if expected_result_status not in {"COMPLETE", "BLOCKED"}:
+            raise ValueError("SUPPLY_CHAIN_EXPECTED_RESULT_STATUS must be COMPLETE or BLOCKED")
         return cls(
             api_url=api_url.rstrip("/"),
             jwt_secret=jwt_secret,
@@ -95,6 +105,7 @@ class LiveSmokeSettings:
             skill_input_ref=skill_input_ref,
             snapshot_time=snapshot_time,
             expected_evidence_count=evidence_count,
+            expected_result_status=expected_result_status,
             local_dev_e2e=True,
             run_id=_required(environ, "SUPPLY_CHAIN_RUN_ID"),
         )
@@ -153,7 +164,12 @@ def issue_smoke_token(
     )
 
 
-def verify_terminal_result(snapshot: Mapping[str, object], *, expected_evidence_count: int) -> str:
+def verify_terminal_result(
+    snapshot: Mapping[str, object],
+    *,
+    expected_evidence_count: int,
+    expected_result_status: str,
+) -> str:
     """Validate one schema-4 public result and its materialized evidence count."""
 
     if snapshot.get("status") != "SUCCEEDED":
@@ -171,6 +187,8 @@ def verify_terminal_result(snapshot: Mapping[str, object], *, expected_evidence_
     if not isinstance(evidence, list) or len(evidence) != expected_evidence_count:
         raise ValueError("v4 smoke returned the wrong materialized evidence count")
     result_status = result.get("status")
+    if result_status != expected_result_status:
+        raise ValueError("v4 smoke did not return the expected result status")
     if "complete_result" in outputs or "blocked_result" in outputs:
         raise ValueError("v4 smoke returned legacy branch projections")
     return str(result_status)
@@ -207,16 +225,13 @@ async def run_runtime_smoke(
         timeout=timeout,
         transport=transport,
     ) as client:
-        response = await client.post(
-            "/v1/agent-executions",
-            json={
-                "agent": {"id": settings.agent_id, "version": settings.agent_version},
-                "workflow": {"code": settings.workflow_code, "version": settings.workflow_version},
-                "inputs": settings.inputs,
-                "idempotency_key": settings.run_id,
-            },
-        )
-        response.raise_for_status()
+        start_payload = {
+            "agent": {"id": settings.agent_id, "version": settings.agent_version},
+            "workflow": {"code": settings.workflow_code, "version": settings.workflow_version},
+            "inputs": settings.inputs,
+            "idempotency_key": settings.run_id,
+        }
+        response = await _start_execution(client, start_payload)
         snapshot = response.json()
         execution_id = snapshot.get("execution_id")
         if not isinstance(execution_id, str):
@@ -230,13 +245,61 @@ async def run_runtime_smoke(
             response.raise_for_status()
             snapshot = response.json()
     result_status = verify_terminal_result(
-        snapshot, expected_evidence_count=settings.expected_evidence_count
+        snapshot,
+        expected_evidence_count=settings.expected_evidence_count,
+        expected_result_status=settings.expected_result_status,
     )
     return {
         "execution_id": execution_id,
         "result_status": result_status,
         **settings.call_provenance,
     }
+
+
+async def _start_execution(
+    client: httpx.AsyncClient, payload: Mapping[str, object]
+) -> httpx.Response:
+    """Retry only Runtime's committed-session payload-finalization handshake."""
+
+    for attempt in range(_START_MAX_ATTEMPTS):
+        response = await client.post("/v1/agent-executions", json=payload)
+        if response.status_code != 503:
+            response.raise_for_status()
+            return response
+        try:
+            detail = response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise AssertionError("unreachable")
+        if (
+            not isinstance(detail, dict)
+            or detail.get("error_code") != _START_RETRYABLE_ERROR
+            or detail.get("retryable") is not True
+        ):
+            response.raise_for_status()
+        if attempt + 1 == _START_MAX_ATTEMPTS:
+            response.raise_for_status()
+        delay = _start_retry_delay(response)
+        logger.warning(
+            "Runtime payload finalization pending; retrying Agent start (%d/%d)",
+            attempt + 1,
+            _START_MAX_ATTEMPTS,
+        )
+        await asyncio.sleep(delay)
+    raise AssertionError("bounded start retry loop exhausted without a response")
+
+
+def _start_retry_delay(response: httpx.Response) -> float:
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return _START_RETRY_DELAY_SECONDS
+    try:
+        delay = float(raw)
+    except ValueError:
+        raise ValueError("Runtime returned an invalid Retry-After value") from None
+    if delay < 0 or delay > _START_MAX_RETRY_AFTER_SECONDS:
+        raise ValueError("Runtime Retry-After is outside the bounded smoke policy")
+    return delay
 
 
 def main(argv: list[str] | None = None) -> int:

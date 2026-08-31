@@ -12,6 +12,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
 from base_ai.providers import discover_provider_factory_descriptors
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -56,6 +57,8 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "forecast",
             "growth_ratio",
             "growth_unavailable_reason",
+            "seasonality_profile",
+            "snapshot_time",
         ]
     },
     "supply-chain-planning.action-router@2.0.0": {
@@ -130,43 +133,38 @@ def build_skill_document(
 
 
 def _model_schemas() -> dict[str, Any]:
-    return {
-        MODEL_SCHEMA_REF: {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["assessment", "confidence", "explanation", "risk_flags"],
-            "properties": {
-                "assessment": {"enum": ["ALIGNED", "MISALIGNED", "INSUFFICIENT_EVIDENCE"]},
-                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                "explanation": {"type": "string", "minLength": 1, "maxLength": 2000},
-                "risk_flags": {
-                    "type": "array",
-                    "maxItems": 100,
-                    "uniqueItems": True,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
-                },
-            },
-        }
-    }
+    distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
+    if distribution.version != "4.0.0":
+        raise ValueError("installed Supply Chain Agent version is unavailable")
+    schema_path = Path(
+        str(
+            distribution.locate_file(
+                "inventory_supply_chain_agent/schemas/seasonality-analysis.schema.yaml"
+            )
+        )
+    ).resolve(strict=True)
+    schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise ValueError("installed Supply Chain model schema is invalid")
+    return {MODEL_SCHEMA_REF: schema}
 
 
 def _plugin_policy(
     digests: dict[str, str], *, fixture_record_digest: str | None = None
 ) -> dict[str, Any]:
     plugins = [
-            {
-                "plugin_id": "supply-chain-planning",
-                "version": "2.0.0",
-                "package_name": "ebiz-capability-supply-chain",
-                "entry_point": "ebiz_capability_supply_chain.plugin:factory",
-                "package_digest": digests["SUPPLY_CHAIN_PLANNING_RECORD_DIGEST"],
-                "permissions": ["supply_chain.preview"],
-                "network_targets": [],
-                "secret_names": [],
-                "config": {},
-            }
-        ]
+        {
+            "plugin_id": "supply-chain-planning",
+            "version": "2.0.0",
+            "package_name": "ebiz-capability-supply-chain",
+            "entry_point": "ebiz_capability_supply_chain.plugin:factory",
+            "package_digest": digests["SUPPLY_CHAIN_PLANNING_RECORD_DIGEST"],
+            "permissions": ["supply_chain.preview"],
+            "network_targets": [],
+            "secret_names": [],
+            "config": {},
+        }
+    ]
     if fixture_record_digest is not None:
         plugins.append(
             {
@@ -342,7 +340,9 @@ def _model_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[st
     }
 
 
-def _environment(assets: LocalDevAssets, digests: dict[str, str]) -> dict[str, str]:
+def _environment(
+    assets: LocalDevAssets, digests: dict[str, str], *, snapshot_time: str
+) -> dict[str, str]:
     return {
         "LOCAL_DEV_E2E": "true",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -384,16 +384,26 @@ def _environment(assets: LocalDevAssets, digests: dict[str, str]) -> dict[str, s
         "SUPPLY_CHAIN_SKILL_FILE_SHA256": hashlib.sha256(
             (assets.skill_root / "SKU-LOCAL-1.json").read_bytes()
         ).hexdigest(),
-        "SUPPLY_CHAIN_SNAPSHOT_TIME": "2026-08-24T00:00:00Z",
+        "SUPPLY_CHAIN_SNAPSHOT_TIME": snapshot_time,
         "SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT": "5",
+        "SUPPLY_CHAIN_EXPECTED_RESULT_STATUS": "COMPLETE",
         "SUPPLY_CHAIN_RUN_ID": "supply-chain-v4-local-1",
     }
 
 
 def write_local_dev_assets(
-    root: Path, *, fixture_search_paths: Sequence[Path] | None = None
+    root: Path,
+    *,
+    fixture_search_paths: Sequence[Path] | None = None,
+    snapshot_time: datetime | None = None,
 ) -> LocalDevAssets:
     root = root.resolve()
+    current_snapshot = snapshot_time or datetime.now(UTC)
+    if current_snapshot.tzinfo is None or current_snapshot.utcoffset() is None:
+        raise ValueError("snapshot_time must be timezone-aware")
+    canonical_snapshot = (
+        current_snapshot.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     skill_root = root / "skills"
     skill_root.mkdir(parents=True, exist_ok=True)
     fixture_attestation = attest_installed_distribution(
@@ -437,7 +447,7 @@ def write_local_dev_assets(
     _write_local_tls(assets)
     digests = _installed_digests()
     skill = build_skill_document(
-        snapshot_time="2026-08-24T00:00:00Z",
+        snapshot_time=canonical_snapshot,
         tenant_id="tenant-local-dev",
         market_scope="NA_COMPANY",
         sku="SKU-LOCAL-1",
@@ -461,7 +471,8 @@ def write_local_dev_assets(
         assets.base_ai_attestation,
     )
     assets.environment.write_text(
-        json.dumps(_environment(assets, digests), indent=2), encoding="utf-8"
+        json.dumps(_environment(assets, digests, snapshot_time=canonical_snapshot), indent=2),
+        encoding="utf-8",
     )
     return assets
 
