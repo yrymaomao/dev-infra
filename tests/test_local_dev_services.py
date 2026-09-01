@@ -605,6 +605,60 @@ def test_mcp_fixture_uses_the_generated_snapshot_for_freshness_across_a_date_rol
     assert cohort_result["sourceWatermark"] == "local-cohort-watermark-20270101"
 
 
+def test_local_only_sales_unavailable_fixture_preserves_null_source_provenance() -> None:
+    """Keep the real Java-shaped unavailable envelope available to the local E2E seam only."""
+
+    headers = {
+        "X-Mcp-Key": REQUEST_ACCESS_TOKEN,
+        "Accept": "application/json, text/event-stream",
+    }
+    initialized = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "local-test", "version": "1"},
+        },
+    }
+    with TestClient(create_mcp_app(), base_url="http://127.0.0.1:18081") as client:
+        assert client.post("/mcp", json=initialized, headers=headers).status_code == 200
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_sales_profit_windows_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotDate": "20260830",
+                        "skuCode": "SKU-LOCAL-NO-WINDOW-DATA",
+                    },
+                },
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    item = response.json()["result"]["structuredContent"]["result"]["items"][0]
+    assert item == {
+        "skuCode": "SKU-LOCAL-NO-WINDOW-DATA",
+        "status": "NO_WINDOW_DATA",
+        "incompleteReason": None,
+        "windows": [],
+        "activeDays": None,
+        "growthRatio": None,
+        "growthUnavailableReason": None,
+        "currency": "USD",
+        "sourceMaxBizDate": None,
+        "sourceWatermark": None,
+        "calculationVersion": "sku-sales-profit-v1",
+    }
+
+
 @pytest.mark.parametrize(
     "name, arguments",
     [

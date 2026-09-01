@@ -29,6 +29,7 @@ CREDENTIAL_REF = "local-dev-credential-ref"
 REQUEST_ACCESS_TOKEN = "local-dev-request-access-not-production"
 OPENAI_API_KEY = "local-dev-openai-key-not-production"
 LOCAL_TENANT_ID = "tenant-local-dev"
+LOCAL_NO_WINDOW_DATA_SKU = "SKU-LOCAL-NO-WINDOW-DATA"
 
 def _not_blank(value: str) -> str:
     normalized = value.strip()
@@ -272,12 +273,12 @@ def _sales_item_schema() -> dict[str, Any]:
             "activeDays": {"type": ["integer", "null"], "minimum": 0},
             "growthRatio": {"type": ["number", "null"]},
             "growthUnavailableReason": {
-                "type": "string",
-                "enum": ["NONE", "ZERO_BASE", "INSUFFICIENT_HISTORY"],
+                "type": ["string", "null"],
+                "enum": ["NONE", "ZERO_BASE", "INSUFFICIENT_HISTORY", None],
             },
             "currency": {"type": "string", "const": "USD"},
-            "sourceMaxBizDate": {"type": "string", "pattern": "^\\d{8}$"},
-            "sourceWatermark": {"type": "string", "minLength": 1},
+            "sourceMaxBizDate": {"type": ["string", "null"], "pattern": "^\\d{8}$"},
+            "sourceWatermark": {"type": ["string", "null"], "minLength": 1},
             "calculationVersion": {"type": "string", "const": "sku-sales-profit-v1"},
         }
     )
@@ -665,6 +666,29 @@ def _window_rows() -> list[dict[str, Any]]:
 
 
 def _sales_windows_batch(sku: str, snapshot_date: str) -> dict[str, Any]:
+    if sku == LOCAL_NO_WINDOW_DATA_SKU:
+        return {
+            "cid": LOCAL_TENANT_ID,
+            "marketScope": "NA_COMPANY",
+            "snapshotDate": snapshot_date,
+            "statisticsVersion": "sku-sales-profit-v1",
+            "currency": "USD",
+            "items": [
+                {
+                    "skuCode": sku,
+                    "status": "NO_WINDOW_DATA",
+                    "incompleteReason": None,
+                    "windows": [],
+                    "activeDays": None,
+                    "growthRatio": None,
+                    "growthUnavailableReason": None,
+                    "currency": "USD",
+                    "sourceMaxBizDate": None,
+                    "sourceWatermark": None,
+                    "calculationVersion": "sku-sales-profit-v1",
+                }
+            ],
+        }
     source_max_biz_date = _last_completed_utc_day(snapshot_date)
     return {
         "cid": LOCAL_TENANT_ID,
