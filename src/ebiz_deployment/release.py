@@ -39,6 +39,21 @@ _WORKFLOW_RESOURCES = (
     "schemas/skill.schema.yaml",
 )
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_EXPECTED_CAPABILITY_PINS = frozenset(
+    {
+        ("catalog.resolve_sku_identity", 1),
+        ("catalog.resolve_sku_identity", 2),
+        ("inventory.get_total_snapshot", 2),
+        ("sales_profit.get_sku_windows", 2),
+        ("sales_profit.get_boston_cohort", 1),
+        ("supply_chain.resolve_fulfillment_mode", 1),
+        ("supply_chain.compute_forecast", 2),
+        ("supply_chain.classify_inventory", 2),
+        ("supply_chain.route_inventory_action", 1),
+        ("supply_chain.build_replenishment_proposal", 2),
+        ("supply_chain.build_clearance_proposal", 1),
+    }
+)
 
 
 def load_public_capability_catalogs(
@@ -84,8 +99,14 @@ def build_agent_draft_payload(
         ),
         key=lambda item: (str(item["code"]), item["version"]),
     )
-    if len(capability_pins) != 10 or len({str(item["code"]) for item in capability_pins}) != 10:
-        raise ValueError("Supply Chain v4 requires ten unique exact capability pins")
+    observed_pins = frozenset(
+        (str(item["code"]), int(item["version"])) for item in capability_pins
+    )
+    if (
+        len(capability_pins) != len(_EXPECTED_CAPABILITY_PINS)
+        or observed_pins != _EXPECTED_CAPABILITY_PINS
+    ):
+        raise ValueError("Supply Chain v4 requires eleven exact capability pins")
     return {
         "code": release.agent_id,
         "name": "Supply Chain Expert",

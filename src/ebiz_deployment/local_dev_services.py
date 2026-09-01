@@ -20,7 +20,7 @@ from fastapi import Body, FastAPI, Header, HTTPException
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from mcp.server import MCPServer
-from pydantic import Field, WithJsonSchema
+from pydantic import AfterValidator, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 BROKER_AUTH_TOKEN = "local-dev-broker-auth-not-production"
@@ -29,13 +29,30 @@ REQUEST_ACCESS_TOKEN = "local-dev-request-access-not-production"
 OPENAI_API_KEY = "local-dev-openai-key-not-production"
 LOCAL_TENANT_ID = "tenant-local-dev"
 
+def _not_blank(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("must not be blank")
+    return normalized
+
+
+def _valid_yyyymmdd(value: str) -> str:
+    try:
+        datetime.strptime(value, "%Y%m%d")
+    except ValueError:
+        raise ValueError("must be a valid yyyyMMdd calendar date") from None
+    return value
+
+
 MarketScope = Literal["NA_COMPANY"]
-Sku = Annotated[str, Field(min_length=1, max_length=128)]
-PageSize = Annotated[int, Field(ge=5, le=1000)]
-SnapshotTime = Annotated[
-    str,
-    WithJsonSchema({"type": "string", "format": "date-time"}),
+Sku = Annotated[str, Field(min_length=1, max_length=128), AfterValidator(_not_blank)]
+PageSize = Annotated[int, Field(ge=1, le=1000)]
+PageIndex = Annotated[int, Field(ge=1)]
+SnapshotDate = Annotated[
+    str, Field(pattern=r"^\d{8}$"), AfterValidator(_valid_yyyymmdd)
 ]
+ExactSearch = Literal["exactSearch"]
+LOCAL_AS_OF = "2026-08-30T00:00:00Z"
 
 _ALLOWED_CREDENTIAL_PROVIDERS = frozenset({"mcp.streamable_http", "yeaher.erp"})
 
@@ -209,14 +226,14 @@ def _window_schema() -> dict[str, Any]:
 def _sales_item_schema() -> dict[str, Any]:
     return _closed_schema(
         {
-            "sku": {"type": "string", "minLength": 1, "maxLength": 128},
+            "skuCode": {"type": "string", "minLength": 1, "maxLength": 128},
             "status": {
                 "type": "string",
-                "enum": ["FOUND", "NO_WINDOW_DATA", "INCOMPLETE"],
+                "enum": ["FOUND", "SKU_NOT_FOUND", "NO_WINDOW_DATA", "INCOMPLETE"],
             },
+            "incompleteReason": {"type": ["string", "null"]},
             "windows": {
                 "type": "array",
-                "minItems": 7,
                 "maxItems": 7,
                 "items": _window_schema(),
             },
@@ -227,43 +244,115 @@ def _sales_item_schema() -> dict[str, Any]:
                 "enum": ["NONE", "ZERO_BASE", "INSUFFICIENT_HISTORY"],
             },
             "currency": {"type": "string", "const": "USD"},
-            "dataAsOf": {"type": "string", "format": "date-time"},
+            "sourceMaxBizDate": {"type": "string", "pattern": "^\\d{8}$"},
             "sourceWatermark": {"type": "string", "minLength": 1},
+            "calculationVersion": {"type": "string", "const": "sku-sales-profit-v1"},
         }
     )
 
 
-def _envelope_schema(statistics_version: str, result: dict[str, Any]) -> dict[str, Any]:
+def _yeaher_result_schema(result: dict[str, Any]) -> dict[str, Any]:
     return _closed_schema(
         {
-            "contractVersion": {"type": "string", "const": "erp-supply-chain/v1"},
-            "statisticsVersion": {"type": "string", "const": statistics_version},
-            "statisticsDefinition": _closed_schema(
-                {
-                    "variance": {"type": "string", "const": "POPULATION"},
-                    "missingDays": {
-                        "type": "string",
-                        "const": "ZERO_WITH_COMPLETE_WATERMARK",
-                    },
-                    "windowBoundary": {"type": "string", "const": "CLOSED_INCLUSIVE"},
-                    "timezone": {"type": "string", "const": "UTC"},
-                }
-            ),
-            "marketScope": {"type": "string", "const": "NA_COMPANY"},
-            "snapshotTime": {"type": "string", "format": "date-time"},
-            "observedAt": {"type": "string", "format": "date-time"},
+            "success": {"type": "boolean", "const": True},
+            "code": {"type": "integer", "const": 200},
+            "message": {"type": "null"},
             "result": result,
         }
     )
 
 
-def _formal_output_schemas() -> dict[str, dict[str, Any]]:
-    identity = _closed_schema(
+def _result_data_schema(result: dict[str, Any]) -> dict[str, Any]:
+    return _closed_schema(
         {
-            "status": {"type": "string", "enum": ["NOT_FOUND", "UNIQUE", "CONFLICT"]},
-            "canonicalSku": {"type": ["string", "null"]},
-            "sellerSkus": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
-            "mskus": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+            "code": {"type": "integer", "const": 200},
+            "message": {"type": "string", "const": "success"},
+            "result": result,
+        }
+    )
+
+
+def _sku_list_record_schema() -> dict[str, Any]:
+    nullable_text = {"type": ["string", "null"]}
+    nullable_integer = {"type": ["integer", "null"]}
+    category = _closed_schema(
+        {
+            "amazonCategoryId": nullable_text,
+            "amazonCategoryName": nullable_text,
+            "categoryId": nullable_text,
+            "fullPath": nullable_text,
+        }
+    )
+    sub_sku = _closed_schema(
+        {
+            "skuCode": nullable_text,
+            "skuName": nullable_text,
+            "quantity": nullable_text,
+            "barCode": nullable_text,
+            "newStatus": nullable_text,
+            "productType": nullable_text,
+            "subSkuResultDtos": {"type": ["array", "null"], "items": {"type": "object"}},
+            "isContainUpgrade": nullable_text,
+            "isToBeDeprecated": nullable_integer,
+            "isUpgradable": nullable_integer,
+            "isAccessory": nullable_integer,
+        }
+    )
+    image = _closed_schema(
+        {
+            "skuCode": nullable_text,
+            "imageSeq": {"type": "integer"},
+            "imageUrlHd": nullable_text,
+            "imageUrlThumb": nullable_text,
+            "imageUrl": nullable_text,
+            "imageType": nullable_text,
+        }
+    )
+    return _closed_schema(
+        {
+            "skuName": nullable_text,
+            "barCode": {"type": "string", "minLength": 1, "maxLength": 128},
+            "skuCode": {"type": "string", "minLength": 1, "maxLength": 128},
+            "manager": nullable_text,
+            "newStatus": nullable_text,
+            "currency": nullable_text,
+            "cost": {"type": ["number", "null"]},
+            "spuCode": nullable_text,
+            "spuName": nullable_text,
+            "brand": nullable_text,
+            "category": nullable_text,
+            "note": nullable_text,
+            "productType": nullable_text,
+            "isContainUpgrade": nullable_text,
+            "isAccessory": nullable_integer,
+            "isUpgradeAccessory": nullable_integer,
+            "categoryId": nullable_text,
+            "amazonCategoryName": nullable_text,
+            "path": {"type": ["array", "null"], "items": category},
+            "fullPath": nullable_text,
+            "isToBeDeprecated": nullable_integer,
+            "isUpgradable": nullable_integer,
+            "subSkuResultDtos": {"type": ["array", "null"], "items": sub_sku},
+            "imageUrls": {"type": ["array", "null"], "items": image},
+            "upid": nullable_text,
+            "createTime": nullable_text,
+            "createBy": nullable_text,
+        }
+    )
+
+
+def _formal_output_schemas() -> dict[str, dict[str, Any]]:
+    identity_page = _closed_schema(
+        {
+            "records": {
+                "type": "array",
+                "maxItems": 1000,
+                "items": _sku_list_record_schema(),
+            },
+            "total": {"type": "integer", "minimum": 0},
+            "current": {"type": "integer", "minimum": 1},
+            "size": {"type": "integer", "minimum": 1},
+            "pages": {"type": "integer", "minimum": 0},
         }
     )
     inventory_properties: dict[str, Any] = {
@@ -279,7 +368,7 @@ def _formal_output_schemas() -> dict[str, dict[str, Any]]:
     }
     cohort_member = _closed_schema(
         {
-            "sku": {"type": "string", "minLength": 1, "maxLength": 128},
+            "skuCode": {"type": "string", "minLength": 1, "maxLength": 128},
             "windows": {
                 "type": "array",
                 "minItems": 7,
@@ -301,34 +390,47 @@ def _formal_output_schemas() -> dict[str, dict[str, Any]]:
                 "const": "NA_COMPANY_ACTIVE_60D_V1",
             },
             "totalEligible": {"type": "integer", "minimum": 0},
-            "cohortSnapshotId": {"type": "string", "minLength": 1},
+            "snapshotId": {"type": "string", "minLength": 1},
+            "sourceMaxBizDate": {"type": "string", "pattern": "^\\d{8}$"},
+            "sourceWatermark": {"type": "string", "minLength": 1},
+            "incompleteReason": {"type": ["string", "null"]},
             "nextCursor": {"type": ["string", "null"], "minLength": 1},
             "members": {"type": "array", "maxItems": 1000, "items": cohort_member},
-            "dataAsOf": {"type": "string", "format": "date-time"},
-            "sourceWatermark": {"type": "string", "minLength": 1},
+        }
+    )
+    batch = _closed_schema(
+        {
+            "cid": {"type": "string", "const": LOCAL_TENANT_ID},
+            "marketScope": {"type": "string", "const": "NA_COMPANY"},
+            "snapshotDate": {"type": "string", "pattern": "^\\d{8}$"},
+            "statisticsVersion": {"type": "string", "const": "sku-sales-profit-v1"},
+            "currency": {"type": "string", "const": "USD"},
+            "items": {"type": "array", "minItems": 1, "maxItems": 1, "items": _sales_item_schema()},
+        }
+    )
+    cohort_page = _closed_schema(
+        {
+            "cid": {"type": "string", "const": LOCAL_TENANT_ID},
+            "marketScope": {"type": "string", "const": "NA_COMPANY"},
+            "snapshotDate": {"type": "string", "pattern": "^\\d{8}$"},
+            "statisticsVersion": {"type": "string", "const": "sku-sales-profit-v1"},
+            "currency": {"type": "string", "const": "USD"},
+            "filterDefinition": cohort["properties"]["filterDefinition"],
+            "status": cohort["properties"]["status"],
+            "totalEligible": cohort["properties"]["totalEligible"],
+            "snapshotId": cohort["properties"]["snapshotId"],
+            "sourceMaxBizDate": cohort["properties"]["sourceMaxBizDate"],
+            "sourceWatermark": cohort["properties"]["sourceWatermark"],
+            "incompleteReason": cohort["properties"]["incompleteReason"],
+            "members": cohort["properties"]["members"],
+            "nextCursor": cohort["properties"]["nextCursor"],
         }
     )
     return {
-        "query_sku_identity": _envelope_schema("sku-identity-v1", identity),
-        "query_inventory_summary": _envelope_schema(
-            "inventory-summary-v1", _closed_schema(inventory_properties)
-        ),
-        "query_sku_sales_profit_windows": _envelope_schema(
-            "sku-sales-profit-v1", _sales_item_schema()
-        ),
-        "query_sku_sales_profit_windows_batch": _envelope_schema(
-            "sku-sales-profit-v1",
-            _closed_schema(
-                {
-                    "items": {
-                        "type": "array",
-                        "maxItems": 1000,
-                        "items": _sales_item_schema(),
-                    }
-                }
-            ),
-        ),
-        "query_sku_boston_cohort": _envelope_schema("sku-sales-profit-v1", cohort),
+        "query_sku_upc_mapping": _yeaher_result_schema(identity_page),
+        "query_inventory_summary_v2": _result_data_schema(_closed_schema(inventory_properties)),
+        "query_sku_sales_profit_windows_v1": _yeaher_result_schema(batch),
+        "query_sku_boston_cohort_v1": _yeaher_result_schema(cohort_page),
     }
 
 
@@ -349,30 +451,38 @@ def create_mcp_app() -> ASGIApp:
     """Create an X-Mcp-Key protected, stateless MCP inventory service."""
     server = MCPServer("ebiz-local-dev-inventory", version="1.0.0", log_level="WARNING")
 
-    @server.tool(name="query_sku_identity", structured_output=True)
-    async def sku_identity(
-        marketScope: MarketScope,
-        sku: Sku,
-        snapshotTime: SnapshotTime,  # noqa: N803
+    @server.tool(name="query_sku_upc_mapping", structured_output=True)
+    async def sku_upc_mapping(
+        pageIndex: PageIndex,  # noqa: N803 - Java MCP wire field
+        pageSize: PageSize,  # noqa: N803 - Java MCP wire field
+        skuCode: Annotated[list[Sku], Field(min_length=1, max_length=1000)],  # noqa: N803
+        searchType: ExactSearch,  # noqa: N803 - Java MCP wire field
     ) -> dict[str, Any]:
-        return _envelope(
-            marketScope,
-            snapshotTime,
-            {"status": "UNIQUE", "canonicalSku": sku, "sellerSkus": [], "mskus": []},
-            "sku-identity-v1",
+        if len(set(skuCode)) != len(skuCode):  # noqa: N803 - Java MCP wire field
+            raise ValueError("skuCode must be unique")
+        del searchType
+        return _yeaher_result(
+            {
+                "records": [
+                    _sku_list_record(sku)
+                    for sku in skuCode
+                ],
+                "total": len(skuCode),
+                "current": pageIndex,
+                "size": pageSize,
+                "pages": 1,
+            }
         )
 
-    @server.tool(name="query_inventory_summary", structured_output=True)
-    async def inventory_summary(
+    @server.tool(name="query_inventory_summary_v2", structured_output=True)
+    async def inventory_summary_v2(
         marketScope: MarketScope,
-        sku: Sku,
-        snapshotTime: SnapshotTime,  # noqa: N803
+        skuCode: Sku,  # noqa: N803 - Java MCP wire field
     ) -> dict[str, Any]:
-        return _envelope(
-            marketScope,
-            snapshotTime,
+        del marketScope
+        return _result_data(
             {
-                "sku": sku,
+                "sku": skuCode,
                 "availableQuantity": 18,
                 "holdQuantity": 0,
                 "transferInTransitQuantity": 0,
@@ -380,67 +490,56 @@ def create_mcp_app() -> ASGIApp:
                 "agedInventoryQuantity": 0,
                 "daysSinceLastSale": 1,
                 "sourceSnapshotId": "local-inventory-snapshot-1",
-                "asOf": snapshotTime,
-            },
-            "inventory-summary-v1",
+                "asOf": LOCAL_AS_OF,
+            }
         )
 
-    @server.tool(name="query_sku_sales_profit_windows", structured_output=True)
+    @server.tool(name="query_sku_sales_profit_windows_v1", structured_output=True)
     async def sales_windows(
         marketScope: MarketScope,
-        sku: Sku,
-        snapshotTime: SnapshotTime,  # noqa: N803
+        skuCode: Sku,  # noqa: N803 - Java MCP wire field
+        snapshotDate: SnapshotDate,  # noqa: N803 - Java MCP wire field
     ) -> dict[str, Any]:
-        return _sales_windows_envelope(marketScope, sku, snapshotTime)
+        del marketScope
+        return _yeaher_result(_sales_windows_batch(skuCode, snapshotDate))
 
-    @server.tool(name="query_sku_sales_profit_windows_batch", structured_output=True)
-    async def sales_windows_batch(
-        marketScope: MarketScope,
-        skuCodes: Annotated[list[Sku], Field(min_length=1, max_length=1000)],
-        snapshotTime: SnapshotTime,  # noqa: N803
-    ) -> dict[str, Any]:
-        if len(set(skuCodes)) != len(skuCodes):  # noqa: N803 - MCP wire field
-            raise ValueError("skuCodes must be unique")
-        return _envelope(
-            marketScope,
-            snapshotTime,
-            {"items": [_sales_windows_result(sku, snapshotTime) for sku in skuCodes]},
-            "sku-sales-profit-v1",
-        )
-
-    @server.tool(name="query_sku_boston_cohort", structured_output=True)
+    @server.tool(name="query_sku_boston_cohort_v1", structured_output=True)
     async def boston_cohort(
         marketScope: MarketScope,
-        snapshotTime: SnapshotTime,
-        sku: Sku,
-        pageSize: PageSize,  # noqa: N803
-        cursor: Annotated[str | None, Field(min_length=1)] = None,
+        snapshotDate: SnapshotDate,  # noqa: N803 - Java MCP wire field
+        targetSkuCode: Sku,  # noqa: N803 - Java MCP wire field
+        pageSize: PageSize,  # noqa: N803 - Java MCP wire field
+        cursor: Annotated[str | None, Field(min_length=1, max_length=4096)] = None,
     ) -> dict[str, Any]:
+        del marketScope, pageSize, targetSkuCode
         if cursor is not None:
             raise ValueError("deterministic local cohort has exactly one page")
         members = [
             {
-                "sku": f"SKU-LOCAL-PEER-{index}",
+                "skuCode": f"SKU-LOCAL-PEER-{index}",
                 "windows": _window_rows(),
                 "activeDays": 120,
                 "growthRatio": 0.05 + index / 100,
             }
             for index in range(1, 6)
         ]
-        return _envelope(
-            marketScope,
-            snapshotTime,
+        return _yeaher_result(
             {
+                "cid": LOCAL_TENANT_ID,
+                "marketScope": "NA_COMPANY",
+                "snapshotDate": snapshotDate,
+                "statisticsVersion": "sku-sales-profit-v1",
+                "currency": "USD",
                 "status": "AVAILABLE",
                 "filterDefinition": "NA_COMPANY_ACTIVE_60D_V1",
                 "totalEligible": len(members),
                 "members": members,
                 "nextCursor": None,
-                "cohortSnapshotId": "local-cohort-snapshot-1",
-                "dataAsOf": snapshotTime,
+                "snapshotId": "local-cohort-snapshot-1",
+                "sourceMaxBizDate": "20260829",
                 "sourceWatermark": "local-cohort-watermark-1",
-            },
-            "sku-sales-profit-v1",
+                "incompleteReason": None,
+            }
         )
 
     _apply_formal_tool_schemas(server)
@@ -461,22 +560,56 @@ def _required_text(body: dict[str, Any], name: str) -> str:
     return value
 
 
-def _envelope(
-    market_scope: str, snapshot_time: str, result: dict[str, Any], statistics_version: str
-) -> dict[str, Any]:
+def _yeaher_result(result: dict[str, Any]) -> dict[str, Any]:
     return {
-        "contractVersion": "erp-supply-chain/v1",
-        "statisticsVersion": statistics_version,
-        "statisticsDefinition": {
-            "variance": "POPULATION",
-            "missingDays": "ZERO_WITH_COMPLETE_WATERMARK",
-            "windowBoundary": "CLOSED_INCLUSIVE",
-            "timezone": "UTC",
-        },
-        "marketScope": market_scope,
-        "snapshotTime": snapshot_time,
-        "observedAt": snapshot_time,
+        "success": True,
+        "code": 200,
+        "message": None,
         "result": result,
+    }
+
+
+def _result_data(result: dict[str, Any]) -> dict[str, Any]:
+    return {"code": 200, "message": "success", "result": result}
+
+
+def _sku_list_record(sku: str) -> dict[str, Any]:
+    bar_code = f"UPC-{sku.removeprefix('SKU-')}"
+    return {
+        "skuName": "Deterministic local SKU",
+        "barCode": bar_code,
+        "skuCode": sku,
+        "manager": None,
+        "newStatus": None,
+        "currency": "USD",
+        "cost": 12.5,
+        "spuCode": None,
+        "spuName": None,
+        "brand": None,
+        "category": None,
+        "note": None,
+        "productType": None,
+        "isContainUpgrade": None,
+        "isAccessory": None,
+        "isUpgradeAccessory": None,
+        "categoryId": None,
+        "amazonCategoryName": None,
+        "path": [
+            {
+                "amazonCategoryId": "LOCAL-CATEGORY",
+                "amazonCategoryName": "Local category",
+                "categoryId": "LOCAL-CATEGORY",
+                "fullPath": "Local category",
+            }
+        ],
+        "fullPath": None,
+        "isToBeDeprecated": None,
+        "isUpgradable": None,
+        "subSkuResultDtos": [],
+        "imageUrls": [],
+        "upid": None,
+        "createTime": None,
+        "createBy": None,
     }
 
 
@@ -497,26 +630,28 @@ def _window_rows() -> list[dict[str, Any]]:
     ]
 
 
-def _sales_windows_envelope(market_scope: str, sku: str, snapshot_time: str) -> dict[str, Any]:
-    return _envelope(
-        market_scope,
-        snapshot_time,
-        _sales_windows_result(sku, snapshot_time),
-        "sku-sales-profit-v1",
-    )
-
-
-def _sales_windows_result(sku: str, snapshot_time: str) -> dict[str, Any]:
+def _sales_windows_batch(sku: str, snapshot_date: str) -> dict[str, Any]:
     return {
-        "sku": sku,
-        "status": "FOUND",
-        "windows": _window_rows(),
-        "activeDays": 120,
-        "growthRatio": 0.1,
-        "growthUnavailableReason": "NONE",
+        "cid": LOCAL_TENANT_ID,
+        "marketScope": "NA_COMPANY",
+        "snapshotDate": snapshot_date,
+        "statisticsVersion": "sku-sales-profit-v1",
         "currency": "USD",
-        "dataAsOf": snapshot_time,
-        "sourceWatermark": "local-sales-watermark-1",
+        "items": [
+            {
+                "skuCode": sku,
+                "status": "FOUND",
+                "incompleteReason": None,
+                "windows": _window_rows(),
+                "activeDays": 120,
+                "growthRatio": 0.1,
+                "growthUnavailableReason": "NONE",
+                "currency": "USD",
+                "sourceMaxBizDate": "20260829",
+                "sourceWatermark": "local-sales-watermark-1",
+                "calculationVersion": "sku-sales-profit-v1",
+            }
+        ],
     }
 
 

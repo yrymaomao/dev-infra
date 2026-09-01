@@ -7,12 +7,18 @@ from pathlib import Path
 import pytest
 
 READ_TOOLS = [
-    "query_inventory_summary",
-    "query_sku_boston_cohort",
-    "query_sku_identity",
-    "query_sku_sales_profit_windows",
-    "query_sku_sales_profit_windows_batch",
+    "query_inventory_summary_v2",
+    "query_sku_boston_cohort_v1",
+    "query_sku_sales_profit_windows_v1",
+    "query_sku_upc_mapping",
 ]
+
+ERP_TOOL_BY_OPERATION = {
+    "catalog.resolve_sku_identity": "query_sku_upc_mapping",
+    "inventory.get_total_snapshot": "query_inventory_summary_v2",
+    "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
+    "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
+}
 
 
 def write_runtime_policy(path: Path, skill_root: Path) -> None:
@@ -101,12 +107,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "secret_names": [],
                 "config": {
                     "mcp": {
-                        "tools": {
-                            "catalog.resolve_sku_identity": "query_sku_identity",
-                            "inventory.get_total_snapshot": "query_inventory_summary",
-                            "sales_profit.get_boston_cohort": "query_sku_boston_cohort",
-                            "sales_profit.get_sku_windows": "query_sku_sales_profit_windows",
-                        }
+                        "tools": ERP_TOOL_BY_OPERATION
                     },
                 },
             },
@@ -223,6 +224,19 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
         "supply-chain.planning",
     ]
     assert config.base_ai_providers[0].package_digest == "a" * 64
+    provider_config = next(
+        provider.config
+        for provider in config.base_ai_providers
+        if provider.provider_id == "yeaher.erp"
+    )
+    assert provider_config["mcp"]["tools"] == ERP_TOOL_BY_OPERATION
+    assert not ({
+        "query_sku_identity",
+        "query_inventory_summary",
+        "query_sku_sales_profit_windows",
+        "query_sku_sales_profit_windows_batch",
+        "query_sku_boston_cohort",
+    } & set(READ_TOOLS))
 
 
 def test_local_fixture_policy_is_allowed_only_for_deterministic_local(tmp_path: Path) -> None:

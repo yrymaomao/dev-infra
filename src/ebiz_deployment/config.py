@@ -24,11 +24,10 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
-    "query_inventory_summary",
-    "query_sku_boston_cohort",
-    "query_sku_identity",
-    "query_sku_sales_profit_windows",
-    "query_sku_sales_profit_windows_batch",
+    "query_inventory_summary_v2",
+    "query_sku_boston_cohort_v1",
+    "query_sku_sales_profit_windows_v1",
+    "query_sku_upc_mapping",
 )
 _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     "mcp.streamable_http": {
@@ -359,10 +358,10 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
         mcp = config.get("mcp")
         expected = {
             "tools": {
-                "catalog.resolve_sku_identity": "query_sku_identity",
-                "inventory.get_total_snapshot": "query_inventory_summary",
-                "sales_profit.get_boston_cohort": "query_sku_boston_cohort",
-                "sales_profit.get_sku_windows": "query_sku_sales_profit_windows",
+                "catalog.resolve_sku_identity": "query_sku_upc_mapping",
+                "inventory.get_total_snapshot": "query_inventory_summary_v2",
+                "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
+                "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
             }
         }
         if mcp != expected or provider.egress_hosts:

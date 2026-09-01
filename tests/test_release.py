@@ -36,6 +36,19 @@ CONTRACT_ROOTS = {
 WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
+EXPECTED_PUBLIC_CAPABILITY_PINS = {
+    ("catalog.resolve_sku_identity", 1),
+    ("catalog.resolve_sku_identity", 2),
+    ("inventory.get_total_snapshot", 2),
+    ("sales_profit.get_sku_windows", 2),
+    ("sales_profit.get_boston_cohort", 1),
+    ("supply_chain.resolve_fulfillment_mode", 1),
+    ("supply_chain.compute_forecast", 2),
+    ("supply_chain.classify_inventory", 2),
+    ("supply_chain.route_inventory_action", 1),
+    ("supply_chain.build_replenishment_proposal", 2),
+    ("supply_chain.build_clearance_proposal", 1),
+}
 
 
 def release_config(tmp_path: Path) -> DeploymentCompositionConfig:
@@ -182,17 +195,22 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
         "inventory.core",
         "supply-chain.planning",
     ]
-    assert [(item.set_id, item.version, len(item.capabilities)) for item in publications] == [
-        ("commerce-sales.analytics", 2, 2),
-        ("inventory.core", 2, 2),
-        ("supply-chain.planning", 2, 6),
-    ]
+    actual_pins = {
+        (capability.code, capability.version)
+        for publication in publications
+        for capability in publication.capabilities
+    }
+    assert actual_pins == EXPECTED_PUBLIC_CAPABILITY_PINS
     payload = build_agent_draft_payload(config.supply_chain_release, publications)
     AgentDraftRequest.model_validate(payload)
     assert payload["code"] == "inventory-supply-chain"
     assert payload["version"] == 4
     assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 4}]
-    assert len(payload["capability_pins"]) == 10
+    assert {
+        (item["code"], item["version"])
+        for item in payload["capability_pins"]
+    } == EXPECTED_PUBLIC_CAPABILITY_PINS
+    assert len(payload["capability_pins"]) == len(EXPECTED_PUBLIC_CAPABILITY_PINS)
     assert payload["capability_pins"] == sorted(
         payload["capability_pins"], key=lambda item: (item["code"], item["version"])
     )

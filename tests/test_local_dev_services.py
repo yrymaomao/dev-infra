@@ -23,6 +23,7 @@ from ebiz_deployment.local_dev_assets import build_skill_document, write_local_d
 from ebiz_deployment.local_dev_services import (
     BROKER_AUTH_TOKEN,
     CREDENTIAL_REF,
+    LOCAL_TENANT_ID,
     OPENAI_API_KEY,
     REQUEST_ACCESS_TOKEN,
     create_mcp_app,
@@ -234,36 +235,70 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
             json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             headers=headers,
         )
-        cohort = client.post(
+        identity = client.post(
             "/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "tools/call",
                 "params": {
-                    "name": "query_sku_boston_cohort",
+                    "name": "query_sku_upc_mapping",
                     "arguments": {
-                        "marketScope": "NA_COMPANY",
-                        "snapshotTime": "2026-08-30T12:00:00Z",
-                        "sku": "SKU-LOCAL-1",
-                        "pageSize": 1000,
+                        "pageIndex": 1,
+                        "pageSize": 2,
+                        "skuCode": ["SKU-LOCAL-1"],
+                        "searchType": "exactSearch",
                     },
                 },
             },
             headers=headers,
         )
-        sales_batch = client.post(
+        inventory = client.post(
             "/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "tools/call",
                 "params": {
-                    "name": "query_sku_sales_profit_windows_batch",
+                    "name": "query_inventory_summary_v2",
                     "arguments": {
                         "marketScope": "NA_COMPANY",
-                        "snapshotTime": "2026-08-30T12:00:00Z",
-                        "skuCodes": ["SKU-LOCAL-1", "SKU-LOCAL-2"],
+                        "skuCode": "SKU-LOCAL-1",
+                    },
+                },
+            },
+            headers=headers,
+        )
+        windows = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_sales_profit_windows_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotDate": "20260830",
+                        "skuCode": "SKU-LOCAL-1",
+                    },
+                },
+            },
+            headers=headers,
+        )
+        cohort = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_boston_cohort_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotDate": "20260830",
+                        "targetSkuCode": "SKU-LOCAL-1",
+                        "pageSize": 1000,
                     },
                 },
             },
@@ -273,11 +308,10 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
     assert listed.status_code == 200
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
     assert names == {
-        "query_inventory_summary",
-        "query_sku_identity",
-        "query_sku_sales_profit_windows",
-        "query_sku_sales_profit_windows_batch",
-        "query_sku_boston_cohort",
+        "query_sku_upc_mapping",
+        "query_inventory_summary_v2",
+        "query_sku_sales_profit_windows_v1",
+        "query_sku_boston_cohort_v1",
     }
     for tool in listed.json()["result"]["tools"]:
         assert tool["inputSchema"]["additionalProperties"] is False
@@ -285,52 +319,205 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
     cohort_tool = next(
         tool
         for tool in listed.json()["result"]["tools"]
-        if tool["name"] == "query_sku_boston_cohort"
+        if tool["name"] == "query_sku_boston_cohort_v1"
     )
     cohort_input = cohort_tool["inputSchema"]
     assert set(cohort_input["required"]) == {
-        "sku",
+        "targetSkuCode",
         "marketScope",
-        "snapshotTime",
+        "snapshotDate",
         "pageSize",
     }
-    assert cohort_input["properties"]["pageSize"]["minimum"] == 5
+    assert cohort_input["properties"]["pageSize"]["minimum"] == 1
     assert cohort_input["properties"]["pageSize"]["maximum"] == 1000
-    assert cohort_input["properties"]["snapshotTime"]["format"] == "date-time"
+    assert cohort_input["properties"]["snapshotDate"]["pattern"] == r"^\d{8}$"
     cohort_output = cohort_tool["outputSchema"]
-    assert cohort_output["properties"]["result"]["additionalProperties"] is False
+    assert set(cohort_output["properties"]) == {"success", "code", "message", "result"}
     member_schema = cohort_output["properties"]["result"]["properties"]["members"]["items"]
     assert member_schema["additionalProperties"] is False
+    assert identity.status_code == 200
+    identity_document = identity.json()["result"]["structuredContent"]
+    assert set(identity_document) == {"success", "code", "message", "result"}
+    assert identity_document["success"] is True
+    assert identity_document["code"] == 200
+    assert identity_document["message"] is None
+    identity_page = identity_document["result"]
+    assert identity_page["total"] == 1
+    assert identity_page["current"] == 1
+    assert identity_page["size"] == 2
+    assert identity_page["pages"] == 1
+    identity_record = identity_page["records"][0]
+    assert set(identity_record) == {
+        "skuName",
+        "barCode",
+        "skuCode",
+        "manager",
+        "newStatus",
+        "currency",
+        "cost",
+        "spuCode",
+        "spuName",
+        "brand",
+        "category",
+        "note",
+        "productType",
+        "isContainUpgrade",
+        "isAccessory",
+        "isUpgradeAccessory",
+        "categoryId",
+        "amazonCategoryName",
+        "path",
+        "fullPath",
+        "isToBeDeprecated",
+        "isUpgradable",
+        "subSkuResultDtos",
+        "imageUrls",
+        "upid",
+        "createTime",
+        "createBy",
+    }
+    assert identity_record["skuCode"] == "SKU-LOCAL-1"
+    assert identity_record["barCode"] == "UPC-LOCAL-1"
+    assert identity_record["cost"] == 12.5
+    assert identity_record["path"] == [
+        {
+            "amazonCategoryId": "LOCAL-CATEGORY",
+            "amazonCategoryName": "Local category",
+            "categoryId": "LOCAL-CATEGORY",
+            "fullPath": "Local category",
+        }
+    ]
+    assert identity_record["subSkuResultDtos"] == []
+    assert identity_record["imageUrls"] == []
+    assert inventory.status_code == 200
+    inventory_document = inventory.json()["result"]["structuredContent"]
+    assert set(inventory_document) == {"code", "message", "result"}
+    assert inventory_document["code"] == 200
+    assert inventory_document["message"] == "success"
+    assert inventory_document["result"] == {
+        "sku": "SKU-LOCAL-1",
+        "availableQuantity": 18,
+        "holdQuantity": 0,
+        "transferInTransitQuantity": 0,
+        "purchaseInTransitQuantity": 12,
+        "agedInventoryQuantity": 0,
+        "daysSinceLastSale": 1,
+        "sourceSnapshotId": "local-inventory-snapshot-1",
+        "asOf": "2026-08-30T00:00:00Z",
+    }
+    assert windows.status_code == 200
+    windows_document = windows.json()["result"]["structuredContent"]
+    assert set(windows_document) == {"success", "code", "message", "result"}
+    assert windows_document["success"] is True
+    assert windows_document["code"] == 200
+    assert windows_document["message"] is None
+    assert windows_document["result"]["cid"] == LOCAL_TENANT_ID
+    assert windows_document["result"]["snapshotDate"] == "20260830"
+    assert windows_document["result"]["items"][0]["skuCode"] == "SKU-LOCAL-1"
+    assert [item["windowDays"] for item in windows_document["result"]["items"][0]["windows"]] == [
+        7,
+        14,
+        30,
+        60,
+        90,
+        180,
+        365,
+    ]
     assert cohort.status_code == 200
     call_result = cohort.json()["result"]
     assert call_result["isError"] is False
-    cohort_result = call_result["structuredContent"]["result"]
+    cohort_document = call_result["structuredContent"]
+    assert set(cohort_document) == {"success", "code", "message", "result"}
+    cohort_result = cohort_document["result"]
     assert set(cohort_result) == {
+        "cid",
+        "marketScope",
+        "snapshotDate",
+        "statisticsVersion",
+        "currency",
         "status",
         "filterDefinition",
         "totalEligible",
-        "cohortSnapshotId",
+        "snapshotId",
         "nextCursor",
         "members",
-        "dataAsOf",
+        "sourceMaxBizDate",
         "sourceWatermark",
+        "incompleteReason",
     }
-    assert cohort_result["dataAsOf"] == "2026-08-30T12:00:00Z"
+    assert cohort_result["snapshotDate"] == "20260830"
     assert cohort_result["sourceWatermark"] == "local-cohort-watermark-1"
     assert cohort_result["nextCursor"] is None
-    batch_result = sales_batch.json()["result"]
-    assert batch_result["isError"] is False
-    batch_document = batch_result["structuredContent"]
-    assert set(batch_document) == {
-        "contractVersion",
-        "statisticsVersion",
-        "statisticsDefinition",
-        "marketScope",
-        "snapshotTime",
-        "observedAt",
-        "result",
+    assert all(
+        member["skuCode"].startswith("SKU-LOCAL-PEER-")
+        for member in cohort_result["members"]
+    )
+
+
+@pytest.mark.parametrize(
+    "name, arguments",
+    [
+        (
+            "query_sku_sales_profit_windows_v1",
+            {"marketScope": "NA_COMPANY", "snapshotDate": "20260230", "skuCode": "SKU-LOCAL-1"},
+        ),
+        (
+            "query_inventory_summary_v2",
+            {"marketScope": "NA_COMPANY", "skuCode": "   "},
+        ),
+        (
+            "query_sku_boston_cohort_v1",
+            {
+                "marketScope": "NA_COMPANY",
+                "snapshotDate": "20260830",
+                "targetSkuCode": "   ",
+                "pageSize": 1,
+            },
+        ),
+        (
+            "query_sku_upc_mapping",
+            {"pageIndex": 1, "pageSize": 2, "skuCode": ["   "], "searchType": "exactSearch"},
+        ),
+    ],
+)
+def test_mcp_rejects_invalid_java_request_fields_as_tool_errors(
+    name: str, arguments: dict[str, object]
+) -> None:
+    headers = {
+        "X-Mcp-Key": REQUEST_ACCESS_TOKEN,
+        "Accept": "application/json, text/event-stream",
     }
-    assert len(batch_document["result"]["items"]) == 2
+    with TestClient(create_mcp_app(), base_url="http://127.0.0.1:18081") as client:
+        initialized = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "local-test", "version": "1"},
+                },
+            },
+            headers=headers,
+        )
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+            headers=headers,
+        )
+
+    assert initialized.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert "structuredContent" not in body.get("result", {})
+    assert "error" in body or body["result"]["isError"] is True
 
 
 def test_local_assets_are_closed_valid_and_explicitly_non_production(

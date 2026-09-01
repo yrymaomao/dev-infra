@@ -277,11 +277,10 @@ def _mcp_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[str,
             "server_name": "local-dev-erp-read",
             "url": "http://127.0.0.1:18081/mcp",
             "allowed_tools": [
-                "query_inventory_summary",
-                "query_sku_boston_cohort",
-                "query_sku_identity",
-                "query_sku_sales_profit_windows",
-                "query_sku_sales_profit_windows_batch",
+                "query_inventory_summary_v2",
+                "query_sku_boston_cohort_v1",
+                "query_sku_sales_profit_windows_v1",
+                "query_sku_upc_mapping",
             ],
             "auth_profile": "X_MCP_KEY",
             "network": network,
@@ -309,10 +308,10 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
         "config": {
             "mcp": {
                 "tools": {
-                    "catalog.resolve_sku_identity": "query_sku_identity",
-                    "inventory.get_total_snapshot": "query_inventory_summary",
-                    "sales_profit.get_boston_cohort": "query_sku_boston_cohort",
-                    "sales_profit.get_sku_windows": "query_sku_sales_profit_windows",
+                    "catalog.resolve_sku_identity": "query_sku_upc_mapping",
+                    "inventory.get_total_snapshot": "query_inventory_summary_v2",
+                    "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
+                    "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
                 }
             }
         },
