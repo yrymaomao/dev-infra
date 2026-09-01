@@ -26,10 +26,18 @@ from ebiz_deployment.local_dev_services import (
     LOCAL_TENANT_ID,
     OPENAI_API_KEY,
     REQUEST_ACCESS_TOKEN,
+    _local_inventory_as_of,
     create_mcp_app,
     create_provider_app,
 )
 from ebiz_deployment.record_attestation import attest_installed_distribution
+
+
+@pytest.fixture(autouse=True)
+def canonical_governed_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject the generated-clock shape required by direct local MCP unit tests."""
+
+    monkeypatch.setenv("SUPPLY_CHAIN_SNAPSHOT_TIME", "2026-08-30T00:00:00Z")
 
 
 @pytest.fixture(scope="module")
@@ -92,6 +100,48 @@ def test_provider_app_has_no_supply_chain_cockpit_route() -> None:
             json={},
         )
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("snapshot_time", "expected"),
+    [
+        ("2026-09-01T01:02:03Z", "2026-09-01T01:02:03Z"),
+        ("2024-02-29T23:59:59Z", "2024-02-29T23:59:59Z"),
+        ("2027-01-01T00:00:00Z", "2027-01-01T00:00:00Z"),
+    ],
+)
+def test_local_inventory_as_of_accepts_only_canonical_governed_snapshots(
+    monkeypatch: pytest.MonkeyPatch, snapshot_time: str, expected: str
+) -> None:
+    monkeypatch.setenv("SUPPLY_CHAIN_SNAPSHOT_TIME", snapshot_time)
+
+    assert _local_inventory_as_of() == expected
+
+
+def test_local_inventory_as_of_requires_the_governed_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SUPPLY_CHAIN_SNAPSHOT_TIME", raising=False)
+
+    with pytest.raises(ValueError, match="SUPPLY_CHAIN_SNAPSHOT_TIME is required"):
+        _local_inventory_as_of()
+
+
+@pytest.mark.parametrize(
+    "snapshot_time",
+    [
+        "2026-9-1T1:2:3Z",
+        "2026-09-01T01:02:03+00:00",
+        "2026-09-01T01:02:03.000Z",
+    ],
+)
+def test_local_inventory_as_of_rejects_noncanonical_governed_snapshots(
+    monkeypatch: pytest.MonkeyPatch, snapshot_time: str
+) -> None:
+    monkeypatch.setenv("SUPPLY_CHAIN_SNAPSHOT_TIME", snapshot_time)
+
+    with pytest.raises(ValueError, match="canonical RFC3339 UTC seconds"):
+        _local_inventory_as_of()
 
 
 def test_classification_connector_allowlist_matches_v4_workflow_inputs() -> None:
@@ -446,12 +496,113 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
         "incompleteReason",
     }
     assert cohort_result["snapshotDate"] == "20260830"
-    assert cohort_result["sourceWatermark"] == "local-cohort-watermark-1"
+    assert cohort_result["sourceWatermark"] == "local-cohort-watermark-20260829"
     assert cohort_result["nextCursor"] is None
     assert all(
         member["skuCode"].startswith("SKU-LOCAL-PEER-")
         for member in cohort_result["members"]
     )
+
+
+def test_mcp_fixture_uses_the_generated_snapshot_for_freshness_across_a_date_rollover(
+    tmp_path: Path, local_fixture_install: tuple[Path, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later deterministic asset snapshot must keep every ERP evidence watermark eligible."""
+
+    monkeypatch.setattr(
+        local_assets_module,
+        "_installed_digests",
+        lambda: {
+            "COMMERCE_SALES_CATALOG_RECORD_DIGEST": "1" * 64,
+            "ERP_RECORD_DIGEST": "2" * 64,
+            "INVENTORY_CATALOG_RECORD_DIGEST": "3" * 64,
+            "MCP_RECORD_DIGEST": "4" * 64,
+            "OPENAI_RECORD_DIGEST": "5" * 64,
+            "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": "6" * 64,
+            "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": "7" * 64,
+            "SUPPLY_CHAIN_WORKFLOW_DIGEST": "8" * 64,
+        },
+    )
+    assets = write_local_dev_assets(
+        tmp_path,
+        fixture_search_paths=local_fixture_install,
+        snapshot_time=datetime(2027, 1, 2, 0, 5, 6, tzinfo=UTC),
+    )
+    environment = json.loads(assets.environment.read_text(encoding="utf-8"))
+    monkeypatch.setenv("SUPPLY_CHAIN_SNAPSHOT_TIME", environment["SUPPLY_CHAIN_SNAPSHOT_TIME"])
+    headers = {
+        "X-Mcp-Key": REQUEST_ACCESS_TOKEN,
+        "Accept": "application/json, text/event-stream",
+    }
+    initialized = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "local-test", "version": "1"},
+        },
+    }
+    with TestClient(create_mcp_app(), base_url="http://127.0.0.1:18081") as client:
+        assert client.post("/mcp", json=initialized, headers=headers).status_code == 200
+        inventory = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_inventory_summary_v2",
+                    "arguments": {"marketScope": "NA_COMPANY", "skuCode": "SKU-LOCAL-1"},
+                },
+            },
+            headers=headers,
+        )
+        windows = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_sales_profit_windows_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotDate": "20270102",
+                        "skuCode": "SKU-LOCAL-1",
+                    },
+                },
+            },
+            headers=headers,
+        )
+        cohort = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_sku_boston_cohort_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "snapshotDate": "20270102",
+                        "targetSkuCode": "SKU-LOCAL-1",
+                        "pageSize": 1000,
+                    },
+                },
+            },
+            headers=headers,
+        )
+
+    inventory_result = inventory.json()["result"]["structuredContent"]["result"]
+    windows_result = windows.json()["result"]["structuredContent"]["result"]
+    cohort_result = cohort.json()["result"]["structuredContent"]["result"]
+    assert inventory_result["asOf"] == "2027-01-02T00:05:06Z"
+    assert windows_result["items"][0]["sourceMaxBizDate"] == "20270101"
+    assert windows_result["items"][0]["sourceWatermark"] == "local-sales-watermark-20270101"
+    assert cohort_result["sourceMaxBizDate"] == "20270101"
+    assert cohort_result["sourceWatermark"] == "local-cohort-watermark-20270101"
 
 
 @pytest.mark.parametrize(

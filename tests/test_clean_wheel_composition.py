@@ -4,9 +4,11 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from agent_runtime.plugins.discovery import ProviderPluginDescriptor, discover_provider_entry_points
 from agent_runtime.plugins.registry import PluginRegistry
 from base_ai.providers import discover_provider_factory_descriptors
 from test_config import deployment_document, deployment_env, write_runtime_policy
@@ -23,6 +25,29 @@ EXPECTED_PROVIDERS = {
     "openai.responses",
     "yeaher.erp",
 }
+_PLANNING_PLUGIN_ID = "supply-chain-planning"
+_LOCAL_FIXTURE_PLUGIN_ID = "deployment.fixture.governed-artifact"
+
+
+def _production_plugin_descriptors() -> Sequence[ProviderPluginDescriptor]:
+    """Model a clean production plugin set even when this test venv also has the local fixture."""
+
+    descriptors = tuple(discover_provider_entry_points())
+    by_id = {descriptor.name: descriptor for descriptor in descriptors}
+    if set(by_id) - {_PLANNING_PLUGIN_ID, _LOCAL_FIXTURE_PLUGIN_ID}:
+        raise AssertionError("clean composition discovered an unexpected Runtime plugin")
+    fixture = by_id.get(_LOCAL_FIXTURE_PLUGIN_ID)
+    if fixture is not None:
+        assert fixture.distribution_name == "ebiz-deployment-local-evidence-fixture"
+        assert fixture.value == "ebiz_deployment_local_fixture.plugin:factory"
+    planning = by_id.get(_PLANNING_PLUGIN_ID)
+    if planning is None:
+        raise AssertionError("clean composition is missing the production Supply Chain plugin")
+    return (planning,)
+
+
+def test_production_plugin_discovery_excludes_only_the_known_local_fixture() -> None:
+    assert [item.name for item in _production_plugin_descriptors()] == [_PLANNING_PLUGIN_ID]
 
 
 @pytest.mark.asyncio
@@ -69,6 +94,7 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
     agent_registry = PluginRegistry(
         policy=config.runtime_plugin_policy,
         supported_api_version=config.runtime.supported_api_version,
+        discoverer=_production_plugin_descriptors,
     )
     agent_snapshot = await agent_registry.load_startup()
     composition = await artifacts.root.start()
@@ -152,6 +178,7 @@ from importlib import metadata
 from pathlib import Path
 
 from agent_runtime.plugins.registry import PluginRegistry
+from agent_runtime.plugins.discovery import discover_provider_entry_points
 from ebiz_deployment.config import load_deployment_config
 from ebiz_deployment.launcher import launch
 
@@ -165,9 +192,25 @@ assert not tuple(root.rglob("__pycache__"))
 def runtime_main(argv, *, provider_composition):
     del argv, provider_composition
     config = load_deployment_config(Path(os.environ["EBIZ_DEPLOYMENT_CONFIG"]), os.environ)
+    descriptors = tuple(discover_provider_entry_points())
+    unexpected = {item.name for item in descriptors} - {
+        "supply-chain-planning",
+        "deployment.fixture.governed-artifact",
+    }
+    assert not unexpected
+    local_fixture = next(
+        (item for item in descriptors if item.name == "deployment.fixture.governed-artifact"),
+        None,
+    )
+    if local_fixture is not None:
+        assert local_fixture.distribution_name == "ebiz-deployment-local-evidence-fixture"
+        assert local_fixture.value == "ebiz_deployment_local_fixture.plugin:factory"
+    production = tuple(item for item in descriptors if item.name == "supply-chain-planning")
+    assert len(production) == 1
     registry = PluginRegistry(
         policy=config.runtime_plugin_policy,
         supported_api_version=config.runtime.supported_api_version,
+        discoverer=lambda: production,
     )
     snapshot = asyncio.run(registry.load_startup())
     assert len(snapshot.plugins) == 1

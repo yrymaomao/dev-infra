@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -52,7 +53,7 @@ SnapshotDate = Annotated[
     str, Field(pattern=r"^\d{8}$"), AfterValidator(_valid_yyyymmdd)
 ]
 ExactSearch = Literal["exactSearch"]
-LOCAL_AS_OF = "2026-08-30T00:00:00Z"
+_CANONICAL_RFC3339_UTC_SECONDS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 _ALLOWED_CREDENTIAL_PROVIDERS = frozenset({"mcp.streamable_http", "yeaher.erp"})
 
@@ -61,6 +62,37 @@ def _bearer(authorization: str | None) -> str:
     if authorization is None or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="local development authentication required")
     return authorization.removeprefix("Bearer ")
+
+
+def _local_inventory_as_of() -> str:
+    """Use the generated replay clock, never wall-clock time, for local inventory freshness."""
+
+    value = os.environ.get("SUPPLY_CHAIN_SNAPSHOT_TIME")
+    if value is None:
+        raise ValueError("SUPPLY_CHAIN_SNAPSHOT_TIME is required")
+    if _CANONICAL_RFC3339_UTC_SECONDS.fullmatch(value) is None:
+        raise ValueError("SUPPLY_CHAIN_SNAPSHOT_TIME must be canonical RFC3339 UTC seconds")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        message = "SUPPLY_CHAIN_SNAPSHOT_TIME must be canonical RFC3339 UTC seconds"
+        raise ValueError(message) from None
+    canonical = parsed.isoformat().replace("+00:00", "Z")
+    if canonical != value:
+        raise ValueError("SUPPLY_CHAIN_SNAPSHOT_TIME must be canonical RFC3339 UTC seconds")
+    return canonical
+
+
+def _last_completed_utc_day(snapshot_date: str) -> str:
+    """Return the deterministic source date before a run's snapshot day.
+
+    The Base ERP adapter maps a ``yyyyMMdd`` source maximum to the final
+    second of that UTC day. A local run cannot claim its still-open snapshot
+    day as completed source data without creating future evidence.
+    """
+
+    snapshot = datetime.strptime(snapshot_date, "%Y%m%d").replace(tzinfo=UTC)
+    return (snapshot - timedelta(days=1)).strftime("%Y%m%d")
 
 
 def create_provider_app() -> FastAPI:
@@ -450,6 +482,7 @@ def _apply_formal_tool_schemas(server: MCPServer) -> None:
 def create_mcp_app() -> ASGIApp:
     """Create an X-Mcp-Key protected, stateless MCP inventory service."""
     server = MCPServer("ebiz-local-dev-inventory", version="1.0.0", log_level="WARNING")
+    inventory_as_of = _local_inventory_as_of()
 
     @server.tool(name="query_sku_upc_mapping", structured_output=True)
     async def sku_upc_mapping(
@@ -490,7 +523,7 @@ def create_mcp_app() -> ASGIApp:
                 "agedInventoryQuantity": 0,
                 "daysSinceLastSale": 1,
                 "sourceSnapshotId": "local-inventory-snapshot-1",
-                "asOf": LOCAL_AS_OF,
+                "asOf": inventory_as_of,
             }
         )
 
@@ -514,6 +547,7 @@ def create_mcp_app() -> ASGIApp:
         del marketScope, pageSize, targetSkuCode
         if cursor is not None:
             raise ValueError("deterministic local cohort has exactly one page")
+        source_max_biz_date = _last_completed_utc_day(snapshotDate)
         members = [
             {
                 "skuCode": f"SKU-LOCAL-PEER-{index}",
@@ -536,8 +570,8 @@ def create_mcp_app() -> ASGIApp:
                 "members": members,
                 "nextCursor": None,
                 "snapshotId": "local-cohort-snapshot-1",
-                "sourceMaxBizDate": "20260829",
-                "sourceWatermark": "local-cohort-watermark-1",
+                "sourceMaxBizDate": source_max_biz_date,
+                "sourceWatermark": f"local-cohort-watermark-{source_max_biz_date}",
                 "incompleteReason": None,
             }
         )
@@ -631,6 +665,7 @@ def _window_rows() -> list[dict[str, Any]]:
 
 
 def _sales_windows_batch(sku: str, snapshot_date: str) -> dict[str, Any]:
+    source_max_biz_date = _last_completed_utc_day(snapshot_date)
     return {
         "cid": LOCAL_TENANT_ID,
         "marketScope": "NA_COMPANY",
@@ -647,8 +682,8 @@ def _sales_windows_batch(sku: str, snapshot_date: str) -> dict[str, Any]:
                 "growthRatio": 0.1,
                 "growthUnavailableReason": "NONE",
                 "currency": "USD",
-                "sourceMaxBizDate": "20260829",
-                "sourceWatermark": "local-sales-watermark-1",
+                "sourceMaxBizDate": source_max_biz_date,
+                "sourceWatermark": f"local-sales-watermark-{source_max_biz_date}",
                 "calculationVersion": "sku-sales-profit-v1",
             }
         ],
