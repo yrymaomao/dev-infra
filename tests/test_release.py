@@ -37,7 +37,6 @@ WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
 EXPECTED_PUBLIC_CAPABILITY_PINS = {
-    ("catalog.resolve_sku_identity", 1),
     ("catalog.resolve_sku_identity", 2),
     ("inventory.get_total_snapshot", 2),
     ("sales_profit.get_sku_windows", 2),

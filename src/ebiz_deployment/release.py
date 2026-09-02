@@ -41,7 +41,6 @@ _WORKFLOW_RESOURCES = (
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_CAPABILITY_PINS = frozenset(
     {
-        ("catalog.resolve_sku_identity", 1),
         ("catalog.resolve_sku_identity", 2),
         ("inventory.get_total_snapshot", 2),
         ("sales_profit.get_sku_windows", 2),
@@ -106,7 +105,7 @@ def build_agent_draft_payload(
         len(capability_pins) != len(_EXPECTED_CAPABILITY_PINS)
         or observed_pins != _EXPECTED_CAPABILITY_PINS
     ):
-        raise ValueError("Supply Chain v4 requires eleven exact capability pins")
+        raise ValueError("Supply Chain v4 requires ten exact capability pins")
     return {
         "code": release.agent_id,
         "name": "Supply Chain Expert",
