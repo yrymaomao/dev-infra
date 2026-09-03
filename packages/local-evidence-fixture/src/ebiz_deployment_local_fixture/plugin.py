@@ -11,7 +11,7 @@ from agent_runtime.plugins.contracts import ProviderKind, ProviderRegistration
 from agent_runtime.plugins.manifest import HealthCheckSpec, PluginManifest
 
 PLUGIN_ID = "deployment.fixture.governed-artifact"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PACKAGE_NAME = "ebiz-deployment-local-evidence-fixture"
 ENTRY_POINT = "ebiz_deployment_local_fixture.plugin:factory"
 PROVIDER_ID = PLUGIN_ID

@@ -169,7 +169,7 @@ def _plugin_policy(
         plugins.append(
             {
                 "plugin_id": "deployment.fixture.governed-artifact",
-                "version": "1.0.0",
+                "version": "1.0.1",
                 "package_name": "ebiz-deployment-local-evidence-fixture",
                 "entry_point": "ebiz_deployment_local_fixture.plugin:factory",
                 "package_digest": fixture_record_digest,
@@ -407,7 +407,7 @@ def write_local_dev_assets(
     skill_root.mkdir(parents=True, exist_ok=True)
     fixture_attestation = attest_installed_distribution(
         distribution_name="ebiz-deployment-local-evidence-fixture",
-        distribution_version="1.0.0",
+        distribution_version="1.0.1",
         entry_point_group="ebiz_agents.providers",
         entry_point_name="deployment.fixture.governed-artifact",
         entry_point_value="ebiz_deployment_local_fixture.plugin:factory",

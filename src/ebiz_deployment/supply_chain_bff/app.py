@@ -116,7 +116,7 @@ def create_app(container: BffContainer) -> FastAPI:
             tenant_id=current.tenant_id,
             request=body,
             eta=eta,
-            now=datetime.now(UTC),
+            now=container.settings.snapshot_time_override or datetime.now(UTC),
         )
         location = f"/api/supply-chain/v2/analysis-batches/{batch_id}"
         return JSONResponse(

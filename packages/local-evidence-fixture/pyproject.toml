@@ -1,9 +1,9 @@
 [project]
 name = "ebiz-deployment-local-evidence-fixture"
-version = "1.0.0"
+version = "1.0.1"
 description = "Deterministic-local-only governed evidence fixture for eBizHub deployment tests."
 requires-python = ">=3.11,<3.13"
-dependencies = ["ebizhub-agent-runtime==0.1.5"]
+dependencies = ["ebizhub-agent-runtime==0.1.6"]
 
 [project.entry-points."ebiz_agents.providers"]
 "deployment.fixture.governed-artifact" = "ebiz_deployment_local_fixture.plugin:factory"

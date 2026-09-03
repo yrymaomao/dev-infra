@@ -798,7 +798,7 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     field_policies = json.loads(environment["APP_CONNECTOR_FIELD_ALLOWLISTS"])
     assert set(field_policies) == targets
     assert "mcp.streamable_http@0.1.0" not in field_policies
-    assert "deployment.fixture.governed-artifact@1.0.0" not in field_policies
+    assert "deployment.fixture.governed-artifact@1.0.1" not in field_policies
     assert "COCKPIT_ENDPOINT" not in environment
 
 
@@ -886,7 +886,7 @@ def test_local_assets_pin_the_final_fixture_install_and_fail_closed_after_digest
     )
     attestation = attest_installed_distribution(
         distribution_name="ebiz-deployment-local-evidence-fixture",
-        distribution_version="1.0.0",
+        distribution_version="1.0.1",
         entry_point_group="ebiz_agents.providers",
         entry_point_name="deployment.fixture.governed-artifact",
         entry_point_value="ebiz_deployment_local_fixture.plugin:factory",

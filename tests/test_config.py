@@ -247,7 +247,7 @@ def test_local_fixture_policy_is_allowed_only_for_deterministic_local(tmp_path: 
     policy["plugins"].append(
         {
             "plugin_id": "deployment.fixture.governed-artifact",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "package_name": "ebiz-deployment-local-evidence-fixture",
             "entry_point": "ebiz_deployment_local_fixture.plugin:factory",
             "package_digest": "3" * 64,

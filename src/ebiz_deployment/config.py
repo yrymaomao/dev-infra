@@ -333,7 +333,7 @@ def _validate_supply_chain_policy(
     if allow_local_fixture:
         fixture = by_id["deployment.fixture.governed-artifact"]
         if (
-            fixture.version != "1.0.0"
+            fixture.version != "1.0.1"
             or fixture.package_name != "ebiz-deployment-local-evidence-fixture"
             or fixture.entry_point != "ebiz_deployment_local_fixture.plugin:factory"
             or fixture.permissions != frozenset({"deployment.fixture.read"})

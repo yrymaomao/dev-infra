@@ -87,7 +87,7 @@ def _descriptor() -> CapabilityDescriptor:
         approval_required=False,
         retryable_error_codes=[],
         timeout_seconds_limit=1,
-        runtime_binding="deployment.fixture.governed-artifact@1.0.0",
+        runtime_binding="deployment.fixture.governed-artifact@1.0.1",
     )
 
 
@@ -223,7 +223,7 @@ def test_fixture_catalog_loads_through_runtime_publisher_contract() -> None:
     publication = load_capability_publication(
         manifest_path=root / "capabilities.yaml",
         contract_root=root,
-        provider_versions={"deployment.fixture.governed-artifact": "1.0.0"},
+        provider_versions={"deployment.fixture.governed-artifact": "1.0.1"},
     )
     assert publication.set_id == "deployment.fixture.local-evidence"
     assert [(item.code, item.version) for item in publication.capabilities] == [

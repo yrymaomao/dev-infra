@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from sqlalchemy.engine import make_url
@@ -22,6 +23,7 @@ class BffSettings:
     runtime_url: str
     skill_input_ref: str
     runtime_credential_ref: str = field(repr=False)
+    snapshot_time_override: datetime | None = None
     max_batch_size: int = 200
     tenant_dispatch_concurrency: int = 4
     global_dispatch_concurrency: int = 32
@@ -74,6 +76,7 @@ class BffSettings:
             runtime_url=runtime_url,
             skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
             runtime_credential_ref=credential_ref,
+            snapshot_time_override=_optional_datetime("BFF_SUPPLY_CHAIN_SNAPSHOT_TIME"),
             tenant_dispatch_concurrency=concurrency,
             global_dispatch_concurrency=_integer(
                 "BFF_GLOBAL_DISPATCH_CONCURRENCY", 32, minimum=1, maximum=512
@@ -103,6 +106,19 @@ def _required(name: str) -> str:
     if not value:
         raise ValueError(f"{name} is required")
     return value
+
+
+def _optional_datetime(name: str) -> datetime | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"{name} must be an RFC3339 timestamp") from None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name} must carry a timezone")
+    return value.astimezone(UTC)
 
 
 def _integer(name: str, default: int, *, minimum: int, maximum: int) -> int:

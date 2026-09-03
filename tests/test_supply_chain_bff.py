@@ -336,8 +336,10 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
 
     class Repository:
         reads = 0
+        created_at: datetime | None = None
 
-        async def create_batch(self, **_kwargs: object):
+        async def create_batch(self, **kwargs: object):
+            self.created_at = kwargs["now"]  # type: ignore[assignment]
             return batch_id
 
         async def get_batch(self, **_kwargs: object):
@@ -373,6 +375,7 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
             return None
 
     secret = "j" * 32
+    snapshot_override = datetime(2026, 9, 1, tzinfo=UTC)
     settings = BffSettings(
         database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
         cursor_hmac_key=b"c" * 32,
@@ -380,6 +383,7 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
         runtime_url="http://127.0.0.1:8000",
         skill_input_ref="payload://skill/current",
         runtime_credential_ref="opaque:runtime-service",
+        snapshot_time_override=snapshot_override,
         async_start_enabled=True,
         stream_enabled=True,
         activity_ui_enabled=True,
@@ -444,6 +448,7 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
         )
 
     assert accepted.status_code == 202, accepted.text
+    assert repository.created_at == snapshot_override
     assert elapsed < 1
     assert accepted.headers["location"].endswith(str(batch_id))
     assert runtime_profile.json()["activity_ui_enabled"] is True
