@@ -1,0 +1,166 @@
+{
+  "schema_version": "ebizhub.release-manifest.v1",
+  "release_id": "supply-chain-streaming-0.1.6",
+  "created_at": "2026-09-03T09:30:00-07:00",
+  "components": {
+    "runtime_contracts": {
+      "version": "0.1.6",
+      "commit": "25bd61a6b13dc37f1ff4a21037e32f7f95715532",
+      "wheel": "ebiz_runtime_contracts-0.1.6-py3-none-any.whl",
+      "sha256": "c84dd7353b9df43b902e8b1fb993c9fcdf403f1245bc8d2736164f3f6f635557"
+    },
+    "workflow_runtime": {
+      "version": "0.1.6",
+      "commit": "25bd61a6b13dc37f1ff4a21037e32f7f95715532",
+      "wheel": "ebiz_workflow_runtime-0.1.6-py3-none-any.whl",
+      "sha256": "45a962a96210471993a4229e3999bb30fac4f432c6d7bee96353f300a639af6d"
+    },
+    "agent_runtime": {
+      "version": "0.1.6",
+      "commit": "25bd61a6b13dc37f1ff4a21037e32f7f95715532",
+      "wheel": "ebizhub_agent_runtime-0.1.6-py3-none-any.whl",
+      "sha256": "cd7dd274c3001eeda243574089f16747a8ac21fe3ed63e9b5c6c7e706e46b760"
+    },
+    "base_ai": {
+      "version": "0.1.1",
+      "commit": "5ec31ba68362a8e1486cda9d72f6f1e1d9d42c13",
+      "wheel": "base_ai-0.1.1-py3-none-any.whl",
+      "sha256": "e147fce9e98e6bd7526c0e14be3e382330aa129386a4e5633dd5de9a7504be5c"
+    },
+    "agent": {
+      "id": "inventory-supply-chain",
+      "version": 4,
+      "commit": "49c5a8f54ea8dda6862d1dfd9b36fc360939505d",
+      "wheel": "ebiz_agent_inventory_supply_chain-4.0.0-py3-none-any.whl",
+      "sha256": "01c0917e62fa313a4b3a38637fc6bb1d9b1ca2d1276ba866ec7870d631d42dd7"
+    },
+    "workflow": {
+      "code": "inventory-supply-chain-daily",
+      "version": 4,
+      "agent_commit": "49c5a8f54ea8dda6862d1dfd9b36fc360939505d"
+    },
+    "capability_catalogs": [
+      {
+        "id": "inventory.core",
+        "version": 2,
+        "wheel": "ebiz_capability_inventory_catalog-2.0.0-py3-none-any.whl",
+        "sha256": "cb3de5271aa1ad4066f148e096f5a468199aeaf2dd4f000bff860282fb339e05"
+      },
+      {
+        "id": "commerce-sales.analytics",
+        "version": 2,
+        "wheel": "ebiz_capability_commerce_sales_catalog-2.0.0-py3-none-any.whl",
+        "sha256": "baf41490fb010ce31092d8ae0b385583d6d8c5585bf6bbbc4e76aa80eab80347"
+      },
+      {
+        "id": "supply-chain.planning",
+        "version": 2,
+        "wheel": "ebiz_capability_supply_chain-2.0.0-py3-none-any.whl",
+        "sha256": "d1223d3f3da0ce585c70dd7cfc5bad8533776f70951cf98466c8e2d9691d7664"
+      }
+    ],
+    "mcp_adapters": [
+      {
+        "id": "mcp.streamable_http",
+        "version": "0.1.0",
+        "wheel": "ebiz_adapter_mcp-0.1.0-py3-none-any.whl",
+        "sha256": "ec9066380b190e6bd6e15d2b3a91adc602e2b4e43f9579ef0e745e9d6fc47192"
+      },
+      {
+        "id": "yeaher.erp",
+        "version": "0.1.0",
+        "wheel": "ebiz_adapter_erp-0.1.0-py3-none-any.whl",
+        "sha256": "7c2e15ae310946c48d2400402ec02de49127ded30b0f826ca47730cdc1c14605"
+      },
+      {
+        "id": "openai.responses",
+        "version": "0.1.1",
+        "wheel": "ebiz_adapter_model_openai-0.1.1-py3-none-any.whl",
+        "sha256": "6cab7305694eb9d98d6222ea9fd31a812629ab13222e8808b9868c30861fa3cb"
+      }
+    ],
+    "deployment_bff": {
+      "version": "0.1.2",
+      "commit": "6d0f779e78bc06e41cb1572de56bb70ca28ff7e1",
+      "wheel": "ebiz_deployment_composition-0.1.2-py3-none-any.whl",
+      "sha256": "df4d18893cb915adf0dafb48b2745834242a00840b09e39d7763c5218ea30dac"
+    },
+    "frontend": {
+      "version": "0.0.2",
+      "commit": "0172e4581a47dfa5bcbd5230773a91cec2ba24ff",
+      "dist_manifest_sha256": "a273738ab27bc3ed43a0a02b740515171bc8913a1a108273847280f3fc771680"
+    }
+  },
+  "mcp_tools": [
+    "query_sku_upc_mapping",
+    "query_inventory_summary_v2",
+    "query_sku_sales_profit_windows_v1",
+    "query_sku_boston_cohort_v1"
+  ],
+  "java_data_sources": {
+    "mcp_server_baseline_commit": "76c14d2",
+    "bi_etl_commit": "358763ccc3777e8862f17c53f85f1de070d98719",
+    "bi_service_commit": "201a8b2ca948195be1872527ea875ad23eebbd28",
+    "ims_service_commit": "dd43b12974f092fe4732ddef91cf6bb5d75b40be",
+    "upc_service_commit": "9af279cad3ab9982d2ee8365b854baa31f40ceaf"
+  },
+  "contracts": {
+    "activity_schema": "business-agent.activity-event.v1",
+    "batch_accepted_schema": "supply-chain.analysis-batch-accepted.v2",
+    "batch_snapshot_schema": "supply-chain.analysis-batch.v2",
+    "output_schema": "inventory-supply-chain/result.schema.yaml@v4",
+    "eta_profile": "supply-chain-v4-bootstrap-1"
+  },
+  "runtime_environment": {
+    "python": "3.12.14",
+    "node": "24.19.0",
+    "pnpm": "11.19.0",
+    "virtual_environment_package_count": 111,
+    "virtual_environment_freeze_sha256": "71bbae4b4895f7eb0a02e7583470b74fe4a24c1f113dc104ff785ba3310a12ea",
+    "agent_runtime_lock_sha256": "18b276f1c8b2f7f9b726e5bf650663d568ec51a532f5aaca51f9ea4a83eff072",
+    "workflow_runtime_lock_sha256": "bdcedbbe817e5a3b746bf22efe8b0093f4e1e9722d7960dcf4d8cb9e0f85f381",
+    "deployment_lock_sha256": "0015a41700578b8c5ce3d7bede485cc3847ee438906fa0ab703d0cc2dde5898f",
+    "frontend_lock_sha256": "d426918b370704c59e4f6accf4b13fe5391c7e43ce640e5f6499a1b851fbf2c0",
+    "deployment_config_sha256": "a5e8010908a443c79e22332e580db6f11ed63f218ef9523d12e3ac67f1d59218"
+  },
+  "database": {
+    "bff_schema": "supply_chain_bff",
+    "migration_head": "0001_supply_chain_bff",
+    "runtime_business_database_access": "four_read_only_mcp_tools_only"
+  },
+  "secret_references": [
+    "BFF_POSTGRESQL_URL",
+    "BFF_CURSOR_HMAC_SIGNING_KEY",
+    "APP_JWT_SECRET",
+    "SUPPLY_CHAIN_CREDENTIAL_REF"
+  ],
+  "feature_flag_defaults": {
+    "async_start": false,
+    "runtime_stream": false,
+    "activity_ui": false,
+    "model_error_polish": false
+  },
+  "verification": {
+    "runtime_unit": "1096 passed, 17 skipped",
+    "runtime_security": "71 passed",
+    "runtime_full_integration": "508 passed",
+    "runtime_streaming_focused": "3 passed",
+    "deployment": "161 passed, 1 skipped",
+    "frontend": "402 passed",
+    "frontend_build": "passed",
+    "frontend_changed_files_lint": "passed",
+    "frontend_typecheck_baseline": "20 pre-existing errors; 0 in changed files",
+    "frontend_lint_baseline": "10 pre-existing errors; 0 in changed files",
+    "wheel_only_install": "111 packages installed; imports, entrypoint and migration passed",
+    "real_dev_three_sku": {
+      "accepted_http_status": 202,
+      "accepted_elapsed_ms": 188,
+      "event_count": 37,
+      "terminal_status": "PARTIAL",
+      "completed_items": 3,
+      "failed_items": 1,
+      "cockpit_used": false
+    },
+    "evidence_root": "C:\\ebizhub\\.local\\supply-chain-streaming"
+  }
+}
