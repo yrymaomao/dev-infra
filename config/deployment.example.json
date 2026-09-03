@@ -7,7 +7,9 @@
   "secrets": {
     "allowed_env": {
       "api_key": "DEPLOY_OPENAI_API_KEY",
-      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN"
+      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+      "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
+      "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY"
     }
   },
   "credential_broker": {
@@ -127,6 +129,18 @@
       {"set_id": "commerce-sales.analytics", "version": 2, "distribution_name": "ebiz-capability-commerce-sales-catalog", "distribution_version": "2.0.0", "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}"},
       {"set_id": "supply-chain.planning", "version": 2, "distribution_name": "ebiz-capability-supply-chain", "distribution_version": "2.0.0", "record_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}"}
     ],
+    "streaming_bff": {
+      "version": "0.1.2",
+      "schema": "supply_chain_bff",
+      "migration_head": "0001_supply_chain_bff",
+      "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key"],
+      "features": {"async_start": false, "runtime_stream": false, "activity_ui": false, "model_error_polish": false},
+      "limits": {"max_batch_size": 200, "tenant_dispatch_concurrency": 4, "runtime_subscription_limit": 200},
+      "stream": {"db_tail_ms": 500, "heartbeat_seconds": 15, "activity_push_per_second": 4},
+      "retention_days": {"runtime_events": 7, "batch_mapping": 30, "completed_activity": 7},
+      "activity_schema": "business-agent.activity-event.v1",
+      "eta_profile": {"version": "supply-chain-v4-bootstrap-1", "fixed_seconds": 2.0, "per_item_seconds": 15.0, "uncertainty_ratio": 0.3}
+    },
     "provider_versions": {
       "yeaher.erp": "0.1.0",
       "supply-chain-planning.fulfillment-resolver": "2.0.0",

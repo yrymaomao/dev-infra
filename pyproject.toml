@@ -1,6 +1,6 @@
 [project]
 name = "ebiz-deployment-composition"
-version = "0.1.1"
+version = "0.1.2"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -8,10 +8,16 @@ dependencies = [
   "ebizhub-agent-runtime[base-ai]==0.1.6",
   "ebiz-runtime-contracts==0.1.6",
   "ebiz-workflow-runtime==0.1.6",
+  "ebiz-agent-inventory-supply-chain==4.0.0",
   "httpx>=0.28,<1",
+  "alembic>=1.14,<2",
+  "asyncpg>=0.30,<1",
+  "fastapi>=0.128,<1",
   "jsonschema>=4.26,<4.27",
   "pydantic>=2.10,<3",
   "PyYAML>=6,<7",
+  "sqlalchemy[asyncio]>=2,<3",
+  "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]
@@ -23,6 +29,7 @@ ebiz-local-dev-assets = "ebiz_deployment.local_dev_assets:main"
 ebiz-local-dev-skill-seed = "ebiz_deployment.local_skill_seed:main"
 ebiz-release-material-guard = "ebiz_deployment.release_material_guard:main"
 ebiz-model-seam-release = "ebiz_deployment.model_seam_release:main"
+ebiz-supply-chain-bff = "ebiz_deployment.supply_chain_bff.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
@@ -71,6 +78,10 @@ requires-dist = ["ebizhub-agent-runtime>=0.1,<0.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ebiz_deployment"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"bff-alembic.ini" = "ebiz_deployment/supply_chain_bff/alembic.ini"
+"bff_migrations" = "ebiz_deployment/supply_chain_bff/migrations"
 
 [dependency-groups]
 dev = [

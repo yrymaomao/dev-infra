@@ -404,17 +404,23 @@ wheels = [
 
 [[package]]
 name = "ebiz-deployment-composition"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
+    { name = "alembic" },
+    { name = "asyncpg" },
     { name = "base-ai" },
+    { name = "ebiz-agent-inventory-supply-chain" },
     { name = "ebiz-runtime-contracts" },
     { name = "ebiz-workflow-runtime" },
     { name = "ebizhub-agent-runtime", extra = ["base-ai"] },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -440,14 +446,20 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.14,<2" },
+    { name = "asyncpg", specifier = ">=0.30,<1" },
     { name = "base-ai", specifier = "==0.1.1" },
+    { name = "ebiz-agent-inventory-supply-chain", specifier = "==4.0.0" },
     { name = "ebiz-runtime-contracts", specifier = "==0.1.6" },
     { name = "ebiz-workflow-runtime", specifier = "==0.1.6" },
     { name = "ebizhub-agent-runtime", extras = ["base-ai"], specifier = "==0.1.6" },
+    { name = "fastapi", specifier = ">=0.128,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.26,<4.27" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2,<3" },
+    { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
 
 [package.metadata.requires-dev]
