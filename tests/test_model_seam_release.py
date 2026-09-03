@@ -9,11 +9,27 @@ import pytest
 from ebiz_deployment.model_seam_release import (
     ReleaseBundleError,
     activation_plan,
+    attest_installed_environment,
     load_release_bundle,
     verify_release_environment,
     verify_wheelhouse,
     write_release_outputs,
 )
+
+
+class FakeDistribution:
+    def __init__(self, name: str, version: str, *, direct_url: str | None = None) -> None:
+        self.metadata = {"Name": name}
+        self.version = version
+        self._direct_url = direct_url
+
+    def read_text(self, filename: str) -> str | None:
+        if filename == "RECORD":
+            return f"{self.metadata['Name']}/file.py,sha256=abc,3\n"
+        if filename == "direct_url.json":
+            return self._direct_url
+        return None
+
 
 VERSIONS = {
     "base-ai": "0.1.1",
@@ -145,6 +161,27 @@ def test_release_environment_rejects_source_injection() -> None:
         verify_release_environment({"PYTHONPATH": "C:/ebizhub/workspace"})
     with pytest.raises(ReleaseBundleError, match="project environments"):
         verify_release_environment({"UV_PROJECT_ENVIRONMENT": ".venv"})
+
+
+def test_environment_attestation_is_order_independent_and_rejects_editable() -> None:
+    first = FakeDistribution("Example-A", "1.0")
+    second = FakeDistribution(
+        "Example_B", "2.0", direct_url=json.dumps({"url": "file:///wheels/example_b.whl"})
+    )
+
+    assert (
+        attest_installed_environment((first, second)).digest
+        == attest_installed_environment((second, first)).digest
+    )
+    assert attest_installed_environment((first, second)).distribution_count == 2
+
+    editable = FakeDistribution(
+        "Example-C",
+        "3.0",
+        direct_url=json.dumps({"url": "file:///source", "dir_info": {"editable": True}}),
+    )
+    with pytest.raises(ReleaseBundleError, match="source/editable"):
+        attest_installed_environment((editable,))
 
 
 def test_outputs_are_deterministic_and_require_joint_gate(tmp_path: Path) -> None:

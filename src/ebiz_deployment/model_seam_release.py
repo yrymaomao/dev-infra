@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import re
+import sys
+import sysconfig
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -105,6 +108,12 @@ class ActivationPlan:
     crm_write_blockers: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class EnvironmentAttestation:
+    digest: str
+    distribution_count: int
+
+
 def load_release_bundle(path: Path | str) -> ReleaseBundle:
     """Load and validate a secret-free, immutable release bundle."""
 
@@ -184,6 +193,50 @@ def verify_release_environment(environ: Mapping[str, str]) -> None:
         raise ReleaseBundleError("project environments cannot be used for release assembly")
 
 
+def attest_installed_environment(
+    distributions: Sequence[importlib.metadata.Distribution] | None = None,
+) -> EnvironmentAttestation:
+    """Digest the interpreter and every installed wheel RECORD without exposing paths."""
+
+    installed = tuple(
+        importlib.metadata.distributions() if distributions is None else distributions
+    )
+    records: list[dict[str, str]] = []
+    for distribution in installed:
+        name = distribution.metadata["Name"].strip().lower().replace("_", "-")
+        version = distribution.version.strip()
+        record = distribution.read_text("RECORD")
+        if not name or not version or record is None:
+            raise ReleaseBundleError("installed distribution lacks immutable wheel metadata")
+        direct_url = distribution.read_text("direct_url.json")
+        if direct_url is not None:
+            try:
+                direct = json.loads(direct_url)
+                editable = direct.get("dir_info", {}).get("editable") is True
+                wheel_url = str(direct.get("url", ""))
+            except (AttributeError, json.JSONDecodeError):
+                raise ReleaseBundleError("installed direct URL metadata is malformed") from None
+            if editable or not wheel_url.lower().endswith(".whl"):
+                raise ReleaseBundleError("release environment contains a source/editable install")
+        records.append(
+            {
+                "name": name,
+                "version": version,
+                "record_sha256": hashlib.sha256(record.encode("utf-8")).hexdigest(),
+            }
+        )
+    receipt = {
+        "implementation": sys.implementation.name,
+        "python_version": ".".join(str(part) for part in sys.version_info[:3]),
+        "platform": sysconfig.get_platform(),
+        "distributions": sorted(records, key=lambda item: (item["name"], item["version"])),
+    }
+    return EnvironmentAttestation(
+        digest=hashlib.sha256(_json_bytes(receipt)).hexdigest(),
+        distribution_count=len(records),
+    )
+
+
 def write_release_outputs(
     bundle: ReleaseBundle,
     output_dir: Path | str,
@@ -226,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     verify_release_environment(os.environ)
     bundle = load_release_bundle(arguments.bundle)
     verify_wheelhouse(bundle, arguments.wheelhouse)
+    environment = attest_installed_environment()
+    if environment.digest != bundle.venv_digest:
+        raise ReleaseBundleError("installed environment digest differs from the Release Snapshot")
     plan = activation_plan(bundle)
     print(
         json.dumps(
@@ -233,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
                 "bundle_id": bundle.bundle_id,
                 "crm_write": plan.crm_write,
                 "crm_write_blockers": plan.crm_write_blockers,
+                "distribution_count": environment.distribution_count,
             },
             sort_keys=True,
         )
@@ -376,11 +433,13 @@ __all__ = [
     "ActivationPlan",
     "ActorKeyring",
     "ArtifactPin",
+    "EnvironmentAttestation",
     "MaterialPin",
     "ReleaseBundle",
     "ReleaseBundleError",
     "ReleaseReadiness",
     "activation_plan",
+    "attest_installed_environment",
     "load_release_bundle",
     "main",
     "verify_release_environment",
