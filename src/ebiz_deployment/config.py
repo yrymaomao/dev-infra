@@ -32,12 +32,14 @@ _READ_TOOLS = (
 _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     "mcp.streamable_http": {
         "package_name": "ebiz-adapter-mcp",
+        "package_version": "0.1.0",
         "entry_point_value": "ebiz_adapter_mcp:McpProviderFactory",
         "api_version": "streamable-http/1",
         "enabled_operations": ("tools.call", "tools.list"),
     },
     "yeaher.erp": {
         "package_name": "ebiz-adapter-erp",
+        "package_version": "0.1.0",
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
         "api_version": "v1",
         "enabled_operations": (
@@ -49,6 +51,7 @@ _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     },
     "openai.responses": {
         "package_name": "ebiz-adapter-model-openai",
+        "package_version": "0.1.1",
         "entry_point_value": "ebiz_adapter_model_openai:OpenAIProviderFactory",
         "api_version": "responses/v1",
         "enabled_operations": ("responses.create_structured",),
@@ -141,6 +144,7 @@ class ProviderDeploymentConfig(StrictModel):
             raise ValueError("provider_id is not part of the approved production composition")
         identity = {
             "package_name": self.package_name,
+            "package_version": self.package_version,
             "entry_point_value": self.entry_point_value,
             "api_version": self.api_version,
             "enabled_operations": self.enabled_operations,

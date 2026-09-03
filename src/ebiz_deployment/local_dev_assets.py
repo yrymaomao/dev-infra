@@ -322,7 +322,7 @@ def _model_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[st
     return {
         "provider_id": "openai.responses",
         "package_name": "ebiz-adapter-model-openai",
-        "package_version": "0.1.0",
+        "package_version": "0.1.1",
         "record_digest": digests["OPENAI_RECORD_DIGEST"],
         "entry_point_group": "base_ai.provider_factories",
         "entry_point_value": "ebiz_adapter_model_openai:OpenAIProviderFactory",
@@ -359,7 +359,7 @@ def _environment(
         **digests,
         "MCP_PACKAGE_VERSION": "0.1.0",
         "ERP_PACKAGE_VERSION": "0.1.0",
-        "OPENAI_ADAPTER_PACKAGE_VERSION": "0.1.0",
+        "OPENAI_ADAPTER_PACKAGE_VERSION": "0.1.1",
         "CREDENTIAL_BROKER_URL": "http://127.0.0.1:18082/v1/resolve",
         "MCP_ENDPOINT": "http://127.0.0.1:18081/mcp",
         "MCP_EGRESS_HOST": "127.0.0.1",

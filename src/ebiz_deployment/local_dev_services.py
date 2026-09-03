@@ -31,6 +31,7 @@ OPENAI_API_KEY = "local-dev-openai-key-not-production"
 LOCAL_TENANT_ID = "tenant-local-dev"
 LOCAL_NO_WINDOW_DATA_SKU = "SKU-LOCAL-NO-WINDOW-DATA"
 
+
 def _not_blank(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -50,9 +51,7 @@ MarketScope = Literal["NA_COMPANY"]
 Sku = Annotated[str, Field(min_length=1, max_length=128), AfterValidator(_not_blank)]
 PageSize = Annotated[int, Field(ge=1, le=1000)]
 PageIndex = Annotated[int, Field(ge=1)]
-SnapshotDate = Annotated[
-    str, Field(pattern=r"^\d{8}$"), AfterValidator(_valid_yyyymmdd)
-]
+SnapshotDate = Annotated[str, Field(pattern=r"^\d{8}$"), AfterValidator(_valid_yyyymmdd)]
 ExactSearch = Literal["exactSearch"]
 _CANONICAL_RFC3339_UTC_SECONDS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -497,10 +496,7 @@ def create_mcp_app() -> ASGIApp:
         del searchType
         return _yeaher_result(
             {
-                "records": [
-                    _sku_list_record(sku)
-                    for sku in skuCode
-                ],
+                "records": [_sku_list_record(sku) for sku in skuCode],
                 "total": len(skuCode),
                 "current": pageIndex,
                 "size": pageSize,

@@ -4,6 +4,32 @@ This repository owns deployment composition only. Supply Chain v4 business
 contracts and algorithms live in `ebiz-agents`; generic execution lives in
 Agent Runtime; ERP protocol translation lives in Base AI.
 
+## Runtime 0.1.6 Model Seam release
+
+Deployment Composition `0.1.1` adds the immutable bundle
+`runtime-model-seam-0.1.6`. The bundle contains exact wheel names, SHA-256
+digests and source commits for Runtime/contracts/workflow `0.1.6`, Base AI and
+the OpenAI Adapter `0.1.1`, Supply Chain `4.0.0`, and all three Capability Set
+v2 wheels. Schema, registry, configuration and clean-venv digests are separate
+materials in the same snapshot.
+
+Release assembly accepts wheels only. It rejects source paths, editable
+installs, `PYTHONPATH`, wheelhouse extras, digest drift, raw assertion keys and
+an active/previous key overlap shorter than 65 seconds. Key material remains in
+Secret Manager/KMS; the bundle stores references and the
+`crm-confirm-action/v1` profile digest only.
+
+CRM migration, shared-MySQL replay, profile digest, keyring, and readiness are
+independent gates. Any missing gate keeps CRM WRITE disabled while CRM READ,
+the Model Seam and Manifest Profile remain active. Final release outputs
+(`release-manifest.json`, `SHA256SUMS`, SPDX SBOM, migration report,
+cross-repository test list and rollback instructions) cannot be generated
+until every joint gate is true.
+
+The checked lock is generated from reviewed local wheels during feature
+development. Promotion does not resolve from the lock's build-machine path; it
+uses only the exact wheel names and hashes in the reviewed Release Bundle.
+
 ## Supply Chain v4 release
 
 The immutable deployment selection is:
@@ -12,7 +38,8 @@ The immutable deployment selection is:
   `inventory-supply-chain-daily@4`.
 - public Catalogs `inventory.core@2`, `commerce-sales.analytics@2`, and
   `supply-chain.planning@2` (ten exact capability versions in total).
-- Base AI ERP Adapter `yeaher.erp@0.1.0` and the six public planning Providers
+- Base AI `0.1.1`, OpenAI Adapter `0.1.1`, ERP Adapter `yeaher.erp@0.1.0`, and
+  the six public planning Providers
   from `ebiz-capability-supply-chain==2.0.0`.
 - effects are READ/PREVIEW only.
 

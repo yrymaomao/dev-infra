@@ -1,13 +1,13 @@
 [project]
 name = "ebiz-deployment-composition"
-version = "0.1.0"
+version = "0.1.1"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-  "base-ai==0.1.0",
-  "ebizhub-agent-runtime[base-ai]==0.1.5",
-  "ebiz-runtime-contracts==0.1.5",
-  "ebiz-workflow-runtime==0.1.5",
+  "base-ai==0.1.1",
+  "ebizhub-agent-runtime[base-ai]==0.1.6",
+  "ebiz-runtime-contracts==0.1.6",
+  "ebiz-workflow-runtime==0.1.6",
   "httpx>=0.28,<1",
   "jsonschema>=4.26,<4.27",
   "pydantic>=2.10,<3",
@@ -22,31 +22,21 @@ ebiz-local-dev-providers = "ebiz_deployment.local_dev_services:main"
 ebiz-local-dev-assets = "ebiz_deployment.local_dev_assets:main"
 ebiz-local-dev-skill-seed = "ebiz_deployment.local_skill_seed:main"
 ebiz-release-material-guard = "ebiz_deployment.release_material_guard:main"
+ebiz-model-seam-release = "ebiz_deployment.model_seam_release:main"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
-[tool.uv.sources]
-base-ai = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/packages/base-ai", editable = true }
-ebizhub-agent-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/agent_runtime" }
-ebiz-runtime-contracts = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/shared-schemas/python", editable = true }
-ebiz-workflow-runtime = { path = "C:/ebizhub/worktrees/ebizhub-agent-runtime-workflow-v13-result/packages/workflow_runtime", editable = true }
-ebiz-adapter-mcp = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/mcp" }
-ebiz-adapter-erp = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/erp" }
-ebiz-adapter-model-openai = { path = "C:/ebizhub/worktrees/base-ai-erp-supply-chain-v4/adapters/models/openai" }
-ebiz-agent-inventory-supply-chain = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain" }
-ebiz-capability-inventory-catalog = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/inventory" }
-ebiz-capability-commerce-sales-catalog = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/commerce-sales" }
-ebiz-capability-supply-chain = { path = "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain" }
+[tool.uv]
+find-links = ["wheelhouse"]
 
-# The worktree package declares development-only tool.uv.sources (a neutral
-# base-ai test fixture, editable contracts/workflow paths). Supplying its
-# metadata statically keeps resolution on the frozen wheelhouse artifacts for
-# base-ai, ebiz-runtime-contracts, and ebiz-workflow-runtime.
+# Private package metadata is declared for deterministic locking. Release
+# assembly still requires exact wheel pins and never resolves these packages
+# from source paths or editable installs.
 [[tool.uv.dependency-metadata]]
 name = "ebizhub-agent-runtime"
-version = "0.1.5"
+version = "0.1.6"
 requires-dist = [
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
@@ -70,7 +60,7 @@ requires-dist = [
   "PyYAML>=6,<7",
   "redis>=5,<7",
   "sqlalchemy[asyncio]>=2,<3",
-  "base-ai>=0.1,<0.2; extra == 'base-ai'",
+  "base-ai==0.1.1; extra == 'base-ai'",
 ]
 provides-extras = ["base-ai"]
 
@@ -96,7 +86,7 @@ contract = [
   "botocore==1.43.75",
   "ebiz-adapter-erp==0.1.0",
   "ebiz-adapter-mcp==0.1.0",
-  "ebiz-adapter-model-openai==0.1.0",
+  "ebiz-adapter-model-openai==0.1.1",
   "ebiz-agent-inventory-supply-chain==4.0.0",
   "ebiz-capability-inventory-catalog==2.0.0",
   "ebiz-capability-commerce-sales-catalog==2.0.0",

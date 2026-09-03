@@ -499,8 +499,7 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
     assert cohort_result["sourceWatermark"] == "local-cohort-watermark-20260829"
     assert cohort_result["nextCursor"] is None
     assert all(
-        member["skuCode"].startswith("SKU-LOCAL-PEER-")
-        for member in cohort_result["members"]
+        member["skuCode"].startswith("SKU-LOCAL-PEER-") for member in cohort_result["members"]
     )
 
 

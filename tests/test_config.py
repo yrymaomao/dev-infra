@@ -106,15 +106,13 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "egress_hosts": [],
                 "secret_names": [],
                 "config": {
-                    "mcp": {
-                        "tools": ERP_TOOL_BY_OPERATION
-                    },
+                    "mcp": {"tools": ERP_TOOL_BY_OPERATION},
                 },
             },
             {
                 "provider_id": "openai.responses",
                 "package_name": "ebiz-adapter-model-openai",
-                "package_version": "0.1.0",
+                "package_version": "0.1.1",
                 "record_digest": "${OPENAI_RECORD_DIGEST}",
                 "entry_point_group": "base_ai.provider_factories",
                 "entry_point_value": "ebiz_adapter_model_openai:OpenAIProviderFactory",
@@ -230,13 +228,16 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
         if provider.provider_id == "yeaher.erp"
     )
     assert provider_config["mcp"]["tools"] == ERP_TOOL_BY_OPERATION
-    assert not ({
-        "query_sku_identity",
-        "query_inventory_summary",
-        "query_sku_sales_profit_windows",
-        "query_sku_sales_profit_windows_batch",
-        "query_sku_boston_cohort",
-    } & set(READ_TOOLS))
+    assert not (
+        {
+            "query_sku_identity",
+            "query_inventory_summary",
+            "query_sku_sales_profit_windows",
+            "query_sku_sales_profit_windows_batch",
+            "query_sku_boston_cohort",
+        }
+        & set(READ_TOOLS)
+    )
 
 
 def test_local_fixture_policy_is_allowed_only_for_deterministic_local(tmp_path: Path) -> None:

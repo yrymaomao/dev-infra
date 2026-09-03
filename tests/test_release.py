@@ -206,8 +206,7 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     assert payload["version"] == 4
     assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 4}]
     assert {
-        (item["code"], item["version"])
-        for item in payload["capability_pins"]
+        (item["code"], item["version"]) for item in payload["capability_pins"]
     } == EXPECTED_PUBLIC_CAPABILITY_PINS
     assert len(payload["capability_pins"]) == len(EXPECTED_PUBLIC_CAPABILITY_PINS)
     assert payload["capability_pins"] == sorted(
@@ -271,7 +270,7 @@ def test_runtime_attests_the_exact_deployment_base_ai_manifest(tmp_path: Path) -
 
     assert dict(versions) == {
         "mcp.streamable_http": "0.1.0",
-        "openai.responses": "0.1.0",
+        "openai.responses": "0.1.1",
         "yeaher.erp": "0.1.0",
     }
 

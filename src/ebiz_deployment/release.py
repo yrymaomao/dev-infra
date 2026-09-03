@@ -98,9 +98,7 @@ def build_agent_draft_payload(
         ),
         key=lambda item: (str(item["code"]), item["version"]),
     )
-    observed_pins = frozenset(
-        (str(item["code"]), int(item["version"])) for item in capability_pins
-    )
+    observed_pins = frozenset((str(item["code"]), int(item["version"])) for item in capability_pins)
     if (
         len(capability_pins) != len(_EXPECTED_CAPABILITY_PINS)
         or observed_pins != _EXPECTED_CAPABILITY_PINS

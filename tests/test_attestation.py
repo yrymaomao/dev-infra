@@ -109,7 +109,7 @@ def real_adapter_descriptors() -> tuple[SimpleNamespace, ...]:
         SimpleNamespace(
             name=provider_id,
             distribution_name=package_name,
-            distribution_version="0.1.0",
+            distribution_version=("0.1.1" if provider_id == "openai.responses" else "0.1.0"),
             distribution_digest=digest,
             value=value,
             api_version=api_version,
