@@ -516,6 +516,28 @@ class BatchRepository:
                     .order_by(BatchItem.item_index)
                 )
             ).all()
+            projected_skus: dict[int, str] = {}
+            try:
+                raw_batch = await self._payload_store.get_authorized(
+                    tenant_id=tenant_id,
+                    payload_ref=batch.payload_ref,
+                    permission_scope=_PAYLOAD_PERMISSION,
+                )
+                if hashlib.sha256(raw_batch).hexdigest() == batch.payload_hash:
+                    batch_payload = json.loads(raw_batch)
+                    skus = batch_payload.get("skus") if isinstance(batch_payload, dict) else None
+                    if isinstance(skus, list) and len(skus) == batch.sku_count:
+                        for item in items:
+                            if item.item_index >= len(skus):
+                                continue
+                            sku = skus[item.item_index]
+                            if (
+                                isinstance(sku, str)
+                                and hashlib.sha256(sku.encode("utf-8")).hexdigest() == item.sku_hash
+                            ):
+                                projected_skus[item.item_index] = sku
+            except (PayloadAuthorizationError, ValueError, json.JSONDecodeError):
+                projected_skus = {}
             projected_results: dict[UUID, dict[str, object]] = {}
             for item in items:
                 if (
@@ -542,12 +564,16 @@ class BatchRepository:
                     json.JSONDecodeError,
                 ):
                     continue
+            succeeded_count = sum(item.status == "SUCCEEDED" for item in items)
+            blocked_count = sum(item.status == "BLOCKED" for item in items)
             return {
                 "schema_version": "supply-chain.analysis-batch.v2",
                 "batch_id": str(batch.id),
                 "status": batch.status,
                 "sku_count": batch.sku_count,
                 "completed_count": batch.completed_count,
+                "succeeded_count": succeeded_count,
+                "blocked_count": blocked_count,
                 "failed_count": batch.failed_count,
                 "runtime_mode": batch.runtime_mode,
                 "eta": {
@@ -560,6 +586,7 @@ class BatchRepository:
                     {
                         "item_id": str(item.id),
                         "index": item.item_index,
+                        "sku": projected_skus.get(item.item_index, ""),
                         "status": item.status,
                         "execution_id": (
                             str(item.runtime_execution_id)

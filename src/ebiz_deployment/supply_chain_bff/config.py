@@ -40,7 +40,7 @@ class BffSettings:
     model_error_polish_enabled: bool = False
     eta_profile: EtaProfile = field(
         default_factory=lambda: EtaProfile(
-            version="supply-chain-v4-bootstrap-1",
+            version="supply-chain-v5-bootstrap-1",
             fixed_seconds=2.0,
             per_item_seconds=15.0,
             concurrency=4,
@@ -92,7 +92,7 @@ class BffSettings:
             activity_ui_enabled=_boolean("BFF_ACTIVITY_UI_ENABLED", False),
             model_error_polish_enabled=_boolean("BFF_MODEL_ERROR_POLISH_ENABLED", False),
             eta_profile=EtaProfile(
-                version=os.environ.get("BFF_ETA_PROFILE_VERSION", "supply-chain-v4-bootstrap-1"),
+                version=os.environ.get("BFF_ETA_PROFILE_VERSION", "supply-chain-v5-bootstrap-1"),
                 fixed_seconds=_float("BFF_ETA_FIXED_SECONDS", 2.0, minimum=0),
                 per_item_seconds=_float("BFF_ETA_PER_ITEM_SECONDS", 15.0, minimum=0.001),
                 concurrency=concurrency,

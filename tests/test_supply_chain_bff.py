@@ -34,7 +34,7 @@ from ebiz_deployment.supply_chain_bff.runtime_client import RuntimeClient, Runti
 
 def profile() -> EtaProfile:
     return EtaProfile(
-        version="supply-chain-v4-dev-1",
+        version="supply-chain-v5-dev-1",
         fixed_seconds=2.0,
         per_item_seconds=8.0,
         concurrency=4,
@@ -56,7 +56,7 @@ def test_eta_uses_count_then_ewma_after_two_terminal_items() -> None:
     estimator = EtaEstimator(profile())
     initial = estimator.estimate(item_count=20)
     assert initial.low_seconds < initial.high_seconds
-    assert initial.profile_version == "supply-chain-v4-dev-1"
+    assert initial.profile_version == "supply-chain-v5-dev-1"
 
     assert estimator.observe(duration_seconds=10, terminal_count=1) is None
     dynamic = estimator.observe(duration_seconds=14, terminal_count=2)
@@ -324,7 +324,15 @@ def test_terminal_output_schema_is_fail_closed_and_projection_is_safe() -> None:
     projected = public_result(validated)
     assert projected["sku"] == "010343937505"
     assert projected["result_status"] == "BLOCKED"
+    assert projected["business_issues"] == [
+        {
+            "code": "DATA_MISSING",
+            "message": "Required evidence is missing.",
+            "blocking": True,
+        }
+    ]
     assert "evidence" not in projected
+    assert "metadata" not in projected["business_issues"][0]
 
     with pytest.raises(OutputContractError):
         validated_result({"outputs": {"result": {**result, "unexpected": "field"}}})
@@ -337,9 +345,13 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
     class Repository:
         reads = 0
         created_at: datetime | None = None
+        created_skus: tuple[str, ...] = ()
 
         async def create_batch(self, **kwargs: object):
             self.created_at = kwargs["now"]  # type: ignore[assignment]
+            request = kwargs["request"]
+            assert isinstance(request, BatchCreateRequest)
+            self.created_skus = request.skus
             return batch_id
 
         async def get_batch(self, **_kwargs: object):
@@ -417,7 +429,13 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
         accepted = await client.post(
             "/api/supply-chain/v2/analysis-batches",
             json={
-                "skus": ["010343937505"],
+                "skus": [
+                    "196548430192_M08_128MSDA",
+                    "MC_PD100W_charger_Aohai",
+                    "010343937505",
+                    "abc",
+                    "__NO_SUCH_SKU_E2E_20260904__",
+                ],
                 "marketplace": "US",
                 "fulfillment_mode": "FBM",
                 "client_request_id": "request-1",
@@ -449,6 +467,13 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
 
     assert accepted.status_code == 202, accepted.text
     assert repository.created_at == snapshot_override
+    assert repository.created_skus == (
+        "196548430192_M08_128MSDA",
+        "MC_PD100W_charger_Aohai",
+        "010343937505",
+        "abc",
+        "__NO_SUCH_SKU_E2E_20260904__",
+    )
     assert elapsed < 1
     assert accepted.headers["location"].endswith(str(batch_id))
     assert runtime_profile.json()["activity_ui_enabled"] is True
@@ -516,6 +541,12 @@ async def test_persistent_queue_replays_create_and_recovers_expired_lease() -> N
         now=now,
     )
     assert replay == first
+    created_snapshot = await repository.get_batch(tenant_id=tenant_id, batch_id=first)
+    assert created_snapshot is not None
+    assert [item["sku"] for item in created_snapshot["items"]] == list(request.skus)
+    assert created_snapshot["succeeded_count"] == 0
+    assert created_snapshot["blocked_count"] == 0
+    assert created_snapshot["failed_count"] == 0
     claimed = await repository.claim_item(worker_id="worker-before-restart", now=now)
     assert claimed is not None
     controlled_payload = await repository.load_payload(claimed)

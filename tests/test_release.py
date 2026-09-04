@@ -27,7 +27,7 @@ from ebiz_deployment.release import (
     write_base_ai_provider_attestation,
 )
 
-AGENTS = Path("C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4")
+AGENTS = Path("C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes")
 CONTRACT_ROOTS = {
     "inventory.core": AGENTS / "capabilities/inventory/contracts",
     "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts",
@@ -37,9 +37,9 @@ WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
 EXPECTED_PUBLIC_CAPABILITY_PINS = {
-    ("catalog.resolve_sku_identity", 2),
-    ("inventory.get_total_snapshot", 2),
-    ("sales_profit.get_sku_windows", 2),
+    ("catalog.resolve_sku_identity", 3),
+    ("inventory.get_total_snapshot", 3),
+    ("sales_profit.get_sku_windows", 3),
     ("sales_profit.get_boston_cohort", 1),
     ("supply_chain.resolve_fulfillment_mode", 1),
     ("supply_chain.compute_forecast", 2),
@@ -72,21 +72,21 @@ def _expand_test_environment(value: object, environ: dict[str, str]) -> object:
 def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, object]]:
     workflow = {
         "code": "inventory-supply-chain-daily",
-        "name": "Supply Chain Expert v4",
-        "version": 4,
+        "name": "Supply Chain Expert v5",
+        "version": 5,
         "source_yaml": "spec_version: ebizhub.workflow/v1.3\n",
         "resources": {},
     }
     agent = {
         "code": "inventory-supply-chain",
         "name": "Supply Chain Expert",
-        "version": 4,
+        "version": 5,
         "manifest": {
             "distribution": "ebiz-agent-inventory-supply-chain",
-            "distribution_version": "4.0.0",
+            "distribution_version": "4.0.1",
             "record_digest": release.agent_record_digest,  # type: ignore[attr-defined]
         },
-        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 4}],
+        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 5}],
         "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(10)],
         "max_hosting_level": "ADVISORY",
     }
@@ -100,7 +100,7 @@ def _valid_release_responses(
     workflow_pins = [
         {
             "code": "inventory-supply-chain-daily",
-            "version": 4,
+            "version": 5,
             "ir_checksum": WORKFLOW_CHECKSUM,
         }
     ]
@@ -203,8 +203,8 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     payload = build_agent_draft_payload(config.supply_chain_release, publications)
     AgentDraftRequest.model_validate(payload)
     assert payload["code"] == "inventory-supply-chain"
-    assert payload["version"] == 4
-    assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 4}]
+    assert payload["version"] == 5
+    assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 5}]
     assert {
         (item["code"], item["version"]) for item in payload["capability_pins"]
     } == EXPECTED_PUBLIC_CAPABILITY_PINS
@@ -271,7 +271,7 @@ def test_runtime_attests_the_exact_deployment_base_ai_manifest(tmp_path: Path) -
     assert dict(versions) == {
         "mcp.streamable_http": "0.1.0",
         "openai.responses": "0.1.1",
-        "yeaher.erp": "0.1.0",
+        "yeaher.erp": "0.1.1",
     }
 
 
@@ -381,7 +381,7 @@ async def test_release_rejects_inexact_agent_input_before_any_runtime_call(
     if case == "agent_code":
         agent["code"] = "other-agent"
     elif case == "agent_version":
-        agent["version"] = 5
+        agent["version"] = 4
     elif case == "manifest_distribution":
         agent["manifest"]["distribution"] = "other-distribution"  # type: ignore[index]
     elif case == "manifest_version":
@@ -411,7 +411,7 @@ async def test_release_rejects_inexact_agent_input_before_any_runtime_call(
     [
         ("workflow_draft", "version_id", "not-a-uuid"),
         ("workflow_draft", "code", "other-workflow"),
-        ("workflow_draft", "version", 5),
+        ("workflow_draft", "version", 4),
         ("workflow_draft", "status", "PUBLISHED"),
         ("workflow_draft", "definition_row_version", 3),
         ("workflow_validate", "version_id", "00000000-0000-4000-8000-000000000099"),
@@ -420,7 +420,7 @@ async def test_release_rejects_inexact_agent_input_before_any_runtime_call(
         ("workflow_validate", "definition_row_version", 3),
         ("workflow_publish", "version_id", "00000000-0000-4000-8000-000000000099"),
         ("workflow_publish", "code", "other-workflow"),
-        ("workflow_publish", "version", 5),
+        ("workflow_publish", "version", 4),
         ("workflow_publish", "checksum", "b" * 64),
         ("workflow_publish", "definition_row_version", 2),
     ],
@@ -465,7 +465,7 @@ async def test_release_rejects_inexact_workflow_publication_response(
     [
         ("agent_draft", "version_id", "not-a-uuid"),
         ("agent_draft", "code", "other-agent"),
-        ("agent_draft", "version", 5),
+        ("agent_draft", "version", 4),
         ("agent_draft", "status", "PUBLISHED"),
         ("agent_draft", "content_digest", "b" * 64),
         ("agent_draft", "workflow_pins", [{"code": "other-workflow", "version": 4}]),
@@ -474,7 +474,7 @@ async def test_release_rejects_inexact_workflow_publication_response(
         ("agent_draft", "row_version", -1),
         ("agent_publish", "version_id", "00000000-0000-4000-8000-000000000099"),
         ("agent_publish", "code", "other-agent"),
-        ("agent_publish", "version", 5),
+        ("agent_publish", "version", 4),
         ("agent_publish", "status", "DRAFT"),
         ("agent_publish", "content_digest", "b" * 64),
         (

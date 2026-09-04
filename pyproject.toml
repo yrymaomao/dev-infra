@@ -1,6 +1,6 @@
 [project]
 name = "ebiz-deployment-composition"
-version = "0.1.2"
+version = "0.1.3"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -8,7 +8,7 @@ dependencies = [
   "ebizhub-agent-runtime[base-ai]==0.1.6",
   "ebiz-runtime-contracts==0.1.6",
   "ebiz-workflow-runtime==0.1.6",
-  "ebiz-agent-inventory-supply-chain==4.0.0",
+  "ebiz-agent-inventory-supply-chain==4.0.1",
   "httpx>=0.28,<1",
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
@@ -95,12 +95,12 @@ dev = [
 contract = [
   "boto3==1.43.75",
   "botocore==1.43.75",
-  "ebiz-adapter-erp==0.1.0",
+  "ebiz-adapter-erp==0.1.1",
   "ebiz-adapter-mcp==0.1.0",
   "ebiz-adapter-model-openai==0.1.1",
-  "ebiz-agent-inventory-supply-chain==4.0.0",
-  "ebiz-capability-inventory-catalog==2.0.0",
-  "ebiz-capability-commerce-sales-catalog==2.0.0",
+  "ebiz-agent-inventory-supply-chain==4.0.1",
+  "ebiz-capability-inventory-catalog==3.0.0",
+  "ebiz-capability-commerce-sales-catalog==3.0.0",
   "ebiz-capability-supply-chain==2.0.0",
 ]
 

@@ -1,4 +1,4 @@
-"""Generate ignored, loopback-only assets for deterministic Supply Chain v4 tests."""
+"""Generate ignored, loopback-only assets for deterministic Supply Chain v5 tests."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from .release import write_base_ai_provider_attestation
 
 MODEL_SCHEMA_REF = "schemas/seasonality-analysis.schema.yaml"
 _CONNECTOR_FIELD_ALLOWLISTS = {
-    "yeaher.erp@0.1.0": {
+    "yeaher.erp@0.1.1": {
         "catalog.resolve_sku_identity": ["market_scope", "sku", "snapshot_time"],
         "inventory.get_total_snapshot": [
             "fulfillment_mode",
@@ -110,11 +110,11 @@ class LocalDevAssets:
 def build_skill_document(
     *, snapshot_time: str, tenant_id: str, market_scope: str, sku: str
 ) -> dict[str, Any]:
-    """Return deterministic v4 policy data; Runtime binds its scope and hash metadata."""
+    """Return deterministic v5 policy data; Runtime binds its scope and hash metadata."""
 
     del snapshot_time, tenant_id, market_scope, sku
     return {
-        "policy_version": "local-dev-v4",
+        "policy_version": "local-dev-v5",
         "planning_policy": {
             "moq": 24,
             "pack_size": 6,
@@ -134,7 +134,7 @@ def build_skill_document(
 
 def _model_schemas() -> dict[str, Any]:
     distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
-    if distribution.version != "4.0.0":
+    if distribution.version != "4.0.1":
         raise ValueError("installed Supply Chain Agent version is unavailable")
     schema_path = Path(
         str(
@@ -185,26 +185,26 @@ def _plugin_policy(
 def _release(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "agent_id": "inventory-supply-chain",
-        "agent_version": 4,
+        "agent_version": 5,
         "agent_distribution": "ebiz-agent-inventory-supply-chain",
-        "agent_distribution_version": "4.0.0",
+        "agent_distribution_version": "4.0.1",
         "agent_record_digest": digests["SUPPLY_CHAIN_AGENT_RECORD_DIGEST"],
         "workflow_code": "inventory-supply-chain-daily",
-        "workflow_version": 4,
+        "workflow_version": 5,
         "workflow_artifact_digest": digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"],
         "capability_sets": [
             {
                 "set_id": "inventory.core",
-                "version": 2,
+                "version": 3,
                 "distribution_name": "ebiz-capability-inventory-catalog",
-                "distribution_version": "2.0.0",
+                "distribution_version": "3.0.0",
                 "record_digest": digests["INVENTORY_CATALOG_RECORD_DIGEST"],
             },
             {
                 "set_id": "commerce-sales.analytics",
-                "version": 2,
+                "version": 3,
                 "distribution_name": "ebiz-capability-commerce-sales-catalog",
-                "distribution_version": "2.0.0",
+                "distribution_version": "3.0.0",
                 "record_digest": digests["COMMERCE_SALES_CATALOG_RECORD_DIGEST"],
             },
             {
@@ -216,7 +216,7 @@ def _release(digests: dict[str, str]) -> dict[str, Any]:
             },
         ],
         "provider_versions": {
-            "yeaher.erp": "0.1.0",
+            "yeaher.erp": "0.1.1",
             "supply-chain-planning.fulfillment-resolver": "2.0.0",
             "supply-chain-planning.forecast-engine": "2.0.0",
             "supply-chain-planning.classification-engine": "2.0.0",
@@ -292,7 +292,7 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "provider_id": "yeaher.erp",
         "package_name": "ebiz-adapter-erp",
-        "package_version": "0.1.0",
+        "package_version": "0.1.1",
         "record_digest": digests["ERP_RECORD_DIGEST"],
         "entry_point_group": "base_ai.provider_factories",
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
@@ -358,7 +358,7 @@ def _environment(
         "LOCAL_FIXTURE_CONTRACT_ROOT": str(assets.fixture_contract_root),
         **digests,
         "MCP_PACKAGE_VERSION": "0.1.0",
-        "ERP_PACKAGE_VERSION": "0.1.0",
+        "ERP_PACKAGE_VERSION": "0.1.1",
         "OPENAI_ADAPTER_PACKAGE_VERSION": "0.1.1",
         "CREDENTIAL_BROKER_URL": "http://127.0.0.1:18082/v1/resolve",
         "MCP_ENDPOINT": "http://127.0.0.1:18081/mcp",
@@ -386,7 +386,7 @@ def _environment(
         "SUPPLY_CHAIN_SNAPSHOT_TIME": snapshot_time,
         "SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT": "5",
         "SUPPLY_CHAIN_EXPECTED_RESULT_STATUS": "COMPLETE",
-        "SUPPLY_CHAIN_RUN_ID": "supply-chain-v4-local-1",
+        "SUPPLY_CHAIN_RUN_ID": "supply-chain-v5-local-1",
     }
 
 

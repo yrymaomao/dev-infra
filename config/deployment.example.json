@@ -117,20 +117,20 @@
   ],
   "supply_chain_release": {
     "agent_id": "inventory-supply-chain",
-    "agent_version": 4,
+    "agent_version": 5,
     "agent_distribution": "ebiz-agent-inventory-supply-chain",
-    "agent_distribution_version": "4.0.0",
+    "agent_distribution_version": "4.0.1",
     "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
     "workflow_code": "inventory-supply-chain-daily",
-    "workflow_version": 4,
+    "workflow_version": 5,
     "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
     "capability_sets": [
-      {"set_id": "inventory.core", "version": 2, "distribution_name": "ebiz-capability-inventory-catalog", "distribution_version": "2.0.0", "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}"},
-      {"set_id": "commerce-sales.analytics", "version": 2, "distribution_name": "ebiz-capability-commerce-sales-catalog", "distribution_version": "2.0.0", "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}"},
+      {"set_id": "inventory.core", "version": 3, "distribution_name": "ebiz-capability-inventory-catalog", "distribution_version": "3.0.0", "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}"},
+      {"set_id": "commerce-sales.analytics", "version": 3, "distribution_name": "ebiz-capability-commerce-sales-catalog", "distribution_version": "3.0.0", "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}"},
       {"set_id": "supply-chain.planning", "version": 2, "distribution_name": "ebiz-capability-supply-chain", "distribution_version": "2.0.0", "record_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}"}
     ],
     "streaming_bff": {
-      "version": "0.1.2",
+      "version": "0.1.3",
       "schema": "supply_chain_bff",
       "migration_head": "0001_supply_chain_bff",
       "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key"],
@@ -139,10 +139,10 @@
       "stream": {"db_tail_ms": 500, "heartbeat_seconds": 15, "activity_push_per_second": 4},
       "retention_days": {"runtime_events": 7, "batch_mapping": 30, "completed_activity": 7},
       "activity_schema": "business-agent.activity-event.v1",
-      "eta_profile": {"version": "supply-chain-v4-bootstrap-1", "fixed_seconds": 2.0, "per_item_seconds": 15.0, "uncertainty_ratio": 0.3}
+      "eta_profile": {"version": "supply-chain-v5-bootstrap-1", "fixed_seconds": 2.0, "per_item_seconds": 15.0, "uncertainty_ratio": 0.3}
     },
     "provider_versions": {
-      "yeaher.erp": "0.1.0",
+      "yeaher.erp": "0.1.1",
       "supply-chain-planning.fulfillment-resolver": "2.0.0",
       "supply-chain-planning.forecast-engine": "2.0.0",
       "supply-chain-planning.classification-engine": "2.0.0",

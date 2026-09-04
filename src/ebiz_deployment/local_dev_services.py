@@ -130,10 +130,7 @@ def create_provider_app() -> FastAPI:
         if _bearer(authorization) != OPENAI_API_KEY:
             raise HTTPException(status_code=401, detail="invalid local model authorization")
         model = _required_text(body, "model")
-        output = {
-            "explanation": "Deterministic local development analysis.",
-            "risk_flags": [],
-        }
+        output = _deterministic_model_output(body)
         _validate_structured_model_request(body, output)
         return {
             "id": "resp_local_dev_001",
@@ -169,6 +166,36 @@ def create_provider_app() -> FastAPI:
         }
 
     return app
+
+
+def _deterministic_model_output(body: dict[str, Any]) -> dict[str, Any]:
+    """Select one schema-authorized fixture value without inventing business facts."""
+
+    try:
+        schema = body["text"]["format"]["schema"]
+        properties = schema["properties"]
+        issue_code = properties.get("issue_code")
+        message = properties.get("message")
+        if isinstance(issue_code, dict) and isinstance(message, dict):
+            code = issue_code["const"]
+            allowed_messages = message["enum"]
+            if not isinstance(code, str) or not isinstance(allowed_messages, list):
+                raise ValueError
+            selected = allowed_messages[0]
+            if not isinstance(selected, str):
+                raise ValueError
+            return {
+                "issue_code": code,
+                "message": selected,
+                "blocking": True,
+                "metadata": {},
+            }
+    except (IndexError, KeyError, TypeError, ValueError):
+        pass
+    return {
+        "explanation": "Deterministic local development analysis.",
+        "risk_flags": [],
+    }
 
 
 def _validate_structured_model_request(body: dict[str, Any], output: dict[str, Any]) -> None:
@@ -388,6 +415,7 @@ def _formal_output_schemas() -> dict[str, dict[str, Any]]:
         }
     )
     inventory_properties: dict[str, Any] = {
+        "status": {"type": "string", "enum": ["FOUND", "NO_SNAPSHOT"]},
         "sku": {"type": "string", "minLength": 1},
         "availableQuantity": {"type": "number", "minimum": 0},
         "holdQuantity": {"type": "number", "minimum": 0},
@@ -512,6 +540,7 @@ def create_mcp_app() -> ASGIApp:
         del marketScope
         return _result_data(
             {
+                "status": "FOUND",
                 "sku": skuCode,
                 "availableQuantity": 18,
                 "holdQuantity": 0,

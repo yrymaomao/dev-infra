@@ -15,9 +15,11 @@ from typing import Any
 
 import pytest
 
-SUPPLY_CHAIN_PROJECT = Path("C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/agents/supply-chain")
+SUPPLY_CHAIN_PROJECT = Path(
+    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes/agents/supply-chain"
+)
 PLANNING_PROJECT = Path(
-    "C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4/capabilities/supply-chain"
+    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes/capabilities/supply-chain"
 )
 UV_COMMAND = Path(os.environ.get("UV_EXECUTABLE", shutil.which("uv") or "uv"))
 
@@ -151,7 +153,7 @@ def test_attests_real_non_editable_supply_chain_wheel(clean_supply_chain_site: P
     result = attest(module, clean_supply_chain_site)
 
     assert result.distribution_name == "ebiz-agent-inventory-supply-chain"
-    assert result.distribution_version == "4.0.0"
+    assert result.distribution_version == "4.0.1"
     assert result.entry_point_group is None
     assert result.entry_point_name is None
     assert result.entry_point_value is None
@@ -255,12 +257,12 @@ def test_rejects_symlink_inside_import_root(clean_supply_chain_site: Path, tmp_p
     ("relative_path", "replacement"),
     [
         (
-            "ebiz_agent_inventory_supply_chain-4.0.0.dist-info/METADATA",
+            "ebiz_agent_inventory_supply_chain-4.0.1.dist-info/METADATA",
             ("Name: ebiz-agent-inventory-supply-chain", "Name: wrong-package"),
         ),
         (
-            "ebiz_agent_inventory_supply_chain-4.0.0.dist-info/METADATA",
-            ("Version: 4.0.0", "Version: 9.9.9"),
+            "ebiz_agent_inventory_supply_chain-4.0.1.dist-info/METADATA",
+            ("Version: 4.0.1", "Version: 9.9.9"),
         ),
     ],
 )

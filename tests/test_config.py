@@ -92,7 +92,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
             {
                 "provider_id": "yeaher.erp",
                 "package_name": "ebiz-adapter-erp",
-                "package_version": "0.1.0",
+                "package_version": "0.1.1",
                 "record_digest": "${ERP_RECORD_DIGEST}",
                 "entry_point_group": "base_ai.provider_factories",
                 "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
@@ -135,26 +135,26 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         ],
         "supply_chain_release": {
             "agent_id": "inventory-supply-chain",
-            "agent_version": 4,
+            "agent_version": 5,
             "agent_distribution": "ebiz-agent-inventory-supply-chain",
-            "agent_distribution_version": "4.0.0",
+            "agent_distribution_version": "4.0.1",
             "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
             "workflow_code": "inventory-supply-chain-daily",
-            "workflow_version": 4,
+            "workflow_version": 5,
             "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
             "capability_sets": [
                 {
                     "set_id": "inventory.core",
-                    "version": 2,
+                    "version": 3,
                     "distribution_name": "ebiz-capability-inventory-catalog",
-                    "distribution_version": "2.0.0",
+                    "distribution_version": "3.0.0",
                     "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}",
                 },
                 {
                     "set_id": "commerce-sales.analytics",
-                    "version": 2,
+                    "version": 3,
                     "distribution_name": "ebiz-capability-commerce-sales-catalog",
-                    "distribution_version": "2.0.0",
+                    "distribution_version": "3.0.0",
                     "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}",
                 },
                 {
@@ -166,7 +166,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 },
             ],
             "provider_versions": {
-                "yeaher.erp": "0.1.0",
+                "yeaher.erp": "0.1.1",
                 "supply-chain-planning.fulfillment-resolver": "2.0.0",
                 "supply-chain-planning.forecast-engine": "2.0.0",
                 "supply-chain-planning.classification-engine": "2.0.0",
@@ -215,7 +215,7 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
     ]
     assert config.runtime_plugin_policy.plugins[0].plugin_id == "supply-chain-planning"
     assert "cockpit" not in json.dumps(config.model_dump(mode="json")).lower()
-    assert config.supply_chain_release.agent_version == 4
+    assert config.supply_chain_release.agent_version == 5
     assert [item.set_id for item in config.supply_chain_release.capability_sets] == [
         "commerce-sales.analytics",
         "inventory.core",

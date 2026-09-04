@@ -45,6 +45,15 @@ def public_result(result: Mapping[str, Any]) -> dict[str, object]:
     """Project only fields the UI contract allows; evidence and internals stay server-side."""
 
     scope = _mapping(result.get("scope"))
+    business_issues = [
+        {
+            "code": issue.get("code"),
+            "message": issue.get("message"),
+            "blocking": issue.get("blocking"),
+        }
+        for value in _sequence(result.get("issues"))
+        if (issue := _mapping(value))
+    ]
     payload = _mapping(result.get("payload"))
     forecast = _mapping(payload.get("forecast"))
     classification = _mapping(payload.get("classification"))
@@ -66,11 +75,16 @@ def public_result(result: Mapping[str, Any]) -> dict[str, object]:
         "preview_quantity": replenishment.get("final_quantity"),
         "analysis": analysis.get("explanation"),
         "result_status": result.get("status"),
+        "business_issues": business_issues,
     }
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _sequence(value: object) -> list[object]:
+    return cast(list[object], value) if isinstance(value, list) else []
 
 
 __all__ = ["OutputContractError", "public_result", "validated_result"]

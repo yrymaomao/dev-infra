@@ -64,7 +64,7 @@ def create_app(container: BffContainer) -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await task
 
-    app = FastAPI(title="eBizHub Supply Chain BFF", version="0.1.2", lifespan=lifespan)
+    app = FastAPI(title="eBizHub Supply Chain BFF", version="0.1.3", lifespan=lifespan)
 
     def principal(authorization: Annotated[str | None, Header()] = None) -> Principal:
         if (

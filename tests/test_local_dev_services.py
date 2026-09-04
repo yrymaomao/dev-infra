@@ -209,6 +209,49 @@ def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
     }
 
 
+def test_openai_responses_endpoint_selects_only_schema_authorized_business_issue() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["issue_code", "message", "blocking", "metadata"],
+        "properties": {
+            "issue_code": {"const": "SKU_NOT_FOUND"},
+            "message": {"enum": ["This SKU could not be found."]},
+            "blocking": {"const": True},
+            "metadata": {"type": "object", "additionalProperties": False},
+        },
+    }
+    request = {
+        "model": "local-dev-business-outcome-model",
+        "input": [{"role": "user", "content": "explain"}],
+        "store": False,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "structured_output",
+                "schema": schema,
+                "strict": True,
+            }
+        },
+    }
+
+    with TestClient(create_provider_app()) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            json=request,
+        )
+
+    assert response.status_code == 200
+    output = json.loads(response.json()["output"][0]["content"][0]["text"])
+    assert output == {
+        "issue_code": "SKU_NOT_FOUND",
+        "message": "This SKU could not be found.",
+        "blocking": True,
+        "metadata": {},
+    }
+
+
 def test_openai_responses_endpoint_rejects_non_exact_or_unsatisfied_schema() -> None:
     valid = {
         "model": "local-dev-seasonality-model",
@@ -260,7 +303,7 @@ def test_openai_responses_endpoint_rejects_non_exact_or_unsatisfied_schema() -> 
     assert [response.status_code for response in responses] == [422] * len(responses)
 
 
-def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools() -> None:
+def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v5_read_tools() -> None:
     init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -445,6 +488,7 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v4_read_tools()
     assert inventory_document["code"] == 200
     assert inventory_document["message"] == "success"
     assert inventory_document["result"] == {
+        "status": "FOUND",
         "sku": "SKU-LOCAL-1",
         "availableQuantity": 18,
         "holdQuantity": 0,
@@ -733,7 +777,7 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
         market_scope="NA_COMPANY",
         sku="SKU-LOCAL-1",
     )
-    assert skill["policy_version"] == "local-dev-v4"
+    assert skill["policy_version"] == "local-dev-v5"
     assert len(skill["seasonality_profile"]["monthly_indices"]) == 12
     assert sum(item["index"] for item in skill["seasonality_profile"]["monthly_indices"]) == 12
 
@@ -781,13 +825,13 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
         environment["SUPPLY_CHAIN_SKILL_FILE_SHA256"]
         == hashlib.sha256(Path(environment["SUPPLY_CHAIN_SKILL_FILE"]).read_bytes()).hexdigest()
     )
-    assert environment["SUPPLY_CHAIN_RUN_ID"] == "supply-chain-v4-local-1"
+    assert environment["SUPPLY_CHAIN_RUN_ID"] == "supply-chain-v5-local-1"
     assert environment["SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT"] == "5"
     assert environment["SUPPLY_CHAIN_EXPECTED_RESULT_STATUS"] == "COMPLETE"
     assert environment["SUPPLY_CHAIN_SNAPSHOT_TIME"] == "2026-08-31T06:00:00Z"
     targets = set(environment["APP_CONNECTOR_TARGETS"].split(","))
     assert targets == {
-        "yeaher.erp@0.1.0",
+        "yeaher.erp@0.1.1",
         "supply-chain-planning.fulfillment-resolver@2.0.0",
         "supply-chain-planning.forecast-engine@2.0.0",
         "supply-chain-planning.classification-engine@2.0.0",

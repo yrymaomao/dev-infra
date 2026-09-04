@@ -39,7 +39,7 @@ _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     },
     "yeaher.erp": {
         "package_name": "ebiz-adapter-erp",
-        "package_version": "0.1.0",
+        "package_version": "0.1.1",
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
         "api_version": "v1",
         "enabled_operations": (
@@ -166,8 +166,8 @@ class CapabilitySetPin(StrictModel):
 
 
 _EXPECTED_CAPABILITY_SETS = {
-    "inventory.core": (2, "ebiz-capability-inventory-catalog", "2.0.0"),
-    "commerce-sales.analytics": (2, "ebiz-capability-commerce-sales-catalog", "2.0.0"),
+    "inventory.core": (3, "ebiz-capability-inventory-catalog", "3.0.0"),
+    "commerce-sales.analytics": (3, "ebiz-capability-commerce-sales-catalog", "3.0.0"),
     "supply-chain.planning": (2, "ebiz-capability-supply-chain", "2.0.0"),
 }
 _EXPECTED_PLANNING_PROVIDERS = {
@@ -182,12 +182,12 @@ _EXPECTED_PLANNING_PROVIDERS = {
 
 class SupplyChainReleaseConfig(StrictModel):
     agent_id: str = Field(pattern=r"^inventory-supply-chain$")
-    agent_version: int = Field(ge=4, le=4)
+    agent_version: int = Field(ge=5, le=5)
     agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
-    agent_distribution_version: str = Field(pattern=r"^4\.0\.0$")
+    agent_distribution_version: str = Field(pattern=r"^4\.0\.1$")
     agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     workflow_code: str = Field(pattern=r"^inventory-supply-chain-daily$")
-    workflow_version: int = Field(ge=4, le=4)
+    workflow_version: int = Field(ge=5, le=5)
     workflow_artifact_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
     provider_versions: dict[str, str] = Field(min_length=7, max_length=7)
@@ -199,7 +199,7 @@ class SupplyChainReleaseConfig(StrictModel):
     ) -> tuple[CapabilitySetPin, ...]:
         by_id = {item.set_id: item for item in value}
         if len(by_id) != len(value) or set(by_id) != set(_EXPECTED_CAPABILITY_SETS):
-            raise ValueError("capability_sets must be the exact three Supply Chain v4 sets")
+            raise ValueError("capability_sets must be the exact three Supply Chain v5 sets")
         for set_id, (
             version,
             distribution,
@@ -211,18 +211,18 @@ class SupplyChainReleaseConfig(StrictModel):
                 distribution,
                 distribution_version,
             ):
-                raise ValueError("capability set identity differs from the immutable v4 release")
+                raise ValueError("capability set identity differs from the reviewed v5 release")
         return tuple(sorted(value, key=lambda item: item.set_id))
 
     @field_validator("provider_versions")
     @classmethod
     def validate_provider_versions(cls, value: dict[str, str]) -> dict[str, str]:
         if set(value) != {"yeaher.erp", *_EXPECTED_PLANNING_PROVIDERS}:
-            raise ValueError("provider_versions must contain the exact v4 provider pins")
-        if value["yeaher.erp"] != "0.1.0" or any(
+            raise ValueError("provider_versions must contain the exact v5 provider pins")
+        if value["yeaher.erp"] != "0.1.1" or any(
             value[provider] != "2.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS
         ):
-            raise ValueError("provider_versions differ from the reviewed v4 wheels")
+            raise ValueError("provider_versions differ from the reviewed v5 wheels")
         return dict(sorted(value.items()))
 
 
@@ -351,7 +351,7 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
             raise ValueError("MCP config fields are incomplete or unknown")
         allowed_tools = config.get("allowed_tools")
         if not isinstance(allowed_tools, list) or tuple(allowed_tools) != _READ_TOOLS:
-            raise ValueError("allowed_tools must be the exact Supply Chain v4 read tools")
+            raise ValueError("allowed_tools must be the exact Supply Chain v5 read tools")
         if config.get("auth_profile") != "X_MCP_KEY":
             raise ValueError("MCP auth_profile must be X_MCP_KEY")
         _validate_endpoint_host(config.get("url"), provider.egress_hosts, "MCP")
@@ -369,7 +369,7 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
             }
         }
         if mcp != expected or provider.egress_hosts:
-            raise ValueError("ERP MCP bindings must be the fixed Supply Chain v4 tool map")
+            raise ValueError("ERP MCP bindings must be the fixed Supply Chain v5 tool map")
         return
     if set(config) != {"api_key_secret_name", "base_url", "enabled_operations", "network"}:
         raise ValueError(

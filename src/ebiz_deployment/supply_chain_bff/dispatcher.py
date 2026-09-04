@@ -50,10 +50,10 @@ class BatchCoordinator:
                     authorization=self.authorization_for_tenant(claim.tenant_id),
                     respond_async=self._settings.async_start_enabled,
                     payload={
-                        "agent": {"id": "inventory-supply-chain", "version": 4},
+                        "agent": {"id": "inventory-supply-chain", "version": 5},
                         "workflow": {
                             "code": "inventory-supply-chain-daily",
-                            "version": 4,
+                            "version": 5,
                         },
                         "inputs": {
                             "run_id": f"{claim.batch_id}:{claim.item_index}",

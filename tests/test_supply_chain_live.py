@@ -27,7 +27,7 @@ def local_environment() -> dict[str, str]:
         "SUPPLY_CHAIN_SNAPSHOT_TIME": "2026-08-30T12:00:00Z",
         "SUPPLY_CHAIN_EXPECTED_EVIDENCE_COUNT": "5",
         "SUPPLY_CHAIN_EXPECTED_RESULT_STATUS": "COMPLETE",
-        "SUPPLY_CHAIN_RUN_ID": "supply-chain-v4-local-1",
+        "SUPPLY_CHAIN_RUN_ID": "supply-chain-v5-local-1",
         "APP_JWT_SECRET": "j" * 32,
         "LOCAL_DEV_E2E": "true",
     }
@@ -115,21 +115,22 @@ def complete_result(count: int) -> dict[str, object]:
                 "clearance_allowed": True,
                 "risk_flags": [],
             },
+            "risk_flags": [],
         },
         "evidence": [evidence(index) for index in range(count)],
         "issues": [],
     }
 
 
-def test_settings_match_flat_v4_agent_input() -> None:
+def test_settings_match_flat_v5_agent_input() -> None:
     settings = LiveSmokeSettings.from_environment(local_environment())
     assert settings.inputs == {
-        "run_id": "supply-chain-v4-local-1",
+        "run_id": "supply-chain-v5-local-1",
         "market_scope": "NA_COMPANY",
         "sku": "SKU-LOCAL",
         "snapshot_time": "2026-08-30T12:00:00Z",
         "skill_input_ref": "00000000-0000-4000-8000-000000000010",
-        "fulfillment_mode": "AUTO",
+        "fulfillment_mode": "FBM",
     }
     assert settings.call_provenance["production_e2e_verified"] is False
     assert settings.expected_result_status == "COMPLETE"
@@ -144,7 +145,7 @@ def test_settings_match_flat_v4_agent_input() -> None:
         ("SUPPLY_CHAIN_EXPECTED_RESULT_STATUS", "UNKNOWN", "COMPLETE or BLOCKED"),
     ],
 )
-def test_settings_fail_closed_outside_v4_local_scope(key: str, value: str, message: str) -> None:
+def test_settings_fail_closed_outside_v5_local_scope(key: str, value: str, message: str) -> None:
     environ = local_environment()
     environ[key] = value
     with pytest.raises(ValueError, match=message):
@@ -221,7 +222,7 @@ async def test_runtime_smoke_calls_published_agent_execution_api() -> None:
         transport=httpx.MockTransport(handler),
     )
     assert result["result_status"] == "COMPLETE"
-    assert seen[0]["agent"] == {"id": "inventory-supply-chain", "version": 4}
+    assert seen[0]["agent"] == {"id": "inventory-supply-chain", "version": 5}
     assert seen[0]["inputs"]["skill_input_ref"].endswith("0010")
 
 
