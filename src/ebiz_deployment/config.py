@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from agent_runtime.plugins.manifest import PluginHostPolicy
@@ -24,8 +24,12 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
+    "query_fba_inventory_snapshot_v1",
+    "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
     "query_sku_boston_cohort_v1",
+    "query_sku_fulfillment_sales_profit_windows_v2",
+    "query_sku_identity_mapping_v1",
     "query_sku_sales_profit_windows_v1",
     "query_sku_upc_mapping",
 )
@@ -39,13 +43,17 @@ _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
     },
     "yeaher.erp": {
         "package_name": "ebiz-adapter-erp",
-        "package_version": "0.1.1",
+        "package_version": "0.2.0",
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
         "api_version": "v1",
         "enabled_operations": (
             "catalog.resolve_sku_identity",
+            "catalog.resolve_sku_identity_batch",
+            "inventory.get_fba_snapshot",
             "inventory.get_total_snapshot",
+            "inventory.list_skus_by_threshold",
             "sales_profit.get_boston_cohort",
+            "sales_profit.get_sku_fulfillment_windows",
             "sales_profit.get_sku_windows",
         ),
     },
@@ -166,9 +174,9 @@ class CapabilitySetPin(StrictModel):
 
 
 _EXPECTED_CAPABILITY_SETS = {
-    "inventory.core": (3, "ebiz-capability-inventory-catalog", "3.0.0"),
-    "commerce-sales.analytics": (3, "ebiz-capability-commerce-sales-catalog", "3.0.0"),
-    "supply-chain.planning": (2, "ebiz-capability-supply-chain", "2.0.0"),
+    "inventory.core": (4, "ebiz-capability-inventory-catalog", "4.0.0"),
+    "commerce-sales.analytics": (4, "ebiz-capability-commerce-sales-catalog", "4.0.0"),
+    "supply-chain.planning": (3, "ebiz-capability-supply-chain", "3.0.0"),
 }
 _EXPECTED_PLANNING_PROVIDERS = {
     "supply-chain-planning.action-router",
@@ -177,20 +185,101 @@ _EXPECTED_PLANNING_PROVIDERS = {
     "supply-chain-planning.forecast-engine",
     "supply-chain-planning.fulfillment-resolver",
     "supply-chain-planning.replenishment-engine",
+    "supply-chain-planning.level2-fulfillment",
+    "supply-chain-planning.level2-forecast",
+    "supply-chain-planning.level2-optimizer",
 }
+
+
+class StreamingBffFeatures(StrictModel):
+    async_start: bool
+    runtime_stream: bool
+    activity_ui: bool
+    model_error_polish: bool
+    level2: bool
+    level2_mq: bool
+
+
+class StreamingBffLimits(StrictModel):
+    max_batch_size: Literal[200]
+    tenant_dispatch_concurrency: Literal[4]
+    runtime_subscription_limit: Literal[200]
+    max_selected_skus: Literal[10000]
+    bulk_batch_size: Literal[200]
+    tenant_bulk_concurrency: Literal[2]
+    global_bulk_concurrency: Literal[8]
+
+
+class StreamingBffEtlWait(StrictModel):
+    max_seconds: Literal[1800]
+    poll_seconds: Literal[60]
+    timeout_risk_flag: Literal["DATA_SNAPSHOT_LAGGED"]
+
+
+class StreamingBffScheduleDefaults(StrictModel):
+    weekday: Literal[1]
+    local_time: Literal["12:00"]
+    policy_mode: Literal["ACTIVE_AT_RUN"]
+
+
+class StreamingBffStream(StrictModel):
+    db_tail_ms: Literal[500]
+    heartbeat_seconds: Literal[15]
+    activity_push_per_second: Literal[4]
+
+
+class StreamingBffRetention(StrictModel):
+    runtime_events: Literal[7]
+    batch_mapping: Literal[30]
+    completed_activity: Literal[7]
+
+
+class StreamingBffEtaProfile(StrictModel):
+    version: Literal["supply-chain-v6-level2-1"]
+    fixed_seconds: float = Field(gt=0)
+    per_item_seconds: float = Field(gt=0)
+    uncertainty_ratio: float = Field(gt=0, lt=1)
+
+
+class StreamingBffReleaseConfig(StrictModel):
+    version: Literal["0.1.4"]
+    schema_name: Literal["supply_chain_bff"] = Field(alias="schema")
+    migration_head: Literal["0002_supply_chain_level2"]
+    secret_references: tuple[str, ...] = Field(min_length=3, max_length=3)
+    features: StreamingBffFeatures
+    limits: StreamingBffLimits
+    etl_wait: StreamingBffEtlWait
+    schedule_defaults: StreamingBffScheduleDefaults
+    stream: StreamingBffStream
+    retention_days: StreamingBffRetention
+    activity_schema: Literal["business-agent.activity-event.v1"]
+    eta_profile: StreamingBffEtaProfile
+
+    @field_validator("secret_references")
+    @classmethod
+    def validate_secret_references(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        expected = {
+            "supply_chain_bff_postgresql_url",
+            "supply_chain_cursor_hmac_signing_key",
+            "supply_chain_bff_rabbitmq_url",
+        }
+        if set(value) != expected or len(set(value)) != len(value):
+            raise ValueError("streaming_bff must use the exact three secret references")
+        return tuple(sorted(value))
 
 
 class SupplyChainReleaseConfig(StrictModel):
     agent_id: str = Field(pattern=r"^inventory-supply-chain$")
-    agent_version: int = Field(ge=5, le=5)
+    agent_version: int = Field(ge=6, le=6)
     agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
-    agent_distribution_version: str = Field(pattern=r"^4\.0\.1$")
+    agent_distribution_version: str = Field(pattern=r"^4\.1\.0$")
     agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     workflow_code: str = Field(pattern=r"^inventory-supply-chain-daily$")
-    workflow_version: int = Field(ge=5, le=5)
+    workflow_version: int = Field(ge=6, le=6)
     workflow_artifact_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
-    provider_versions: dict[str, str] = Field(min_length=7, max_length=7)
+    streaming_bff: StreamingBffReleaseConfig
+    provider_versions: dict[str, str] = Field(min_length=10, max_length=10)
 
     @field_validator("capability_sets")
     @classmethod
@@ -199,7 +288,7 @@ class SupplyChainReleaseConfig(StrictModel):
     ) -> tuple[CapabilitySetPin, ...]:
         by_id = {item.set_id: item for item in value}
         if len(by_id) != len(value) or set(by_id) != set(_EXPECTED_CAPABILITY_SETS):
-            raise ValueError("capability_sets must be the exact three Supply Chain v5 sets")
+            raise ValueError("capability_sets must be the exact three Supply Chain v6 sets")
         for set_id, (
             version,
             distribution,
@@ -211,18 +300,18 @@ class SupplyChainReleaseConfig(StrictModel):
                 distribution,
                 distribution_version,
             ):
-                raise ValueError("capability set identity differs from the reviewed v5 release")
+                raise ValueError("capability set identity differs from the reviewed v6 release")
         return tuple(sorted(value, key=lambda item: item.set_id))
 
     @field_validator("provider_versions")
     @classmethod
     def validate_provider_versions(cls, value: dict[str, str]) -> dict[str, str]:
         if set(value) != {"yeaher.erp", *_EXPECTED_PLANNING_PROVIDERS}:
-            raise ValueError("provider_versions must contain the exact v5 provider pins")
-        if value["yeaher.erp"] != "0.1.1" or any(
-            value[provider] != "2.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS
+            raise ValueError("provider_versions must contain the exact v6 provider pins")
+        if value["yeaher.erp"] != "0.2.0" or any(
+            value[provider] != "3.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS
         ):
-            raise ValueError("provider_versions differ from the reviewed v5 wheels")
+            raise ValueError("provider_versions differ from the reviewed v6 wheels")
         return dict(sorted(value.items()))
 
 
@@ -250,6 +339,7 @@ class DeploymentCompositionConfig(StrictModel):
         required = {self.credential_broker.auth_secret_name}
         for provider in self.base_ai_providers:
             required.update(provider.secret_names)
+        required.update(self.supply_chain_release.streaming_bff.secret_references)
         if required - configured:
             raise ValueError("all broker and provider secret names must be in secrets.allowed_env")
         return self
@@ -321,7 +411,7 @@ def _validate_supply_chain_policy(
     expected_permissions = frozenset({"supply_chain.preview"})
     if (
         plugin.plugin_id != "supply-chain-planning"
-        or plugin.version != "2.0.0"
+        or plugin.version != "3.0.0"
         or plugin.package_name != "ebiz-capability-supply-chain"
         or plugin.entry_point != "ebiz_capability_supply_chain.plugin:factory"
         or plugin.permissions != expected_permissions
@@ -351,7 +441,7 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
             raise ValueError("MCP config fields are incomplete or unknown")
         allowed_tools = config.get("allowed_tools")
         if not isinstance(allowed_tools, list) or tuple(allowed_tools) != _READ_TOOLS:
-            raise ValueError("allowed_tools must be the exact Supply Chain v5 read tools")
+            raise ValueError("allowed_tools must be the exact Supply Chain v6 read tools")
         if config.get("auth_profile") != "X_MCP_KEY":
             raise ValueError("MCP auth_profile must be X_MCP_KEY")
         _validate_endpoint_host(config.get("url"), provider.egress_hosts, "MCP")
@@ -366,10 +456,16 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
                 "inventory.get_total_snapshot": "query_inventory_summary_v2",
                 "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
                 "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
+                "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+                "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
+                "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+                "sales_profit.get_sku_fulfillment_windows": (
+                    "query_sku_fulfillment_sales_profit_windows_v2"
+                ),
             }
         }
         if mcp != expected or provider.egress_hosts:
-            raise ValueError("ERP MCP bindings must be the fixed Supply Chain v5 tool map")
+            raise ValueError("ERP MCP bindings must be the fixed Supply Chain v6 tool map")
         return
     if set(config) != {"api_key_secret_name", "base_url", "enabled_operations", "network"}:
         raise ValueError(
@@ -415,6 +511,7 @@ __all__ = [
     "CredentialBrokerConfig",
     "DeploymentCompositionConfig",
     "ProviderDeploymentConfig",
+    "StreamingBffReleaseConfig",
     "SupplyChainReleaseConfig",
     "load_deployment_config",
 ]

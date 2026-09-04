@@ -21,14 +21,14 @@ _SECRET_REF = re.compile(r"^(?:kms|secret)://[A-Za-z0-9._/:-]+$")
 _BUNDLE_ID = "runtime-model-seam-0.1.6"
 _EXPECTED_ARTIFACTS = {
     "base-ai": "0.1.1",
-    "ebiz-adapter-erp": "0.1.1",
+    "ebiz-adapter-erp": "0.2.0",
     "ebiz-adapter-mcp": "0.1.0",
     "ebiz-adapter-model-openai": "0.1.1",
-    "ebiz-agent-inventory-supply-chain": "4.0.1",
-    "ebiz-capability-commerce-sales-catalog": "3.0.0",
-    "ebiz-capability-inventory-catalog": "3.0.0",
-    "ebiz-capability-supply-chain": "2.0.0",
-    "ebiz-deployment-composition": "0.1.3",
+    "ebiz-agent-inventory-supply-chain": "4.1.0",
+    "ebiz-capability-commerce-sales-catalog": "4.0.0",
+    "ebiz-capability-inventory-catalog": "4.0.0",
+    "ebiz-capability-supply-chain": "3.0.0",
+    "ebiz-deployment-composition": "0.1.4",
     "ebiz-runtime-contracts": "0.1.6",
     "ebiz-workflow-runtime": "0.1.6",
     "ebizhub-agent-runtime": "0.1.6",
@@ -298,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _validate_bundle(bundle: ReleaseBundle) -> None:
-    if bundle.bundle_id != _BUNDLE_ID or bundle.composition_version != "0.1.3":
+    if bundle.bundle_id != _BUNDLE_ID or bundle.composition_version != "0.1.4":
         raise ReleaseBundleError("release identity differs from Runtime 0.1.6")
     by_distribution = {pin.distribution: pin for pin in bundle.artifacts}
     if (

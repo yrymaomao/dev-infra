@@ -69,6 +69,17 @@ class RuntimeProfilePayload(StrictModel):
     stream_enabled: bool
     activity_ui_enabled: bool
     model_error_polish_enabled: bool
+    level2_enabled: bool = False
+    max_selected_skus: int = 10_000
+    bulk_batch_size: int = 200
+    tenant_bulk_concurrency: int = 2
+    global_bulk_concurrency: int = 8
+    supported_fulfillment_modes: tuple[Literal["AUTO", "FBA", "FBM", "MIXED"], ...] = (
+        "AUTO",
+        "FBA",
+        "FBM",
+        "MIXED",
+    )
 
 
 class FeedbackFacts(StrictModel):

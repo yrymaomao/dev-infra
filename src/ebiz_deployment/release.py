@@ -1,4 +1,4 @@
-"""Supply Chain v5 release inputs for Runtime's existing publication surfaces."""
+"""Supply Chain v6 release inputs for Runtime's existing publication surfaces."""
 
 from __future__ import annotations
 
@@ -55,16 +55,13 @@ _WORKFLOW_RESOURCES = (
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_CAPABILITY_PINS = frozenset(
     {
-        ("catalog.resolve_sku_identity", 3),
-        ("inventory.get_total_snapshot", 3),
-        ("sales_profit.get_sku_windows", 3),
-        ("sales_profit.get_boston_cohort", 1),
-        ("supply_chain.resolve_fulfillment_mode", 1),
-        ("supply_chain.compute_forecast", 2),
-        ("supply_chain.classify_inventory", 2),
-        ("supply_chain.route_inventory_action", 1),
-        ("supply_chain.build_replenishment_proposal", 2),
-        ("supply_chain.build_clearance_proposal", 1),
+        ("inventory.list_skus_by_threshold", 1),
+        ("catalog.resolve_sku_identity_batch", 1),
+        ("inventory.get_fba_snapshot", 1),
+        ("sales_profit.get_sku_fulfillment_windows", 4),
+        ("supply_chain.resolve_fulfillment_mode", 2),
+        ("supply_chain.compute_forecast", 3),
+        ("supply_chain.optimize_inventory_action", 1),
     }
 )
 
@@ -77,7 +74,7 @@ def load_public_capability_catalogs(
 
     expected_ids = {item.set_id for item in release.capability_sets}
     if set(contract_roots) != expected_ids:
-        raise ValueError("contract roots must match the exact Supply Chain v5 capability sets")
+        raise ValueError("contract roots must match the exact Supply Chain v6 capability sets")
     publications: list[CapabilityCatalogPublication] = []
     for pin in release.capability_sets:
         root = contract_roots[pin.set_id].resolve(strict=True)
@@ -87,7 +84,7 @@ def load_public_capability_catalogs(
             provider_versions=release.provider_versions,
         )
         if not isinstance(publication, CapabilityCatalogPublication):
-            raise ValueError("Supply Chain v5 requires Runtime Catalog publications")
+            raise ValueError("Supply Chain v6 requires Runtime Catalog publications")
         if publication.set_id != pin.set_id or publication.version != pin.version:
             raise ValueError("published Catalog identity differs from the release pin")
         publications.append(publication)
@@ -117,7 +114,7 @@ def build_agent_draft_payload(
         len(capability_pins) != len(_EXPECTED_CAPABILITY_PINS)
         or observed_pins != _EXPECTED_CAPABILITY_PINS
     ):
-        raise ValueError("Supply Chain v5 requires ten exact capability pins")
+        raise ValueError("Supply Chain v6 requires seven exact capability pins")
     return {
         "code": release.agent_id,
         "name": "Supply Chain Expert",

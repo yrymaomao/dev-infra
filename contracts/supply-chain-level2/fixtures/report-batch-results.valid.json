@@ -1,0 +1,109 @@
+{
+  "schema_version": "supply-chain.report-batch-results.v1",
+  "report_run_id": "11111111-1111-4111-8111-111111111111",
+  "batch_id": "22222222-2222-4222-8222-222222222222",
+  "item_offset": 400,
+  "items": [
+    {
+      "ordinal": 400,
+      "sku": "SKU-COMPLETE-400",
+      "result_status": "COMPLETE",
+      "fulfillment_mode": "FBM",
+      "fulfillment_source": "DEFAULT_FBM",
+      "forecast": {
+        "schema_version": "supply-chain.forecast.v1",
+        "sku": "SKU-COMPLETE-400",
+        "model_version": "rolling-mean.v1",
+        "data_cutoff": "2026-09-04T00:00:00Z",
+        "feature_snapshot_ref": "payload://features/sku-complete-400",
+        "weeks": [
+          {"week_start": "2026-09-07", "units_mean": 10, "revenue_mean": 200, "variance": 4, "p10": 7, "p50": 10, "p90": 13},
+          {"week_start": "2026-09-14", "units_mean": 11, "revenue_mean": 220, "variance": 4, "p10": 8, "p50": 11, "p90": 14},
+          {"week_start": "2026-09-21", "units_mean": 12, "revenue_mean": 240, "variance": 4, "p10": 9, "p50": 12, "p90": 15},
+          {"week_start": "2026-09-28", "units_mean": 13, "revenue_mean": 260, "variance": 4, "p10": 10, "p50": 13, "p90": 16},
+          {"week_start": "2026-10-05", "units_mean": 14, "revenue_mean": 280, "variance": 4, "p10": 11, "p50": 14, "p90": 17},
+          {"week_start": "2026-10-12", "units_mean": 15, "revenue_mean": 300, "variance": 4, "p10": 12, "p50": 15, "p90": 18},
+          {"week_start": "2026-10-19", "units_mean": 16, "revenue_mean": 320, "variance": 4, "p10": 13, "p50": 16, "p90": 19},
+          {"week_start": "2026-10-26", "units_mean": 17, "revenue_mean": 340, "variance": 4, "p10": 14, "p50": 17, "p90": 20},
+          {"week_start": "2026-11-02", "units_mean": 18, "revenue_mean": 360, "variance": 4, "p10": 15, "p50": 18, "p90": 21},
+          {"week_start": "2026-11-09", "units_mean": 19, "revenue_mean": 380, "variance": 4, "p10": 16, "p50": 19, "p90": 22},
+          {"week_start": "2026-11-16", "units_mean": 20, "revenue_mean": 400, "variance": 4, "p10": 17, "p50": 20, "p90": 23},
+          {"week_start": "2026-11-23", "units_mean": 21, "revenue_mean": 420, "variance": 4, "p10": 18, "p50": 21, "p90": 24},
+          {"week_start": "2026-11-30", "units_mean": 22, "revenue_mean": 440, "variance": 4, "p10": 19, "p50": 22, "p90": 25}
+        ],
+        "risk_flags": ["SHORT_HISTORY"]
+      },
+      "decision": {
+        "selected_action": "KEEP",
+        "selected_discount_rate": 0,
+        "candidates": [
+          {"action": "REPLENISH", "discount_rate": 0, "eligible": true, "blocked_reason": null, "replenishment_quantity": 100, "expected_units_sold": 200, "expected_revenue": 4000, "expected_gross_cash": 2400, "capital_cost": 24, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 20, "net_cash_recovery_npv": 2356, "cost_complete": false},
+          {"action": "KEEP", "discount_rate": 0, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 180, "expected_revenue": 3600, "expected_gross_cash": 2160, "capital_cost": 20, "storage_cost": null, "stockout_cost": 10, "uncertainty_penalty": 20, "net_cash_recovery_npv": 2110, "cost_complete": false},
+          {"action": "MARKDOWN", "discount_rate": 0.05, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 185, "expected_revenue": 3515, "expected_gross_cash": 2035, "capital_cost": 18, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 18, "net_cash_recovery_npv": 1999, "cost_complete": false},
+          {"action": "MARKDOWN", "discount_rate": 0.1, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 190, "expected_revenue": 3420, "expected_gross_cash": 1900, "capital_cost": 16, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 16, "net_cash_recovery_npv": 1868, "cost_complete": false},
+          {"action": "MARKDOWN", "discount_rate": 0.2, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 200, "expected_revenue": 3200, "expected_gross_cash": 1600, "capital_cost": 12, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 12, "net_cash_recovery_npv": 1576, "cost_complete": false},
+          {"action": "MARKDOWN", "discount_rate": 0.3, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 210, "expected_revenue": 2940, "expected_gross_cash": 1260, "capital_cost": 8, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 10, "net_cash_recovery_npv": 1242, "cost_complete": false},
+          {"action": "MARKDOWN", "discount_rate": 0.4, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 220, "expected_revenue": 2640, "expected_gross_cash": 880, "capital_cost": 5, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 8, "net_cash_recovery_npv": 867, "cost_complete": false},
+          {"action": "SELL_NOW", "discount_rate": 0.5, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 225, "expected_revenue": 2250, "expected_gross_cash": 450, "capital_cost": 2, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 5, "net_cash_recovery_npv": 443, "cost_complete": false},
+          {"action": "HOLD_UNTIL_REVIEW", "discount_rate": 0, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 150, "expected_revenue": 3000, "expected_gross_cash": 1800, "capital_cost": 30, "storage_cost": null, "stockout_cost": 25, "uncertainty_penalty": 30, "net_cash_recovery_npv": 1715, "cost_complete": false},
+          {"action": "LIQUIDATION_REVIEW", "discount_rate": 0.5, "eligible": true, "blocked_reason": null, "replenishment_quantity": 0, "expected_units_sold": 225, "expected_revenue": 2250, "expected_gross_cash": 450, "capital_cost": 2, "storage_cost": null, "stockout_cost": 0, "uncertainty_penalty": 5, "net_cash_recovery_npv": 443, "cost_complete": false}
+        ],
+        "hold_status": "NONE",
+        "hold_reason": null,
+        "risk_flags": ["CAPITAL_COST_DEFAULTED_1_PERCENT", "STORAGE_COST_UNAVAILABLE"]
+      },
+      "business_issues": [],
+      "risk_flags": ["SHORT_HISTORY", "CAPITAL_COST_DEFAULTED_1_PERCENT", "STORAGE_COST_UNAVAILABLE"],
+      "evidence_refs": [
+        {
+          "evidence_ref": "evidence://sales/SKU-COMPLETE-400/2026-09-04",
+          "source_type": "FULFILLMENT_WEEKLY_SALES",
+          "captured_at": "2026-09-04T00:00:00Z",
+          "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "capability_id": "sales_profit.get_fulfillment_windows",
+          "capability_version": 4
+        }
+      ],
+      "runtime_error": null
+    },
+    {
+      "ordinal": 401,
+      "sku": "SKU-BLOCKED-401",
+      "result_status": "BLOCKED",
+      "fulfillment_mode": null,
+      "fulfillment_source": "POLICY_RATIO",
+      "forecast": null,
+      "decision": null,
+      "business_issues": [
+        {
+          "code": "MIXED_RATIO_UNAVAILABLE",
+          "message": "A MIXED fulfillment ratio is not available from CSV, policy, or 8–13 complete sales weeks.",
+          "blocking": true
+        }
+      ],
+      "risk_flags": [],
+      "evidence_refs": [],
+      "runtime_error": null
+    },
+    {
+      "ordinal": 402,
+      "sku": "SKU-FAILED-402",
+      "result_status": "FAILED",
+      "fulfillment_mode": null,
+      "fulfillment_source": null,
+      "forecast": null,
+      "decision": null,
+      "business_issues": [],
+      "risk_flags": [],
+      "evidence_refs": [],
+      "runtime_error": {
+        "error_code": "MCP_TIMEOUT",
+        "category": "transient",
+        "phase": "invocation",
+        "retryable": true,
+        "safe_message": "The inventory data service did not respond before the request deadline.",
+        "request_id": "request-safe-402"
+      }
+    }
+  ]
+}

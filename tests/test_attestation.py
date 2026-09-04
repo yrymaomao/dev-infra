@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 
 SUPPLY_CHAIN_PROJECT = Path(
-    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes/agents/supply-chain"
+    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v2-level2-agent-v6/agents/supply-chain"
 )
 PLANNING_PROJECT = Path(
-    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes/capabilities/supply-chain"
+    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v2-level2-agent-v6/capabilities/supply-chain"
 )
 UV_COMMAND = Path(os.environ.get("UV_EXECUTABLE", shutil.which("uv") or "uv"))
 
@@ -111,7 +111,13 @@ def real_adapter_descriptors() -> tuple[SimpleNamespace, ...]:
         SimpleNamespace(
             name=provider_id,
             distribution_name=package_name,
-            distribution_version=("0.1.1" if provider_id == "openai.responses" else "0.1.0"),
+            distribution_version=(
+                "0.2.0"
+                if provider_id == "yeaher.erp"
+                else "0.1.1"
+                if provider_id == "openai.responses"
+                else "0.1.0"
+            ),
             distribution_digest=digest,
             value=value,
             api_version=api_version,
@@ -153,7 +159,7 @@ def test_attests_real_non_editable_supply_chain_wheel(clean_supply_chain_site: P
     result = attest(module, clean_supply_chain_site)
 
     assert result.distribution_name == "ebiz-agent-inventory-supply-chain"
-    assert result.distribution_version == "4.0.1"
+    assert result.distribution_version == "4.1.0"
     assert result.entry_point_group is None
     assert result.entry_point_name is None
     assert result.entry_point_value is None
@@ -167,7 +173,7 @@ def test_attests_public_planning_provider_wheel(clean_planning_site: Path) -> No
     result = module.attest_installed_supply_chain_planning(search_paths=(clean_planning_site,))
 
     assert result.distribution_name == "ebiz-capability-supply-chain"
-    assert result.distribution_version == "2.0.0"
+    assert result.distribution_version == "3.0.0"
     assert result.entry_point_group == "ebiz_agents.providers"
     assert result.entry_point_name == "supply-chain-planning"
     assert result.entry_point_value == "ebiz_capability_supply_chain.plugin:factory"
@@ -257,12 +263,12 @@ def test_rejects_symlink_inside_import_root(clean_supply_chain_site: Path, tmp_p
     ("relative_path", "replacement"),
     [
         (
-            "ebiz_agent_inventory_supply_chain-4.0.1.dist-info/METADATA",
+            "ebiz_agent_inventory_supply_chain-4.1.0.dist-info/METADATA",
             ("Name: ebiz-agent-inventory-supply-chain", "Name: wrong-package"),
         ),
         (
-            "ebiz_agent_inventory_supply_chain-4.0.1.dist-info/METADATA",
-            ("Version: 4.0.1", "Version: 9.9.9"),
+            "ebiz_agent_inventory_supply_chain-4.1.0.dist-info/METADATA",
+            ("Version: 4.1.0", "Version: 9.9.9"),
         ),
     ],
 )

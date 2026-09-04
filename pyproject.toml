@@ -1,20 +1,22 @@
 [project]
 name = "ebiz-deployment-composition"
-version = "0.1.3"
+version = "0.1.4"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "aio-pika>=9.5,<10",
   "base-ai==0.1.1",
   "ebizhub-agent-runtime[base-ai]==0.1.6",
   "ebiz-runtime-contracts==0.1.6",
   "ebiz-workflow-runtime==0.1.6",
-  "ebiz-agent-inventory-supply-chain==4.0.1",
+  "ebiz-agent-inventory-supply-chain==4.1.0",
   "httpx>=0.28,<1",
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
   "fastapi>=0.128,<1",
   "jsonschema>=4.26,<4.27",
   "pydantic>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
   "PyYAML>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
   "uvicorn>=0.34,<1",
@@ -73,7 +75,7 @@ provides-extras = ["base-ai"]
 
 [[tool.uv.dependency-metadata]]
 name = "ebiz-capability-supply-chain"
-version = "2.0.0"
+version = "3.0.0"
 requires-dist = ["ebizhub-agent-runtime>=0.1,<0.2"]
 
 [tool.hatch.build.targets.wheel]
@@ -82,6 +84,7 @@ packages = ["src/ebiz_deployment"]
 [tool.hatch.build.targets.wheel.force-include]
 "bff-alembic.ini" = "ebiz_deployment/supply_chain_bff/alembic.ini"
 "bff_migrations" = "ebiz_deployment/supply_chain_bff/migrations"
+"contracts/supply-chain-level2" = "ebiz_deployment/supply_chain_bff/contracts/level2"
 
 [dependency-groups]
 dev = [
@@ -95,13 +98,13 @@ dev = [
 contract = [
   "boto3==1.43.75",
   "botocore==1.43.75",
-  "ebiz-adapter-erp==0.1.1",
+  "ebiz-adapter-erp==0.2.0",
   "ebiz-adapter-mcp==0.1.0",
   "ebiz-adapter-model-openai==0.1.1",
-  "ebiz-agent-inventory-supply-chain==4.0.1",
-  "ebiz-capability-inventory-catalog==3.0.0",
-  "ebiz-capability-commerce-sales-catalog==3.0.0",
-  "ebiz-capability-supply-chain==2.0.0",
+  "ebiz-agent-inventory-supply-chain==4.1.0",
+  "ebiz-capability-inventory-catalog==4.0.0",
+  "ebiz-capability-commerce-sales-catalog==4.0.0",
+  "ebiz-capability-supply-chain==3.0.0",
 ]
 
 [tool.pytest.ini_options]

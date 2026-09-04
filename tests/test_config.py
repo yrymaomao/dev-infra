@@ -7,8 +7,12 @@ from pathlib import Path
 import pytest
 
 READ_TOOLS = [
+    "query_fba_inventory_snapshot_v1",
+    "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
     "query_sku_boston_cohort_v1",
+    "query_sku_fulfillment_sales_profit_windows_v2",
+    "query_sku_identity_mapping_v1",
     "query_sku_sales_profit_windows_v1",
     "query_sku_upc_mapping",
 ]
@@ -18,6 +22,10 @@ ERP_TOOL_BY_OPERATION = {
     "inventory.get_total_snapshot": "query_inventory_summary_v2",
     "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
     "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
+    "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+    "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
+    "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+    "sales_profit.get_sku_fulfillment_windows": "query_sku_fulfillment_sales_profit_windows_v2",
 }
 
 
@@ -29,7 +37,7 @@ def write_runtime_policy(path: Path, skill_root: Path) -> None:
                 "plugins": [
                     {
                         "plugin_id": "supply-chain-planning",
-                        "version": "2.0.0",
+                        "version": "3.0.0",
                         "package_name": "ebiz-capability-supply-chain",
                         "entry_point": "ebiz_capability_supply_chain.plugin:factory",
                         "package_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",
@@ -45,6 +53,63 @@ def write_runtime_policy(path: Path, skill_root: Path) -> None:
     )
 
 
+def streaming_bff_document() -> dict[str, object]:
+    return {
+        "version": "0.1.4",
+        "schema": "supply_chain_bff",
+        "migration_head": "0002_supply_chain_level2",
+        "secret_references": [
+            "supply_chain_bff_postgresql_url",
+            "supply_chain_cursor_hmac_signing_key",
+            "supply_chain_bff_rabbitmq_url",
+        ],
+        "features": {
+            "async_start": False,
+            "runtime_stream": False,
+            "activity_ui": False,
+            "model_error_polish": False,
+            "level2": False,
+            "level2_mq": False,
+        },
+        "limits": {
+            "max_batch_size": 200,
+            "tenant_dispatch_concurrency": 4,
+            "runtime_subscription_limit": 200,
+            "max_selected_skus": 10000,
+            "bulk_batch_size": 200,
+            "tenant_bulk_concurrency": 2,
+            "global_bulk_concurrency": 8,
+        },
+        "etl_wait": {
+            "max_seconds": 1800,
+            "poll_seconds": 60,
+            "timeout_risk_flag": "DATA_SNAPSHOT_LAGGED",
+        },
+        "schedule_defaults": {
+            "weekday": 1,
+            "local_time": "12:00",
+            "policy_mode": "ACTIVE_AT_RUN",
+        },
+        "stream": {
+            "db_tail_ms": 500,
+            "heartbeat_seconds": 15,
+            "activity_push_per_second": 4,
+        },
+        "retention_days": {
+            "runtime_events": 7,
+            "batch_mapping": 30,
+            "completed_activity": 7,
+        },
+        "activity_schema": "business-agent.activity-event.v1",
+        "eta_profile": {
+            "version": "supply-chain-v6-level2-1",
+            "fixed_seconds": 2.0,
+            "per_item_seconds": 15.0,
+            "uncertainty_ratio": 0.3,
+        },
+    }
+
+
 def deployment_document(runtime_policy: Path) -> dict[str, object]:
     return {
         "schema_version": "2",
@@ -56,6 +121,9 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
             "allowed_env": {
                 "api_key": "DEPLOY_OPENAI_API_KEY",
                 "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+                "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
+                "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
+                "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
             }
         },
         "credential_broker": {
@@ -92,7 +160,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
             {
                 "provider_id": "yeaher.erp",
                 "package_name": "ebiz-adapter-erp",
-                "package_version": "0.1.1",
+                "package_version": "0.2.0",
                 "record_digest": "${ERP_RECORD_DIGEST}",
                 "entry_point_group": "base_ai.provider_factories",
                 "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
@@ -102,6 +170,10 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                     "inventory.get_total_snapshot",
                     "sales_profit.get_boston_cohort",
                     "sales_profit.get_sku_windows",
+                    "inventory.list_skus_by_threshold",
+                    "catalog.resolve_sku_identity_batch",
+                    "inventory.get_fba_snapshot",
+                    "sales_profit.get_sku_fulfillment_windows",
                 ],
                 "egress_hosts": [],
                 "secret_names": [],
@@ -135,44 +207,48 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         ],
         "supply_chain_release": {
             "agent_id": "inventory-supply-chain",
-            "agent_version": 5,
+            "agent_version": 6,
             "agent_distribution": "ebiz-agent-inventory-supply-chain",
-            "agent_distribution_version": "4.0.1",
+            "agent_distribution_version": "4.1.0",
             "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
             "workflow_code": "inventory-supply-chain-daily",
-            "workflow_version": 5,
+            "workflow_version": 6,
             "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
             "capability_sets": [
                 {
                     "set_id": "inventory.core",
-                    "version": 3,
+                    "version": 4,
                     "distribution_name": "ebiz-capability-inventory-catalog",
-                    "distribution_version": "3.0.0",
+                    "distribution_version": "4.0.0",
                     "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}",
                 },
                 {
                     "set_id": "commerce-sales.analytics",
-                    "version": 3,
+                    "version": 4,
                     "distribution_name": "ebiz-capability-commerce-sales-catalog",
-                    "distribution_version": "3.0.0",
+                    "distribution_version": "4.0.0",
                     "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}",
                 },
                 {
                     "set_id": "supply-chain.planning",
-                    "version": 2,
+                    "version": 3,
                     "distribution_name": "ebiz-capability-supply-chain",
-                    "distribution_version": "2.0.0",
+                    "distribution_version": "3.0.0",
                     "record_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",
                 },
             ],
+            "streaming_bff": streaming_bff_document(),
             "provider_versions": {
-                "yeaher.erp": "0.1.1",
-                "supply-chain-planning.fulfillment-resolver": "2.0.0",
-                "supply-chain-planning.forecast-engine": "2.0.0",
-                "supply-chain-planning.classification-engine": "2.0.0",
-                "supply-chain-planning.action-router": "2.0.0",
-                "supply-chain-planning.replenishment-engine": "2.0.0",
-                "supply-chain-planning.clearance-engine": "2.0.0",
+                "yeaher.erp": "0.2.0",
+                "supply-chain-planning.fulfillment-resolver": "3.0.0",
+                "supply-chain-planning.forecast-engine": "3.0.0",
+                "supply-chain-planning.classification-engine": "3.0.0",
+                "supply-chain-planning.action-router": "3.0.0",
+                "supply-chain-planning.replenishment-engine": "3.0.0",
+                "supply-chain-planning.clearance-engine": "3.0.0",
+                "supply-chain-planning.level2-fulfillment": "3.0.0",
+                "supply-chain-planning.level2-forecast": "3.0.0",
+                "supply-chain-planning.level2-optimizer": "3.0.0",
             },
         },
     }
@@ -215,7 +291,7 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
     ]
     assert config.runtime_plugin_policy.plugins[0].plugin_id == "supply-chain-planning"
     assert "cockpit" not in json.dumps(config.model_dump(mode="json")).lower()
-    assert config.supply_chain_release.agent_version == 5
+    assert config.supply_chain_release.agent_version == 6
     assert [item.set_id for item in config.supply_chain_release.capability_sets] == [
         "commerce-sales.analytics",
         "inventory.core",

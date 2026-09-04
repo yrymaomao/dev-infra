@@ -94,12 +94,12 @@ def attest_installed_supply_chain(
     *,
     search_paths: Sequence[Path] | None = None,
 ) -> InstalledDistributionAttestation:
-    """Attest the import-only Supply Chain v5 Agent wheel without importing it."""
+    """Attest the import-only Supply Chain v6 Agent wheel without importing it."""
 
     try:
         return attest_installed_resource_distribution(
             distribution_name="ebiz-agent-inventory-supply-chain",
-            distribution_version="4.0.1",
+            distribution_version="4.1.0",
             import_root="inventory_supply_chain_agent",
             forbidden_entry_point_group="ebiz_agents.providers",
             search_paths=search_paths,
@@ -117,7 +117,7 @@ def attest_installed_supply_chain_planning(
     try:
         return attest_installed_distribution(
             distribution_name="ebiz-capability-supply-chain",
-            distribution_version="2.0.0",
+            distribution_version="3.0.0",
             entry_point_group="ebiz_agents.providers",
             entry_point_name="supply-chain-planning",
             entry_point_value="ebiz_capability_supply_chain.plugin:factory",
@@ -130,12 +130,12 @@ def attest_installed_supply_chain_planning(
 def attest_installed_inventory_catalog(
     *, search_paths: Sequence[Path] | None = None
 ) -> InstalledDistributionAttestation:
-    """Attest the exact inventory.core@3 resource wheel."""
+    """Attest the exact inventory.core@4 resource wheel."""
 
     try:
         return attest_installed_resource_distribution(
             distribution_name="ebiz-capability-inventory-catalog",
-            distribution_version="3.0.0",
+            distribution_version="4.0.0",
             import_root="ebiz_capability_inventory_catalog",
             forbidden_entry_point_group="ebiz_agents.providers",
             search_paths=search_paths,
@@ -147,12 +147,12 @@ def attest_installed_inventory_catalog(
 def attest_installed_commerce_sales_catalog(
     *, search_paths: Sequence[Path] | None = None
 ) -> InstalledDistributionAttestation:
-    """Attest the exact commerce-sales.analytics@3 resource wheel."""
+    """Attest the exact commerce-sales.analytics@4 resource wheel."""
 
     try:
         return attest_installed_resource_distribution(
             distribution_name="ebiz-capability-commerce-sales-catalog",
-            distribution_version="3.0.0",
+            distribution_version="4.0.0",
             import_root="ebiz_capability_commerce_sales_catalog",
             forbidden_entry_point_group="ebiz_agents.providers",
             search_paths=search_paths,

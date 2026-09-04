@@ -27,26 +27,23 @@ from ebiz_deployment.release import (
     write_base_ai_provider_attestation,
 )
 
-AGENTS = Path("C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v5-outcomes")
+AGENTS = Path("C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v2-level2-agent-v6")
 CONTRACT_ROOTS = {
-    "inventory.core": AGENTS / "capabilities/inventory/contracts",
-    "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts",
-    "supply-chain.planning": AGENTS / "capabilities/supply-chain/contracts",
+    "inventory.core": AGENTS / "capabilities/inventory/contracts/v4",
+    "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts/v4",
+    "supply-chain.planning": AGENTS / "capabilities/supply-chain/contracts/v3",
 }
 WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
 EXPECTED_PUBLIC_CAPABILITY_PINS = {
-    ("catalog.resolve_sku_identity", 3),
-    ("inventory.get_total_snapshot", 3),
-    ("sales_profit.get_sku_windows", 3),
-    ("sales_profit.get_boston_cohort", 1),
-    ("supply_chain.resolve_fulfillment_mode", 1),
-    ("supply_chain.compute_forecast", 2),
-    ("supply_chain.classify_inventory", 2),
-    ("supply_chain.route_inventory_action", 1),
-    ("supply_chain.build_replenishment_proposal", 2),
-    ("supply_chain.build_clearance_proposal", 1),
+    ("inventory.list_skus_by_threshold", 1),
+    ("catalog.resolve_sku_identity_batch", 1),
+    ("inventory.get_fba_snapshot", 1),
+    ("sales_profit.get_sku_fulfillment_windows", 4),
+    ("supply_chain.resolve_fulfillment_mode", 2),
+    ("supply_chain.compute_forecast", 3),
+    ("supply_chain.optimize_inventory_action", 1),
 }
 
 
@@ -72,22 +69,22 @@ def _expand_test_environment(value: object, environ: dict[str, str]) -> object:
 def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, object]]:
     workflow = {
         "code": "inventory-supply-chain-daily",
-        "name": "Supply Chain Expert v5",
-        "version": 5,
+        "name": "Supply Chain Expert v6",
+        "version": 6,
         "source_yaml": "spec_version: ebizhub.workflow/v1.3\n",
         "resources": {},
     }
     agent = {
         "code": "inventory-supply-chain",
         "name": "Supply Chain Expert",
-        "version": 5,
+        "version": 6,
         "manifest": {
             "distribution": "ebiz-agent-inventory-supply-chain",
-            "distribution_version": "4.0.1",
+            "distribution_version": "4.1.0",
             "record_digest": release.agent_record_digest,  # type: ignore[attr-defined]
         },
-        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 5}],
-        "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(10)],
+        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 6}],
+        "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(7)],
         "max_hosting_level": "ADVISORY",
     }
     return workflow, agent
@@ -100,7 +97,7 @@ def _valid_release_responses(
     workflow_pins = [
         {
             "code": "inventory-supply-chain-daily",
-            "version": 5,
+            "version": 6,
             "ir_checksum": WORKFLOW_CHECKSUM,
         }
     ]
@@ -203,8 +200,8 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     payload = build_agent_draft_payload(config.supply_chain_release, publications)
     AgentDraftRequest.model_validate(payload)
     assert payload["code"] == "inventory-supply-chain"
-    assert payload["version"] == 5
-    assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 5}]
+    assert payload["version"] == 6
+    assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 6}]
     assert {
         (item["code"], item["version"]) for item in payload["capability_pins"]
     } == EXPECTED_PUBLIC_CAPABILITY_PINS
@@ -271,7 +268,7 @@ def test_runtime_attests_the_exact_deployment_base_ai_manifest(tmp_path: Path) -
     assert dict(versions) == {
         "mcp.streamable_http": "0.1.0",
         "openai.responses": "0.1.1",
-        "yeaher.erp": "0.1.1",
+        "yeaher.erp": "0.2.0",
     }
 
 

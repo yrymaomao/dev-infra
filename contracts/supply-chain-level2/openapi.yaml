@@ -85,9 +85,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SafeError'
+  /api/supply-chain/v2/reports:
+    get:
+      operationId: listReports
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        '200':
+          description: Most recent tenant-owned reports
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 200
+                items:
+                  $ref: '#/components/schemas/ReportSummary'
   /api/supply-chain/v2/reports/{report_run_id}:
     parameters:
       - $ref: '#/components/parameters/ReportRunId'
+      - in: query
+        name: item_offset
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 9999
+          default: 0
+      - in: query
+        name: item_limit
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 200
     get:
       operationId: getReport
       responses:
@@ -175,6 +213,13 @@ paths:
   /api/supply-chain/v2/schedules/{schedule_id}/run-now:
     parameters:
       - $ref: '#/components/parameters/ScheduleId'
+      - in: header
+        name: Idempotency-Key
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
     post:
       operationId: runScheduleNow
       responses:
@@ -183,7 +228,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReportRunAccepted'
+                $ref: '#/components/schemas/ScheduleRunAccepted'
   /api/supply-chain/v2/policies/validate:
     post:
       operationId: validatePolicy
@@ -206,6 +251,12 @@ paths:
       responses:
         '200':
           description: Immutable policy versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PolicyVersion'
     post:
       operationId: publishPolicy
       requestBody:
@@ -370,7 +421,7 @@ components:
           type: string
           format: uuid
         status:
-          enum: [PENDING, READY, REJECTED, EXPIRED]
+          enum: [PENDING, PLANNING, DISCOVERING, PROCESSING, READY, REJECTED, EXPIRED]
         selector:
           $ref: '#/components/schemas/InventorySelector'
         source_snapshot_id:
@@ -455,10 +506,22 @@ components:
           type: integer
           minimum: 1
           maximum: 50
+    ScheduleRunAccepted:
+      type: object
+      additionalProperties: false
+      required: [schema_version, report_run_id, status]
+      properties:
+        schema_version:
+          const: supply-chain.schedule-run-accepted.v1
+        report_run_id:
+          type: string
+          format: uuid
+        status:
+          const: SELECTING
     ReportSnapshot:
       type: object
       additionalProperties: false
-      required: [schema_version, report_run_id, status, sku_count, batch_count, complete_count, blocked_count, failed_count, risk_flags, batches]
+      required: [schema_version, report_run_id, status, sku_count, batch_count, complete_count, blocked_count, failed_count, risk_flags, data_cutoff, item_offset, item_limit, returned_count, next_item_offset, items, batches]
       properties:
         schema_version:
           const: supply-chain.report.v1
@@ -466,14 +529,14 @@ components:
           type: string
           format: uuid
         status:
-          enum: [ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
+          enum: [SELECTING, ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
         sku_count:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 10000
         batch_count:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 50
         complete_count:
           type: integer
@@ -489,13 +552,37 @@ components:
           uniqueItems: true
           items:
             type: string
+        data_cutoff:
+          type: [string, 'null']
+          format: date-time
+        item_offset:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        item_limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        returned_count:
+          type: integer
+          minimum: 0
+          maximum: 200
+        next_item_offset:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 9999
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: './report-batch-results.v1.schema.json#/$defs/ResultItem'
         batches:
           type: array
           maxItems: 50
           items:
             type: object
             additionalProperties: false
-            required: [batch_id, batch_no, item_count, status, execution_id]
+            required: [batch_id, batch_no, item_count, status, complete_count, blocked_count, failed_count, safe_error, execution_id]
             properties:
               batch_id:
                 type: string
@@ -509,9 +596,93 @@ components:
                 maximum: 200
               status:
                 type: string
+              complete_count:
+                type: integer
+                minimum: 0
+                maximum: 200
+              blocked_count:
+                type: integer
+                minimum: 0
+                maximum: 200
+              failed_count:
+                type: integer
+                minimum: 0
+                maximum: 200
+              safe_error:
+                oneOf:
+                  - $ref: '#/components/schemas/ReportRuntimeError'
+                  - type: 'null'
               execution_id:
                 type: [string, 'null']
                 format: uuid
+    ReportRuntimeError:
+      type: object
+      additionalProperties: false
+      required: [error_code, category, phase, retryable, safe_message, request_id]
+      properties:
+        error_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        category:
+          type: string
+          minLength: 1
+          maxLength: 128
+        phase:
+          type: string
+          minLength: 1
+          maxLength: 128
+        retryable:
+          type: boolean
+        safe_message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        request_id:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 128
+    ReportSummary:
+      type: object
+      additionalProperties: false
+      required: [report_run_id, status, sku_count, batch_count, complete_count, blocked_count, failed_count, risk_flags, data_cutoff, created_at, completed_at]
+      properties:
+        report_run_id:
+          type: string
+          format: uuid
+        status:
+          enum: [SELECTING, ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
+        sku_count:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        batch_count:
+          type: integer
+          minimum: 0
+          maximum: 50
+        complete_count:
+          type: integer
+          minimum: 0
+        blocked_count:
+          type: integer
+          minimum: 0
+        failed_count:
+          type: integer
+          minimum: 0
+        risk_flags:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        data_cutoff:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
     ScheduleCreate:
       type: object
       additionalProperties: false

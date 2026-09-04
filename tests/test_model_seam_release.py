@@ -33,14 +33,14 @@ class FakeDistribution:
 
 VERSIONS = {
     "base-ai": "0.1.1",
-    "ebiz-adapter-erp": "0.1.1",
+    "ebiz-adapter-erp": "0.2.0",
     "ebiz-adapter-mcp": "0.1.0",
     "ebiz-adapter-model-openai": "0.1.1",
-    "ebiz-agent-inventory-supply-chain": "4.0.1",
-    "ebiz-capability-commerce-sales-catalog": "3.0.0",
-    "ebiz-capability-inventory-catalog": "3.0.0",
-    "ebiz-capability-supply-chain": "2.0.0",
-    "ebiz-deployment-composition": "0.1.3",
+    "ebiz-agent-inventory-supply-chain": "4.1.0",
+    "ebiz-capability-commerce-sales-catalog": "4.0.0",
+    "ebiz-capability-inventory-catalog": "4.0.0",
+    "ebiz-capability-supply-chain": "3.0.0",
+    "ebiz-deployment-composition": "0.1.4",
     "ebiz-runtime-contracts": "0.1.6",
     "ebiz-workflow-runtime": "0.1.6",
     "ebizhub-agent-runtime": "0.1.6",
@@ -50,7 +50,7 @@ VERSIONS = {
 def bundle_document(*, crm_ready: bool = True) -> dict[str, object]:
     return {
         "bundle_id": "runtime-model-seam-0.1.6",
-        "composition_version": "0.1.3",
+        "composition_version": "0.1.4",
         "artifacts": [
             {
                 "distribution": name,

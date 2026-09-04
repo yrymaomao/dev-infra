@@ -12,6 +12,10 @@ _TOOLS = frozenset(
         "query_sku_boston_cohort_v1",
         "query_sku_sales_profit_windows_v1",
         "query_sku_upc_mapping",
+        "query_inventory_skus_by_threshold_v1",
+        "query_sku_identity_mapping_v1",
+        "query_fba_inventory_snapshot_v1",
+        "query_sku_fulfillment_sales_profit_windows_v2",
     }
 )
 _TOOLS_BY_NODE = {
@@ -19,6 +23,10 @@ _TOOLS_BY_NODE = {
     "read_inventory": "query_inventory_summary_v2",
     "read_sales": "query_sku_sales_profit_windows_v1",
     "read_cohort": "query_sku_boston_cohort_v1",
+    "select_inventory": "query_inventory_skus_by_threshold_v1",
+    "resolve_identity_batch": "query_sku_identity_mapping_v1",
+    "read_fba_inventory": "query_fba_inventory_snapshot_v1",
+    "read_fulfillment_sales": "query_sku_fulfillment_sales_profit_windows_v2",
 }
 
 

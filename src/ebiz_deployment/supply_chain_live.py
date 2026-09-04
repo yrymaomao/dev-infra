@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class LiveSmokeSettings:
-    """Explicit non-production inputs for a Runtime-hosted v5 smoke."""
+    """Explicit non-production inputs for a Runtime-hosted v6 smoke."""
 
     api_url: str
     jwt_secret: str = field(repr=False)
@@ -60,9 +60,9 @@ class LiveSmokeSettings:
     run_id: str
     market_scope: str = _MARKET_SCOPE
     agent_id: str = "inventory-supply-chain"
-    agent_version: int = 5
+    agent_version: int = 6
     workflow_code: str = "inventory-supply-chain-daily"
-    workflow_version: int = 5
+    workflow_version: int = 6
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str]) -> LiveSmokeSettings:
@@ -173,24 +173,24 @@ def verify_terminal_result(
     """Validate one schema-4 public result and its materialized evidence count."""
 
     if snapshot.get("status") != "SUCCEEDED":
-        raise ValueError("v5 smoke did not reach a successful terminal result")
+        raise ValueError("v6 smoke did not reach a successful terminal result")
     outputs = snapshot.get("outputs")
     if not isinstance(outputs, Mapping) or set(outputs) != {"result"}:
-        raise ValueError("v5 smoke omitted the Runtime terminal result")
+        raise ValueError("v6 smoke omitted the Runtime terminal result")
     result = outputs["result"]
     if not isinstance(result, dict):
-        raise ValueError("v5 smoke omitted the Runtime terminal result")
+        raise ValueError("v6 smoke omitted the Runtime terminal result")
     errors = sorted(_result_validator().iter_errors(result), key=lambda item: list(item.path))
     if errors:
-        raise ValueError("v5 smoke returned a result that violates the public contract")
+        raise ValueError("v6 smoke returned a result that violates the public contract")
     evidence = result["evidence"]
     if not isinstance(evidence, list) or len(evidence) != expected_evidence_count:
-        raise ValueError("v5 smoke returned the wrong materialized evidence count")
+        raise ValueError("v6 smoke returned the wrong materialized evidence count")
     result_status = result.get("status")
     if result_status != expected_result_status:
-        raise ValueError("v5 smoke did not return the expected result status")
+        raise ValueError("v6 smoke did not return the expected result status")
     if "complete_result" in outputs or "blocked_result" in outputs:
-        raise ValueError("v5 smoke returned legacy branch projections")
+        raise ValueError("v6 smoke returned legacy branch projections")
     return str(result_status)
 
 
@@ -235,11 +235,11 @@ async def run_runtime_smoke(
         snapshot = response.json()
         execution_id = snapshot.get("execution_id")
         if not isinstance(execution_id, str):
-            raise ValueError("v5 smoke omitted the Runtime execution id")
+            raise ValueError("v6 smoke omitted the Runtime execution id")
         deadline = monotonic() + 120.0
         while snapshot.get("status") not in {"SUCCEEDED", "FAILED", "CANCELLED", "REJECTED"}:
             if monotonic() >= deadline:
-                raise ValueError("v5 smoke timed out")
+                raise ValueError("v6 smoke timed out")
             await asyncio.sleep(0.25)
             response = await client.get(f"/v1/executions/{execution_id}")
             response.raise_for_status()

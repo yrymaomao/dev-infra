@@ -2,7 +2,7 @@
   "plugins": [
     {
       "plugin_id": "supply-chain-planning",
-      "version": "2.0.0",
+      "version": "3.0.0",
       "package_name": "ebiz-capability-supply-chain",
       "entry_point": "ebiz_capability_supply_chain.plugin:factory",
       "package_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",

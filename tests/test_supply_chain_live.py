@@ -222,7 +222,7 @@ async def test_runtime_smoke_calls_published_agent_execution_api() -> None:
         transport=httpx.MockTransport(handler),
     )
     assert result["result_status"] == "COMPLETE"
-    assert seen[0]["agent"] == {"id": "inventory-supply-chain", "version": 5}
+    assert seen[0]["agent"] == {"id": "inventory-supply-chain", "version": 6}
     assert seen[0]["inputs"]["skill_input_ref"].endswith("0010")
 
 

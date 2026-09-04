@@ -73,13 +73,15 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["sku", "status", "msku", "asins", "source", "valid_from", "valid_to"],
+            "required": ["sku", "status", "msku_status", "msku", "asin_status", "asins", "source", "valid_from", "valid_to"],
             "properties": {
               "sku": { "$ref": "#/$defs/CanonicalSku" },
               "status": { "enum": ["FOUND", "NO_FOUND", "CONFLICT"] },
+              "msku_status": { "enum": ["FOUND", "NO_MAPPING", "CONFLICT", "NOT_APPLICABLE"] },
               "msku": { "type": ["string", "null"], "maxLength": 128 },
+              "asin_status": { "const": "UNAVAILABLE_NOT_OWNED" },
               "asins": {
-                "type": "array",
+                "type": ["array", "null"],
                 "maxItems": 20,
                 "uniqueItems": true,
                 "items": { "type": "string", "minLength": 1, "maxLength": 32 }
@@ -116,7 +118,7 @@
             "required": ["sku", "status", "msku", "fnsku", "asin", "available", "reserved", "inbound", "unfulfillable", "age_buckets", "monthly_storage_cost"],
             "properties": {
               "sku": { "$ref": "#/$defs/CanonicalSku" },
-              "status": { "enum": ["FOUND", "NO_SNAPSHOT"] },
+              "status": { "enum": ["FOUND", "NO_SNAPSHOT", "SNAPSHOT_INCOMPLETE", "SNAPSHOT_CONFLICT"] },
               "msku": { "type": ["string", "null"], "maxLength": 128 },
               "fnsku": { "type": ["string", "null"], "maxLength": 128 },
               "asin": { "type": ["string", "null"], "maxLength": 32 },

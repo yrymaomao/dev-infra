@@ -23,6 +23,7 @@ class BffSettings:
     runtime_url: str
     skill_input_ref: str
     runtime_credential_ref: str = field(repr=False)
+    rabbitmq_url: str | None = field(default=None, repr=False)
     snapshot_time_override: datetime | None = None
     max_batch_size: int = 200
     tenant_dispatch_concurrency: int = 4
@@ -38,6 +39,17 @@ class BffSettings:
     stream_enabled: bool = False
     activity_ui_enabled: bool = False
     model_error_polish_enabled: bool = False
+    level2_enabled: bool = False
+    level2_mq_enabled: bool = False
+    max_selected_skus: int = 10_000
+    bulk_batch_size: int = 200
+    tenant_bulk_concurrency: int = 2
+    global_bulk_concurrency: int = 8
+    etl_wait_seconds: int = 1800
+    etl_poll_seconds: int = 60
+    rabbitmq_exchange: str = "supply-chain.report.v1"
+    rabbitmq_queue: str = "supply-chain.report-batch.v1"
+    rabbitmq_routing_key: str = "supply-chain.report-batch.requested.v1"
     eta_profile: EtaProfile = field(
         default_factory=lambda: EtaProfile(
             version="supply-chain-v5-bootstrap-1",
@@ -69,6 +81,19 @@ class BffSettings:
         credential_ref = _required("SUPPLY_CHAIN_CREDENTIAL_REF")
         if _CREDENTIAL_REF.fullmatch(credential_ref) is None:
             raise ValueError("SUPPLY_CHAIN_CREDENTIAL_REF must be an opaque bounded reference")
+        level2_enabled = _boolean("BFF_LEVEL2_ENABLED", False)
+        level2_mq_enabled = _boolean("BFF_LEVEL2_MQ_ENABLED", False)
+        if level2_mq_enabled and not level2_enabled:
+            raise ValueError("BFF_LEVEL2_MQ_ENABLED requires BFF_LEVEL2_ENABLED")
+        rabbitmq_url = os.environ.get("BFF_RABBITMQ_URL", "").strip() or None
+        if level2_mq_enabled and rabbitmq_url is None:
+            raise ValueError("BFF_RABBITMQ_URL is required when Level 2 MQ is enabled")
+        if rabbitmq_url is not None:
+            rabbit = urlsplit(rabbitmq_url)
+            if rabbit.scheme not in {"amqp", "amqps"} or not rabbit.netloc:
+                raise ValueError("BFF_RABBITMQ_URL must use AMQP(S)")
+            if rabbit.scheme == "amqp" and rabbit.hostname not in {"127.0.0.1", "localhost"}:
+                raise ValueError("BFF_RABBITMQ_URL requires AMQPS outside loopback")
         return cls(
             database_url=database_url,
             cursor_hmac_key=key,
@@ -76,6 +101,7 @@ class BffSettings:
             runtime_url=runtime_url,
             skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
             runtime_credential_ref=credential_ref,
+            rabbitmq_url=rabbitmq_url,
             snapshot_time_override=_optional_datetime("BFF_SUPPLY_CHAIN_SNAPSHOT_TIME"),
             tenant_dispatch_concurrency=concurrency,
             global_dispatch_concurrency=_integer(
@@ -91,6 +117,18 @@ class BffSettings:
             stream_enabled=_boolean("BFF_STREAM_ENABLED", False),
             activity_ui_enabled=_boolean("BFF_ACTIVITY_UI_ENABLED", False),
             model_error_polish_enabled=_boolean("BFF_MODEL_ERROR_POLISH_ENABLED", False),
+            level2_enabled=level2_enabled,
+            level2_mq_enabled=level2_mq_enabled,
+            max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
+            bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
+            tenant_bulk_concurrency=_integer(
+                "BFF_TENANT_BULK_CONCURRENCY", 2, minimum=1, maximum=32
+            ),
+            global_bulk_concurrency=_integer(
+                "BFF_GLOBAL_BULK_CONCURRENCY", 8, minimum=1, maximum=128
+            ),
+            etl_wait_seconds=_integer("BFF_ETL_WAIT_SECONDS", 1800, minimum=0, maximum=7200),
+            etl_poll_seconds=_integer("BFF_ETL_POLL_SECONDS", 60, minimum=5, maximum=600),
             eta_profile=EtaProfile(
                 version=os.environ.get("BFF_ETA_PROFILE_VERSION", "supply-chain-v5-bootstrap-1"),
                 fixed_seconds=_float("BFF_ETA_FIXED_SECONDS", 2.0, minimum=0),

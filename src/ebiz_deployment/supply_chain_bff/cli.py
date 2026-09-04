@@ -16,7 +16,10 @@ from .app import BffContainer, create_app
 from .config import BffSettings
 from .cursor import CursorSigner
 from .dispatcher import BatchCoordinator
+from .level2_repository import Level2Repository
+from .level2_worker import Level2Worker
 from .migration import upgrade
+from .report_mq import AioPikaReportBus
 from .repository import BatchRepository
 from .runtime_client import RuntimeClient
 
@@ -49,6 +52,28 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
             runtime=runtime,
             settings=settings,
         )
+        level2_repository = Level2Repository(factory, payload_store=payload_store)
+        report_bus = (
+            AioPikaReportBus(
+                url=settings.rabbitmq_url,
+                exchange_name=settings.rabbitmq_exchange,
+                queue_name=settings.rabbitmq_queue,
+                routing_key=settings.rabbitmq_routing_key,
+            )
+            if settings.level2_mq_enabled and settings.rabbitmq_url is not None
+            else None
+        )
+        level2_worker = (
+            Level2Worker(
+                repository=level2_repository,
+                runtime=runtime,
+                settings=settings,
+                authorization_for_tenant=coordinator.authorization_for_tenant,
+                bus=report_bus,
+            )
+            if settings.level2_enabled
+            else None
+        )
         app = create_app(
             BffContainer(
                 settings=settings,
@@ -59,6 +84,8 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
                     settings.cursor_hmac_key,
                     ttl=timedelta(days=7),
                 ),
+                level2_repository=level2_repository,
+                level2_worker=level2_worker,
             )
         )
         server = uvicorn.Server(

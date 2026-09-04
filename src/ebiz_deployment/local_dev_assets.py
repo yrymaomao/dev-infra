@@ -1,4 +1,4 @@
-"""Generate ignored, loopback-only assets for deterministic Supply Chain v5 tests."""
+"""Generate ignored, loopback-only assets for deterministic Supply Chain v6 tests."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from .release import write_base_ai_provider_attestation
 
 MODEL_SCHEMA_REF = "schemas/seasonality-analysis.schema.yaml"
 _CONNECTOR_FIELD_ALLOWLISTS = {
-    "yeaher.erp@0.1.1": {
+    "yeaher.erp@0.2.0": {
         "catalog.resolve_sku_identity": ["market_scope", "sku", "snapshot_time"],
         "inventory.get_total_snapshot": [
             "fulfillment_mode",
@@ -38,10 +38,10 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
         "sales_profit.get_boston_cohort": ["market_scope", "snapshot_time", "target_sku"],
         "sales_profit.get_sku_windows": ["market_scope", "sku", "snapshot_time"],
     },
-    "supply-chain-planning.fulfillment-resolver@2.0.0": {
+    "supply-chain-planning.fulfillment-resolver@3.0.0": {
         "supply_chain.resolve_fulfillment_mode": ["fulfillment_mode"]
     },
-    "supply-chain-planning.forecast-engine@2.0.0": {
+    "supply-chain-planning.forecast-engine@3.0.0": {
         "supply_chain.compute_forecast": [
             "production_lead_time_days",
             "review_period_days",
@@ -50,7 +50,7 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "windows",
         ]
     },
-    "supply-chain-planning.classification-engine@2.0.0": {
+    "supply-chain-planning.classification-engine@3.0.0": {
         "supply_chain.classify_inventory": [
             "cohort",
             "cohort_total_eligible",
@@ -61,7 +61,7 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "snapshot_time",
         ]
     },
-    "supply-chain-planning.action-router@2.0.0": {
+    "supply-chain-planning.action-router@3.0.0": {
         "supply_chain.route_inventory_action": [
             "available_quantity",
             "classification",
@@ -72,7 +72,7 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "sales_windows",
         ]
     },
-    "supply-chain-planning.replenishment-engine@2.0.0": {
+    "supply-chain-planning.replenishment-engine@3.0.0": {
         "supply_chain.build_replenishment_proposal": [
             "available_quantity",
             "forecast",
@@ -80,12 +80,48 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "purchase_in_transit_quantity",
         ]
     },
-    "supply-chain-planning.clearance-engine@2.0.0": {
+    "supply-chain-planning.clearance-engine@3.0.0": {
         "supply_chain.build_clearance_proposal": [
             "available_quantity",
             "planning_policy",
             "purchase_in_transit_quantity",
             "route",
+        ]
+    },
+    "supply-chain-planning.level2-fulfillment@3.0.0": {
+        "supply_chain.resolve_fulfillment_mode": [
+            "csv_mode",
+            "csv_mixed_ratio",
+            "policy_rule",
+            "weekly_channel_sales",
+            "fba_data_available",
+            "fbm_data_available",
+        ]
+    },
+    "supply-chain-planning.level2-forecast@3.0.0": {
+        "supply_chain.compute_forecast": [
+            "sku",
+            "weekly_history",
+            "data_cutoff",
+            "feature_snapshot_ref",
+            "future_signals",
+            "cohort_prior",
+            "optional_signal_available",
+            "data_snapshot_lagged",
+        ]
+    },
+    "supply-chain-planning.level2-optimizer@3.0.0": {
+        "supply_chain.optimize_inventory_action": [
+            "forecast",
+            "available_quantity",
+            "inbound_quantity",
+            "unit_cost",
+            "current_unit_price",
+            "fulfillment_mode",
+            "mixed_ratio",
+            "policy_rule",
+            "as_of",
+            "markdown_grid",
         ]
     },
 }
@@ -110,7 +146,7 @@ class LocalDevAssets:
 def build_skill_document(
     *, snapshot_time: str, tenant_id: str, market_scope: str, sku: str
 ) -> dict[str, Any]:
-    """Return deterministic v5 policy data; Runtime binds its scope and hash metadata."""
+    """Return deterministic rollback policy data; Runtime binds scope and hash metadata."""
 
     del snapshot_time, tenant_id, market_scope, sku
     return {
@@ -134,7 +170,7 @@ def build_skill_document(
 
 def _model_schemas() -> dict[str, Any]:
     distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
-    if distribution.version != "4.0.1":
+    if distribution.version != "4.1.0":
         raise ValueError("installed Supply Chain Agent version is unavailable")
     schema_path = Path(
         str(
@@ -155,7 +191,7 @@ def _plugin_policy(
     plugins = [
         {
             "plugin_id": "supply-chain-planning",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "package_name": "ebiz-capability-supply-chain",
             "entry_point": "ebiz_capability_supply_chain.plugin:factory",
             "package_digest": digests["SUPPLY_CHAIN_PLANNING_RECORD_DIGEST"],
@@ -182,47 +218,108 @@ def _plugin_policy(
     return {"plugins": plugins}
 
 
+def _streaming_bff_release() -> dict[str, Any]:
+    return {
+        "version": "0.1.4",
+        "schema": "supply_chain_bff",
+        "migration_head": "0002_supply_chain_level2",
+        "secret_references": [
+            "supply_chain_bff_postgresql_url",
+            "supply_chain_cursor_hmac_signing_key",
+            "supply_chain_bff_rabbitmq_url",
+        ],
+        "features": {
+            "async_start": False,
+            "runtime_stream": False,
+            "activity_ui": False,
+            "model_error_polish": False,
+            "level2": False,
+            "level2_mq": False,
+        },
+        "limits": {
+            "max_batch_size": 200,
+            "tenant_dispatch_concurrency": 4,
+            "runtime_subscription_limit": 200,
+            "max_selected_skus": 10000,
+            "bulk_batch_size": 200,
+            "tenant_bulk_concurrency": 2,
+            "global_bulk_concurrency": 8,
+        },
+        "etl_wait": {
+            "max_seconds": 1800,
+            "poll_seconds": 60,
+            "timeout_risk_flag": "DATA_SNAPSHOT_LAGGED",
+        },
+        "schedule_defaults": {
+            "weekday": 1,
+            "local_time": "12:00",
+            "policy_mode": "ACTIVE_AT_RUN",
+        },
+        "stream": {
+            "db_tail_ms": 500,
+            "heartbeat_seconds": 15,
+            "activity_push_per_second": 4,
+        },
+        "retention_days": {
+            "runtime_events": 7,
+            "batch_mapping": 30,
+            "completed_activity": 7,
+        },
+        "activity_schema": "business-agent.activity-event.v1",
+        "eta_profile": {
+            "version": "supply-chain-v6-level2-1",
+            "fixed_seconds": 2.0,
+            "per_item_seconds": 15.0,
+            "uncertainty_ratio": 0.3,
+        },
+    }
+
+
 def _release(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "agent_id": "inventory-supply-chain",
-        "agent_version": 5,
+        "agent_version": 6,
         "agent_distribution": "ebiz-agent-inventory-supply-chain",
-        "agent_distribution_version": "4.0.1",
+        "agent_distribution_version": "4.1.0",
         "agent_record_digest": digests["SUPPLY_CHAIN_AGENT_RECORD_DIGEST"],
         "workflow_code": "inventory-supply-chain-daily",
-        "workflow_version": 5,
+        "workflow_version": 6,
         "workflow_artifact_digest": digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"],
         "capability_sets": [
             {
                 "set_id": "inventory.core",
-                "version": 3,
+                "version": 4,
                 "distribution_name": "ebiz-capability-inventory-catalog",
-                "distribution_version": "3.0.0",
+                "distribution_version": "4.0.0",
                 "record_digest": digests["INVENTORY_CATALOG_RECORD_DIGEST"],
             },
             {
                 "set_id": "commerce-sales.analytics",
-                "version": 3,
+                "version": 4,
                 "distribution_name": "ebiz-capability-commerce-sales-catalog",
-                "distribution_version": "3.0.0",
+                "distribution_version": "4.0.0",
                 "record_digest": digests["COMMERCE_SALES_CATALOG_RECORD_DIGEST"],
             },
             {
                 "set_id": "supply-chain.planning",
-                "version": 2,
+                "version": 3,
                 "distribution_name": "ebiz-capability-supply-chain",
-                "distribution_version": "2.0.0",
+                "distribution_version": "3.0.0",
                 "record_digest": digests["SUPPLY_CHAIN_PLANNING_RECORD_DIGEST"],
             },
         ],
+        "streaming_bff": _streaming_bff_release(),
         "provider_versions": {
-            "yeaher.erp": "0.1.1",
-            "supply-chain-planning.fulfillment-resolver": "2.0.0",
-            "supply-chain-planning.forecast-engine": "2.0.0",
-            "supply-chain-planning.classification-engine": "2.0.0",
-            "supply-chain-planning.action-router": "2.0.0",
-            "supply-chain-planning.replenishment-engine": "2.0.0",
-            "supply-chain-planning.clearance-engine": "2.0.0",
+            "yeaher.erp": "0.2.0",
+            "supply-chain-planning.fulfillment-resolver": "3.0.0",
+            "supply-chain-planning.forecast-engine": "3.0.0",
+            "supply-chain-planning.classification-engine": "3.0.0",
+            "supply-chain-planning.action-router": "3.0.0",
+            "supply-chain-planning.replenishment-engine": "3.0.0",
+            "supply-chain-planning.clearance-engine": "3.0.0",
+            "supply-chain-planning.level2-fulfillment": "3.0.0",
+            "supply-chain-planning.level2-forecast": "3.0.0",
+            "supply-chain-planning.level2-optimizer": "3.0.0",
         },
     }
 
@@ -244,6 +341,9 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
             "allowed_env": {
                 "api_key": "DEPLOY_OPENAI_API_KEY",
                 "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+                "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
+                "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
+                "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
             }
         },
         "credential_broker": {
@@ -277,8 +377,12 @@ def _mcp_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[str,
             "server_name": "local-dev-erp-read",
             "url": "http://127.0.0.1:18081/mcp",
             "allowed_tools": [
+                "query_fba_inventory_snapshot_v1",
+                "query_inventory_skus_by_threshold_v1",
                 "query_inventory_summary_v2",
                 "query_sku_boston_cohort_v1",
+                "query_sku_fulfillment_sales_profit_windows_v2",
+                "query_sku_identity_mapping_v1",
                 "query_sku_sales_profit_windows_v1",
                 "query_sku_upc_mapping",
             ],
@@ -292,7 +396,7 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "provider_id": "yeaher.erp",
         "package_name": "ebiz-adapter-erp",
-        "package_version": "0.1.1",
+        "package_version": "0.2.0",
         "record_digest": digests["ERP_RECORD_DIGEST"],
         "entry_point_group": "base_ai.provider_factories",
         "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
@@ -302,6 +406,10 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
             "inventory.get_total_snapshot",
             "sales_profit.get_boston_cohort",
             "sales_profit.get_sku_windows",
+            "inventory.list_skus_by_threshold",
+            "catalog.resolve_sku_identity_batch",
+            "inventory.get_fba_snapshot",
+            "sales_profit.get_sku_fulfillment_windows",
         ],
         "egress_hosts": [],
         "secret_names": [],
@@ -312,6 +420,12 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
                     "inventory.get_total_snapshot": "query_inventory_summary_v2",
                     "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
                     "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
+                    "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+                    "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
+                    "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+                    "sales_profit.get_sku_fulfillment_windows": (
+                        "query_sku_fulfillment_sales_profit_windows_v2"
+                    ),
                 }
             }
         },
@@ -358,7 +472,7 @@ def _environment(
         "LOCAL_FIXTURE_CONTRACT_ROOT": str(assets.fixture_contract_root),
         **digests,
         "MCP_PACKAGE_VERSION": "0.1.0",
-        "ERP_PACKAGE_VERSION": "0.1.1",
+        "ERP_PACKAGE_VERSION": "0.2.0",
         "OPENAI_ADAPTER_PACKAGE_VERSION": "0.1.1",
         "CREDENTIAL_BROKER_URL": "http://127.0.0.1:18082/v1/resolve",
         "MCP_ENDPOINT": "http://127.0.0.1:18081/mcp",

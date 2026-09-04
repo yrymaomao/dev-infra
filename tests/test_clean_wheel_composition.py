@@ -101,7 +101,7 @@ async def test_clean_wheels_start_three_real_providers_and_close_them(tmp_path: 
 
     assert len(agent_snapshot.plugins) == 1
     assert agent_snapshot.plugins[0].package_digest == planning.canonical_digest
-    assert len(agent_snapshot.providers) == 6
+    assert len(agent_snapshot.providers) == 9
     assert all(binding.plugin == agent_snapshot.plugins[0] for binding in agent_snapshot.providers)
     assert agent_registry.health_report.healthy is True
     assert len(composition.snapshot.plugins) == 3
@@ -214,7 +214,7 @@ def runtime_main(argv, *, provider_composition):
     )
     snapshot = asyncio.run(registry.load_startup())
     assert len(snapshot.plugins) == 1
-    assert len(snapshot.providers) == 6
+    assert len(snapshot.providers) == 9
     return 0
 
 

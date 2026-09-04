@@ -146,7 +146,7 @@ def test_local_inventory_as_of_rejects_noncanonical_governed_snapshots(
 
 def test_classification_connector_allowlist_matches_v4_workflow_inputs() -> None:
     operation = local_assets_module._CONNECTOR_FIELD_ALLOWLISTS[
-        "supply-chain-planning.classification-engine@2.0.0"
+        "supply-chain-planning.classification-engine@3.0.0"
     ]["supply_chain.classify_inventory"]
 
     assert set(operation) == {
@@ -831,13 +831,16 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     assert environment["SUPPLY_CHAIN_SNAPSHOT_TIME"] == "2026-08-31T06:00:00Z"
     targets = set(environment["APP_CONNECTOR_TARGETS"].split(","))
     assert targets == {
-        "yeaher.erp@0.1.1",
-        "supply-chain-planning.fulfillment-resolver@2.0.0",
-        "supply-chain-planning.forecast-engine@2.0.0",
-        "supply-chain-planning.classification-engine@2.0.0",
-        "supply-chain-planning.action-router@2.0.0",
-        "supply-chain-planning.replenishment-engine@2.0.0",
-        "supply-chain-planning.clearance-engine@2.0.0",
+        "yeaher.erp@0.2.0",
+        "supply-chain-planning.fulfillment-resolver@3.0.0",
+        "supply-chain-planning.forecast-engine@3.0.0",
+        "supply-chain-planning.classification-engine@3.0.0",
+        "supply-chain-planning.action-router@3.0.0",
+        "supply-chain-planning.replenishment-engine@3.0.0",
+        "supply-chain-planning.clearance-engine@3.0.0",
+        "supply-chain-planning.level2-fulfillment@3.0.0",
+        "supply-chain-planning.level2-forecast@3.0.0",
+        "supply-chain-planning.level2-optimizer@3.0.0",
     }
     field_policies = json.loads(environment["APP_CONNECTOR_FIELD_ALLOWLISTS"])
     assert set(field_policies) == targets
@@ -900,7 +903,7 @@ policy = PluginHostPolicy.model_validate_json(Path(__import__('sys').argv[1]).re
 registry = PluginRegistry(policy=policy, supported_api_version='ebizhub.runtime/v1')
 snapshot = asyncio.run(registry.load_startup())
 assert len(snapshot.plugins) == 2
-assert len(snapshot.providers) == 7
+assert len(snapshot.providers) == 10
 print('local-fixture-ready')
 """
     environment = dict(os.environ)

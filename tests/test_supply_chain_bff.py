@@ -241,16 +241,17 @@ async def test_runtime_client_forwards_only_structured_model_feedback() -> None:
     assert response["retryable"] is True
 
 
-def test_bff_schema_has_only_three_tables_and_no_plaintext_sku_column() -> None:
-    assert {table.name for table in Base.metadata.tables.values()} == {
+def test_bff_schema_preserves_v1_tables_and_no_plaintext_sku_column() -> None:
+    assert {
         "agent_execution_batch",
         "agent_execution_batch_item",
         "agent_execution_batch_activity",
-    }
+    } <= {table.name for table in Base.metadata.tables.values()}
     assert {table.schema for table in Base.metadata.tables.values()} == {SCHEMA}
-    item = Base.metadata.tables[f"{SCHEMA}.agent_execution_batch_item"]
-    assert "sku" not in item.columns
-    assert "sku_hash" in item.columns
+    for table in Base.metadata.tables.values():
+        assert "sku" not in table.columns
+        assert "skus" not in table.columns
+    assert "sku_hash" in Base.metadata.tables[f"{SCHEMA}.agent_execution_batch_item"].columns
 
 
 def test_activity_projection_never_exposes_runtime_payload_or_unknown_tool() -> None:
