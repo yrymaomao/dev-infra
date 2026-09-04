@@ -37,6 +37,20 @@ _WORKFLOW_RESOURCES = (
     "schemas/result.schema.yaml",
     "schemas/seasonality-analysis.schema.yaml",
     "schemas/skill.schema.yaml",
+    "schemas/issues/cohort_incomplete.schema.yaml",
+    "schemas/issues/cohort_insufficient.schema.yaml",
+    "schemas/issues/cohort_too_large.schema.yaml",
+    "schemas/issues/evidence_policy_blocked.schema.yaml",
+    "schemas/issues/fulfillment_unsupported.schema.yaml",
+    "schemas/issues/insufficient_history.schema.yaml",
+    "schemas/issues/no_inventory_snapshot.schema.yaml",
+    "schemas/issues/sales_windows_unavailable.schema.yaml",
+    "schemas/issues/sku_identity_conflict.schema.yaml",
+    "schemas/issues/sku_not_found.schema.yaml",
+    "schemas/issues/snapshot_conflict.schema.yaml",
+    "schemas/issues/snapshot_future.schema.yaml",
+    "schemas/issues/snapshot_incomplete.schema.yaml",
+    "schemas/issues/snapshot_stale.schema.yaml",
 )
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_CAPABILITY_PINS = frozenset(
