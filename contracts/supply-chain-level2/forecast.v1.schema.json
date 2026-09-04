@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ebizhub.example/supply-chain/level2/forecast.v1.schema.json",
+  "title": "Supply Chain deterministic 13-week forecast",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sku", "model_version", "data_cutoff", "feature_snapshot_ref", "weeks", "risk_flags"],
+  "properties": {
+    "schema_version": { "const": "supply-chain.forecast.v1" },
+    "sku": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "model_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "data_cutoff": { "type": "string", "format": "date-time" },
+    "feature_snapshot_ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "weeks": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["week_start", "units_mean", "revenue_mean", "variance", "p10", "p50", "p90"],
+        "properties": {
+          "week_start": { "type": "string", "format": "date" },
+          "units_mean": { "type": "number", "minimum": 0 },
+          "revenue_mean": { "type": "number", "minimum": 0 },
+          "variance": { "type": "number", "minimum": 0 },
+          "p10": { "type": "number", "minimum": 0 },
+          "p50": { "type": "number", "minimum": 0 },
+          "p90": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "risk_flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["SHORT_HISTORY", "NEW_PRODUCT", "INTERMITTENT_DEMAND", "PROMOTION_SIGNAL_USED", "HOLIDAY_SIGNAL_USED", "OPTIONAL_SIGNAL_UNAVAILABLE", "DATA_SNAPSHOT_LAGGED"] }
+    }
+  }
+}

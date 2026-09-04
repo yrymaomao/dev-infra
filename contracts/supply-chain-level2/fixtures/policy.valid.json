@@ -1,0 +1,19 @@
+{
+  "schema_version": "supply-chain.policy.v1",
+  "name": "default-us-policy",
+  "description": "Contract fixture",
+  "defaults": {
+    "fulfillment": "AUTO",
+    "mixed_ratio": null,
+    "production_days": 30,
+    "factory_to_sellable_days_fba": 21,
+    "factory_to_sellable_days_fbm": 14,
+    "moq": 100,
+    "order_multiple": 10,
+    "monthly_capital_cost_rate": null,
+    "monthly_storage_cost_fba": null,
+    "monthly_storage_cost_fbm": null,
+    "hold": null
+  },
+  "sku_rules": []
+}

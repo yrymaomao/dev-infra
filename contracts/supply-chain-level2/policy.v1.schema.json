@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ebizhub.example/supply-chain/level2/policy.v1.schema.json",
+  "title": "Supply Chain immutable policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "defaults", "sku_rules"],
+  "properties": {
+    "schema_version": { "const": "supply-chain.policy.v1" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "description": { "type": ["string", "null"], "maxLength": 2000 },
+    "defaults": { "$ref": "#/$defs/rule" },
+    "sku_rules": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/rule" },
+          {
+            "type": "object",
+            "required": ["sku"],
+            "properties": {
+              "sku": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^,\\s]+$" }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "ratio": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["fba", "fbm"],
+      "properties": {
+        "fba": { "type": "number", "minimum": 0, "maximum": 1 },
+        "fbm": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "hold": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["mode", "actions", "reason", "effective_at", "review_at", "expires_at"],
+      "properties": {
+        "mode": { "enum": ["ADVISORY", "HARD"] },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["REPLENISH", "MARKDOWN", "SELL_NOW", "LIQUIDATION_REVIEW"] }
+        },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "effective_at": { "type": "string", "format": "date-time" },
+        "review_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fulfillment", "mixed_ratio", "production_days", "factory_to_sellable_days_fba", "factory_to_sellable_days_fbm", "moq", "order_multiple", "monthly_capital_cost_rate", "monthly_storage_cost_fba", "monthly_storage_cost_fbm", "hold"],
+      "properties": {
+        "fulfillment": { "enum": ["AUTO", "FBA", "FBM", "MIXED"] },
+        "mixed_ratio": { "$ref": "#/$defs/ratio" },
+        "production_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 730 },
+        "factory_to_sellable_days_fba": { "type": ["integer", "null"], "minimum": 0, "maximum": 730 },
+        "factory_to_sellable_days_fbm": { "type": ["integer", "null"], "minimum": 0, "maximum": 730 },
+        "moq": { "type": ["integer", "null"], "minimum": 1 },
+        "order_multiple": { "type": ["integer", "null"], "minimum": 1 },
+        "monthly_capital_cost_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "monthly_storage_cost_fba": { "type": ["number", "null"], "minimum": 0 },
+        "monthly_storage_cost_fbm": { "type": ["number", "null"], "minimum": 0 },
+        "hold": { "$ref": "#/$defs/hold" }
+      }
+    }
+  }
+}

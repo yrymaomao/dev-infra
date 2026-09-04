@@ -1,0 +1,625 @@
+openapi: 3.1.0
+info:
+  title: eBizHub Supply Chain Expert Level 2 BFF
+  version: 0.1.4
+  description: Tenant-scoped, read/preview-only Supply Chain reporting APIs.
+servers: []
+security:
+  - bearerAuth: []
+paths:
+  /api/supply-chain/v2/selection-previews:
+    post:
+      operationId: createSelectionPreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelectionPreviewRequest'
+      responses:
+        '202':
+          description: Preview accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SelectionPreviewAccepted'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+  /api/supply-chain/v2/selection-previews/{preview_id}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewId'
+    get:
+      operationId: getSelectionPreview
+      responses:
+        '200':
+          description: Durable selection preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SelectionPreview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/supply-chain/v2/selection-imports:
+    post:
+      operationId: importSelectionCsv
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: CSV validation and preview accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SelectionPreviewAccepted'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
+  /api/supply-chain/v2/report-runs:
+    post:
+      operationId: createReportRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRunRequest'
+      responses:
+        '202':
+          description: Report accepted after selection freeze
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportRunAccepted'
+        '409':
+          description: Preview is not complete, confirmed, or immutable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
+  /api/supply-chain/v2/reports/{report_run_id}:
+    parameters:
+      - $ref: '#/components/parameters/ReportRunId'
+    get:
+      operationId: getReport
+      responses:
+        '200':
+          description: Report snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSnapshot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/supply-chain/v2/reports/{report_run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/ReportRunId'
+      - in: header
+        name: Last-Event-ID
+        required: false
+        schema:
+          type: string
+          maxLength: 8192
+    get:
+      operationId: streamReportEvents
+      responses:
+        '200':
+          description: Durable report activity stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '410':
+          description: Cursor expired; caller reloads report snapshot
+  /api/supply-chain/v2/reports/{report_run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ReportRunId'
+    post:
+      operationId: cancelReport
+      responses:
+        '202':
+          description: Cancellation requested
+  /api/supply-chain/v2/schedules:
+    get:
+      operationId: listSchedules
+      responses:
+        '200':
+          description: Tenant schedules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Schedule'
+    post:
+      operationId: createSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCreate'
+      responses:
+        '201':
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+  /api/supply-chain/v2/schedules/{schedule_id}:
+    parameters:
+      - $ref: '#/components/parameters/ScheduleId'
+    patch:
+      operationId: updateSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchedulePatch'
+      responses:
+        '200':
+          description: Schedule updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+  /api/supply-chain/v2/schedules/{schedule_id}/run-now:
+    parameters:
+      - $ref: '#/components/parameters/ScheduleId'
+    post:
+      operationId: runScheduleNow
+      responses:
+        '202':
+          description: Idempotent immediate run accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportRunAccepted'
+  /api/supply-chain/v2/policies/validate:
+    post:
+      operationId: validatePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyValidation'
+  /api/supply-chain/v2/policies:
+    get:
+      operationId: listPolicies
+      responses:
+        '200':
+          description: Immutable policy versions
+    post:
+      operationId: publishPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Immutable policy version published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyVersion'
+  /api/supply-chain/v2/policies/{version}:
+    parameters:
+      - $ref: '#/components/parameters/PolicyVersion'
+    get:
+      operationId: getPolicy
+      responses:
+        '200':
+          description: Policy document and metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyVersion'
+  /api/supply-chain/v2/policies/{version}/activate:
+    parameters:
+      - $ref: '#/components/parameters/PolicyVersion'
+    post:
+      operationId: activatePolicy
+      responses:
+        '200':
+          description: Active policy pointer updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyVersion'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    PreviewId:
+      in: path
+      name: preview_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ReportRunId:
+      in: path
+      name: report_run_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ScheduleId:
+      in: path
+      name: schedule_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PolicyVersion:
+      in: path
+      name: version
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    InvalidRequest:
+      description: Invalid controlled request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SafeError'
+    NotFound:
+      description: Tenant-owned resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SafeError'
+  schemas:
+    SafeError:
+      type: object
+      additionalProperties: false
+      required: [error_code, phase, category, retryable, safe_message, request_id]
+      properties:
+        error_code:
+          type: string
+        phase:
+          type: string
+        category:
+          type: string
+        retryable:
+          type: boolean
+        safe_message:
+          type: string
+        request_id:
+          type: [string, 'null']
+    InventorySelector:
+      type: object
+      additionalProperties: false
+      required: [quantity_metric, operator, threshold]
+      properties:
+        quantity_metric:
+          const: AVAILABLE_QUANTITY
+        operator:
+          const: GT
+        threshold:
+          type: integer
+          minimum: 0
+    SelectionPreviewRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [natural_language, client_request_id]
+          properties:
+            natural_language:
+              type: string
+              minLength: 1
+              maxLength: 2000
+            client_request_id:
+              type: string
+              minLength: 1
+              maxLength: 200
+        - type: object
+          additionalProperties: false
+          required: [selector, client_request_id]
+          properties:
+            selector:
+              $ref: '#/components/schemas/InventorySelector'
+            client_request_id:
+              type: string
+              minLength: 1
+              maxLength: 200
+    SelectionPreviewAccepted:
+      type: object
+      additionalProperties: false
+      required: [schema_version, preview_id, status]
+      properties:
+        schema_version:
+          const: supply-chain.selection-preview-accepted.v1
+        preview_id:
+          type: string
+          format: uuid
+        status:
+          const: PENDING
+    SelectionPreview:
+      type: object
+      additionalProperties: false
+      required: [schema_version, preview_id, status, selector, source_snapshot_id, snapshot_time, matched_count, sample_skus, warnings, ambiguities, expires_at, confirmed]
+      properties:
+        schema_version:
+          const: supply-chain.selection-preview.v1
+        preview_id:
+          type: string
+          format: uuid
+        status:
+          enum: [PENDING, READY, REJECTED, EXPIRED]
+        selector:
+          $ref: '#/components/schemas/InventorySelector'
+        source_snapshot_id:
+          type: [string, 'null']
+        snapshot_time:
+          type: [string, 'null']
+          format: date-time
+        matched_count:
+          type: integer
+          minimum: 0
+          maximum: 10001
+        sample_skus:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        ambiguities:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        confirmed:
+          type: boolean
+        row_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/CsvRowError'
+    CsvRowError:
+      type: object
+      additionalProperties: false
+      required: [row, code, message]
+      properties:
+        row:
+          type: integer
+          minimum: 2
+        sku:
+          type: [string, 'null']
+        code:
+          type: string
+        message:
+          type: string
+    ReportRunRequest:
+      type: object
+      additionalProperties: false
+      required: [selection_preview_id, policy_mode, client_request_id]
+      properties:
+        selection_preview_id:
+          type: string
+          format: uuid
+        policy_mode:
+          enum: [ACTIVE_AT_RUN, PINNED]
+        policy_version:
+          type: [integer, 'null']
+          minimum: 1
+        client_request_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+    ReportRunAccepted:
+      type: object
+      additionalProperties: false
+      required: [schema_version, report_run_id, status, sku_count, batch_count]
+      properties:
+        schema_version:
+          const: supply-chain.report-run-accepted.v1
+        report_run_id:
+          type: string
+          format: uuid
+        status:
+          const: ACCEPTED
+        sku_count:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        batch_count:
+          type: integer
+          minimum: 1
+          maximum: 50
+    ReportSnapshot:
+      type: object
+      additionalProperties: false
+      required: [schema_version, report_run_id, status, sku_count, batch_count, complete_count, blocked_count, failed_count, risk_flags, batches]
+      properties:
+        schema_version:
+          const: supply-chain.report.v1
+        report_run_id:
+          type: string
+          format: uuid
+        status:
+          enum: [ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
+        sku_count:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        batch_count:
+          type: integer
+          minimum: 1
+          maximum: 50
+        complete_count:
+          type: integer
+          minimum: 0
+        blocked_count:
+          type: integer
+          minimum: 0
+        failed_count:
+          type: integer
+          minimum: 0
+        risk_flags:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        batches:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [batch_id, batch_no, item_count, status, execution_id]
+            properties:
+              batch_id:
+                type: string
+                format: uuid
+              batch_no:
+                type: integer
+                minimum: 1
+              item_count:
+                type: integer
+                minimum: 1
+                maximum: 200
+              status:
+                type: string
+              execution_id:
+                type: [string, 'null']
+                format: uuid
+    ScheduleCreate:
+      type: object
+      additionalProperties: false
+      required: [name, timezone, weekday, local_time, selection_mode, policy_mode, active]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 64
+        weekday:
+          type: integer
+          minimum: 1
+          maximum: 7
+          default: 1
+        local_time:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          default: '12:00'
+        selection_mode:
+          enum: [DYNAMIC_SELECTOR, FIXED_SKUS]
+        selector:
+          oneOf:
+            - $ref: '#/components/schemas/InventorySelector'
+            - type: 'null'
+        fixed_skus:
+          type: array
+          maxItems: 10000
+          uniqueItems: true
+          items:
+            type: string
+        policy_mode:
+          enum: [ACTIVE_AT_RUN, PINNED]
+        policy_version:
+          type: [integer, 'null']
+          minimum: 1
+        active:
+          type: boolean
+    SchedulePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        timezone:
+          type: string
+        weekday:
+          type: integer
+          minimum: 1
+          maximum: 7
+        local_time:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        active:
+          type: boolean
+        policy_mode:
+          enum: [ACTIVE_AT_RUN, PINNED]
+        policy_version:
+          type: [integer, 'null']
+          minimum: 1
+    Schedule:
+      allOf:
+        - $ref: '#/components/schemas/ScheduleCreate'
+        - type: object
+          required: [schedule_id, next_fire_at_utc]
+          properties:
+            schedule_id:
+              type: string
+              format: uuid
+            next_fire_at_utc:
+              type: string
+              format: date-time
+    PolicyValidation:
+      type: object
+      additionalProperties: false
+      required: [valid, errors, warnings]
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    PolicyVersion:
+      type: object
+      additionalProperties: false
+      required: [version, digest, active, published_at, document]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        digest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        active:
+          type: boolean
+        published_at:
+          type: string
+          format: date-time
+        document:
+          type: object

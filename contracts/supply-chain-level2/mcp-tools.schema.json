@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ebizhub.example/supply-chain/level2/mcp-tools.schema.json",
+  "title": "Supply Chain Level 2 MCP contracts",
+  "$defs": {
+    "CanonicalSku": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^,\\s]+$"
+    },
+    "SkuBatch": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/CanonicalSku" }
+    },
+    "InventoryThresholdRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quantity_metric", "operator", "threshold", "sort", "page_size"],
+      "properties": {
+        "quantity_metric": { "const": "AVAILABLE_QUANTITY" },
+        "operator": { "enum": ["GT"] },
+        "threshold": { "type": "integer", "minimum": 0 },
+        "sort": { "const": "SKU_ASC" },
+        "page_size": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "source_snapshot_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+        "cursor": { "type": ["string", "null"], "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "InventoryThresholdResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source_snapshot_id", "snapshot_time", "items", "next_cursor"],
+      "properties": {
+        "schema_version": { "const": "supply-chain.inventory-threshold.v1" },
+        "source_snapshot_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "snapshot_time": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "available_quantity"],
+            "properties": {
+              "sku": { "$ref": "#/$defs/CanonicalSku" },
+              "available_quantity": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "next_cursor": { "type": ["string", "null"], "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "IdentityMappingRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skus"],
+      "properties": { "skus": { "$ref": "#/$defs/SkuBatch" } }
+    },
+    "IdentityMappingResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "items"],
+      "properties": {
+        "schema_version": { "const": "supply-chain.sku-identity-mapping.v1" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "status", "msku", "asins", "source", "valid_from", "valid_to"],
+            "properties": {
+              "sku": { "$ref": "#/$defs/CanonicalSku" },
+              "status": { "enum": ["FOUND", "NO_FOUND", "CONFLICT"] },
+              "msku": { "type": ["string", "null"], "maxLength": 128 },
+              "asins": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1, "maxLength": 32 }
+              },
+              "source": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "valid_from": { "type": ["string", "null"], "format": "date-time" },
+              "valid_to": { "type": ["string", "null"], "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    "FbaInventoryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skus"],
+      "properties": { "skus": { "$ref": "#/$defs/SkuBatch" } }
+    },
+    "FbaInventoryResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source_snapshot_id", "snapshot_time", "items"],
+      "properties": {
+        "schema_version": { "const": "supply-chain.fba-inventory-snapshot.v1" },
+        "source_snapshot_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "snapshot_time": { "type": "string", "format": "date-time" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "status", "msku", "fnsku", "asin", "available", "reserved", "inbound", "unfulfillable", "age_buckets", "monthly_storage_cost"],
+            "properties": {
+              "sku": { "$ref": "#/$defs/CanonicalSku" },
+              "status": { "enum": ["FOUND", "NO_SNAPSHOT"] },
+              "msku": { "type": ["string", "null"], "maxLength": 128 },
+              "fnsku": { "type": ["string", "null"], "maxLength": 128 },
+              "asin": { "type": ["string", "null"], "maxLength": 32 },
+              "available": { "type": ["integer", "null"], "minimum": 0 },
+              "reserved": { "type": ["integer", "null"], "minimum": 0 },
+              "inbound": { "type": ["integer", "null"], "minimum": 0 },
+              "unfulfillable": { "type": ["integer", "null"], "minimum": 0 },
+              "age_buckets": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["days_0_90", "days_91_180", "days_181_270", "days_271_365", "days_365_plus"],
+                "properties": {
+                  "days_0_90": { "type": ["integer", "null"], "minimum": 0 },
+                  "days_91_180": { "type": ["integer", "null"], "minimum": 0 },
+                  "days_181_270": { "type": ["integer", "null"], "minimum": 0 },
+                  "days_271_365": { "type": ["integer", "null"], "minimum": 0 },
+                  "days_365_plus": { "type": ["integer", "null"], "minimum": 0 }
+                }
+              },
+              "monthly_storage_cost": { "type": ["number", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "FulfillmentSalesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skus", "week_from", "week_to"],
+      "properties": {
+        "skus": { "$ref": "#/$defs/SkuBatch" },
+        "week_from": { "type": "string", "format": "date" },
+        "week_to": { "type": "string", "format": "date" }
+      }
+    },
+    "FulfillmentSalesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source_snapshot_id", "latest_complete_week", "items"],
+      "properties": {
+        "schema_version": { "const": "supply-chain.fulfillment-sales-profit-windows.v2" },
+        "source_snapshot_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "latest_complete_week": { "type": "string", "format": "date" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "business_week", "fulfillment", "units", "revenue", "profit", "returns", "discount"],
+            "properties": {
+              "sku": { "$ref": "#/$defs/CanonicalSku" },
+              "business_week": { "type": "string", "format": "date" },
+              "fulfillment": { "enum": ["FBA", "FBM", "UNKNOWN"] },
+              "units": { "type": "number" },
+              "revenue": { "type": "number" },
+              "profit": { "type": ["number", "null"] },
+              "returns": { "type": "number", "minimum": 0 },
+              "discount": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
