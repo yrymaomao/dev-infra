@@ -89,7 +89,7 @@ def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() 
     assert payload["idempotency_key"] == "supply-chain-report:00000000-0000-4000-8000-000000000003"
     assert payload["workflow"] == {
         "code": "inventory-supply-chain-batch-weekly",
-        "version": 1,
+        "version": 6,
     }
     assert "skus" not in str(payload)
     assert payload["inputs"] == {  # type: ignore[index]
@@ -125,6 +125,27 @@ def test_selection_result_is_fail_closed() -> None:
         },
     }
     assert _selection_result(valid)["rows"] == [{"sku": "SKU-1"}]
+    v13 = {
+        "status": "SUCCEEDED",
+        "outputs": {
+            "result": {
+                "tenant_id": "tenant-a",
+                "status": "COMPLETE",
+                "scope": {"preview_id": "00000000-0000-4000-8000-000000000001"},
+                "payload": {
+                    "schema_version": "supply-chain.inventory-threshold.v1",
+                    "source_snapshot_id": "snapshot-1",
+                    "snapshot_time": "2026-09-04T12:00:00Z",
+                    "items": [{"sku": "SKU-1", "available_quantity": 21}],
+                    "next_cursor": None,
+                },
+                "evidence": [],
+                "issues": [],
+            }
+        },
+    }
+    selector = {"quantity_metric": "AVAILABLE_QUANTITY", "operator": "GT", "threshold": 20}
+    assert _selection_result(v13, selector=selector)["rows"][0]["sku"] == "SKU-1"
     assert _timestamp("2026-09-04T12:00:00Z") == datetime(2026, 9, 4, 12, tzinfo=UTC)
     with pytest.raises(ValueError):
         _selection_result({"status": "SUCCEEDED", "outputs": {"result": {}}})

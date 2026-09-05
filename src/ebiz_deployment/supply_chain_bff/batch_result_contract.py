@@ -46,6 +46,17 @@ def validated_batch_output(
     if not isinstance(outputs, Mapping) or set(outputs) != {"result"}:
         raise BatchResultContractError("Runtime batch output is unavailable")
     result = outputs.get("result")
+    if isinstance(result, dict) and set(result) == {
+        "tenant_id",
+        "status",
+        "scope",
+        "payload",
+        "evidence",
+        "issues",
+    }:
+        if result.get("status") != "COMPLETE" or result.get("issues") != []:
+            raise BatchResultContractError("Runtime batch returned a blocked business result")
+        result = result.get("payload")
     if not isinstance(result, dict):
         raise BatchResultContractError("Runtime batch output is unavailable")
     common = {

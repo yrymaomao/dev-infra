@@ -73,6 +73,32 @@ def test_batch_output_accepts_an_inline_artifact_for_bff_materialization() -> No
     )
 
 
+def test_batch_output_accepts_v13_agent_result_envelope() -> None:
+    output = {
+        "result_artifact": _artifact(),
+        "item_count": 3,
+        "complete_count": 1,
+        "blocked_count": 1,
+        "failed_count": 1,
+        "summary_artifact_ref": None,
+        "risk_flags": ["SHORT_HISTORY"],
+    }
+    snapshot = {
+        "outputs": {
+            "result": {
+                "tenant_id": "tenant-a",
+                "status": "COMPLETE",
+                "scope": {"report_run_id": "11111111-1111-4111-8111-111111111111"},
+                "payload": output,
+                "evidence": [],
+                "issues": [],
+            }
+        }
+    }
+
+    assert validated_batch_output(snapshot, expected_item_count=3) == output
+
+
 def test_batch_output_rejects_mixed_inline_and_external_artifact_identity() -> None:
     output = {
         "result_artifact": _artifact(),

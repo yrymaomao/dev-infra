@@ -246,7 +246,7 @@ class Level2Worker:
                 respond_async=self._settings.async_start_enabled,
                 payload={
                     "agent": {"id": "inventory-supply-chain", "version": 6},
-                    "workflow": {"code": "inventory-selection-request-planner", "version": 1},
+                    "workflow": {"code": "inventory-selection-request-planner", "version": 6},
                     "inputs": {
                         "natural_language": natural_language,
                         "request_time": claim.requested_at.isoformat(),
@@ -268,7 +268,7 @@ class Level2Worker:
                 respond_async=self._settings.async_start_enabled,
                 payload={
                     "agent": {"id": "inventory-supply-chain", "version": 6},
-                    "workflow": {"code": "inventory-selection-discovery", "version": 1},
+                    "workflow": {"code": "inventory-selection-discovery", "version": 6},
                     "inputs": {
                         "preview_id": str(claim.preview_id),
                         "selector": selector,
@@ -282,7 +282,7 @@ class Level2Worker:
                 },
             )
             snapshot = await self._terminal_snapshot(claim.tenant_id, started)
-            page = _selection_result(snapshot)
+            page = _selection_result(snapshot, selector=selector)
             pages.append(page)
             source_snapshot_id = cast(str, page["source_snapshot_id"])
             cursor = cast(str | None, page["next_cursor"])
@@ -395,7 +395,7 @@ def _batch_runtime_payload(
     week_from = week_to - timedelta(weeks=259)
     return {
         "agent": {"id": "inventory-supply-chain", "version": 6},
-        "workflow": {"code": "inventory-supply-chain-batch-weekly", "version": 1},
+        "workflow": {"code": "inventory-supply-chain-batch-weekly", "version": 6},
         "inputs": {
             "report_run_id": str(claim.report_run_id),
             "batch_id": str(claim.batch_id),
@@ -412,18 +412,39 @@ def _batch_runtime_payload(
     }
 
 
-def _selection_result(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _selection_result(
+    snapshot: dict[str, Any],
+    *,
+    selector: dict[str, object] | None = None,
+) -> dict[str, Any]:
     if snapshot.get("status") != "SUCCEEDED":
         raise ValueError("selection workflow did not succeed")
     outputs = snapshot.get("outputs")
     result = outputs.get("result") if isinstance(outputs, dict) else None
+    result = _agent_result_payload(result)
     if not isinstance(result, dict):
         raise ValueError("selection workflow omitted result")
-    selector = result.get("selector")
+    if selector is not None and set(result) == {
+        "schema_version",
+        "source_snapshot_id",
+        "snapshot_time",
+        "items",
+        "next_cursor",
+    }:
+        result = {
+            "selector": selector,
+            "source_snapshot_id": result["source_snapshot_id"],
+            "snapshot_time": result["snapshot_time"],
+            "rows": result["items"],
+            "warnings": [],
+            "ambiguities": [],
+            "next_cursor": result["next_cursor"],
+        }
+    normalized_selector = result.get("selector")
     snapshot_id = result.get("source_snapshot_id")
     snapshot_time = result.get("snapshot_time")
     rows = result.get("rows")
-    if not isinstance(selector, dict):
+    if not isinstance(normalized_selector, dict):
         raise ValueError("selection workflow omitted selector")
     if not isinstance(snapshot_id, str) or not snapshot_id:
         raise ValueError("selection workflow omitted source_snapshot_id")
@@ -443,7 +464,7 @@ def _selection_result(snapshot: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("selection workflow cursor is invalid")
     return {
-        "selector": selector,
+        "selector": normalized_selector,
         "source_snapshot_id": snapshot_id,
         "snapshot_time": snapshot_time,
         "rows": rows,
@@ -514,6 +535,7 @@ def _planner_result(snapshot: dict[str, Any]) -> tuple[dict[str, object], list[s
         raise ValueError("selection planner did not succeed")
     outputs = snapshot.get("outputs")
     result = outputs.get("result") if isinstance(outputs, dict) else None
+    result = _agent_result_payload(result)
     if not isinstance(result, dict) or set(result) != {"status", "selector", "ambiguities"}:
         raise ValueError("selection planner output is invalid")
     ambiguities = result.get("ambiguities")
@@ -528,6 +550,17 @@ def _planner_result(snapshot: dict[str, Any]) -> tuple[dict[str, object], list[s
         raise ValueError("selection request is ambiguous or unsupported")
     selector = InventorySelector.model_validate(result.get("selector")).model_dump(mode="json")
     return selector, cast(list[str], ambiguities)
+
+
+def _agent_result_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    envelope_fields = {"tenant_id", "status", "scope", "payload", "evidence", "issues"}
+    if set(value) != envelope_fields:
+        return value
+    if value.get("status") != "COMPLETE" or value.get("issues") != []:
+        raise ValueError("workflow returned a blocked business result")
+    return value.get("payload")
 
 
 def _timestamp(raw: object) -> datetime:
