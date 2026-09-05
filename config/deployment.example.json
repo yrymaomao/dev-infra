@@ -148,7 +148,7 @@
     "streaming_bff": {
       "version": "0.1.4",
       "schema": "supply_chain_bff",
-      "migration_head": "0002_supply_chain_level2",
+      "migration_head": "0003_batch_selection_payload",
       "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key", "supply_chain_bff_rabbitmq_url"],
       "features": {"async_start": false, "runtime_stream": false, "activity_ui": false, "model_error_polish": false, "level2": false, "level2_mq": false},
       "limits": {"max_batch_size": 200, "tenant_dispatch_concurrency": 4, "runtime_subscription_limit": 200, "max_selected_skus": 10000, "bulk_batch_size": 200, "tenant_bulk_concurrency": 2, "global_bulk_concurrency": 8},

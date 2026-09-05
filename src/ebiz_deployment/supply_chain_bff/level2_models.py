@@ -242,6 +242,8 @@ class ReportBatch(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     runtime_execution_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     runtime_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    selection_payload_ref: Mapped[str | None] = mapped_column(Text)
+    selection_payload_hash: Mapped[str | None] = mapped_column(String(64))
     result_ref: Mapped[str | None] = mapped_column(Text)
     result_hash: Mapped[str | None] = mapped_column(String(64))
     safe_error: Mapped[dict[str, object] | None] = mapped_column(JSONB)

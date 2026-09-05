@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -390,6 +390,9 @@ class Level2Worker:
 def _batch_runtime_payload(
     claim: ClaimedReportBatch,
 ) -> dict[str, object]:
+    cutoff_date = claim.data_cutoff.date()
+    week_to = cutoff_date - timedelta(days=cutoff_date.weekday() + 7)
+    week_from = week_to - timedelta(weeks=259)
     return {
         "agent": {"id": "inventory-supply-chain", "version": 6},
         "workflow": {"code": "inventory-supply-chain-batch-weekly", "version": 1},
@@ -401,6 +404,8 @@ def _batch_runtime_payload(
             "item_count": claim.item_count,
             "policy_snapshot_ref": claim.policy_snapshot_ref,
             "data_cutoff": claim.data_cutoff.isoformat().replace("+00:00", "Z"),
+            "week_from": week_from.isoformat(),
+            "week_to": week_to.isoformat(),
             "summary_enabled": True,
         },
         "idempotency_key": f"supply-chain-report:{claim.batch_id}",

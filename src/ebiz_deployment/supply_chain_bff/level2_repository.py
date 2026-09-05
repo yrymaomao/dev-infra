@@ -544,13 +544,24 @@ class Level2Repository:
             raise ResourceNotReady("selection must contain between 1 and 10000 SKU")
         if policy is None:
             raise ResourceNotReady("an active or pinned policy is required")
+        selection_document = await self._load(tenant_id, preview.payload_ref, preview.payload_hash)
+        selection_rows = _normalized_batch_selection_rows(selection_document)
+        if len(selection_rows) != preview.matched_count:
+            raise ValueError("selection artifact count does not match the frozen preview")
         batch_count = (preview.matched_count + 199) // 200
         report_id = uuid4()
         report_batches: list[ReportBatch] = []
         outbox: list[ReportOutbox] = []
+        staged_batch_selections: list[Any] = []
         for index in range(batch_count):
             batch_id = uuid4()
             item_count = min(200, preview.matched_count - index * 200)
+            batch_rows = selection_rows[index * 200 : index * 200 + item_count]
+            staged_selection = await self._stage(
+                tenant_id,
+                {"rows": batch_rows, "skus": [row["sku"] for row in batch_rows]},
+            )
+            staged_batch_selections.append(staged_selection)
             report_batches.append(
                 ReportBatch(
                     id=batch_id,
@@ -559,6 +570,8 @@ class Level2Repository:
                     batch_no=index + 1,
                     item_offset=index * 200,
                     item_count=item_count,
+                    selection_payload_ref=staged_selection.payload_ref,
+                    selection_payload_hash=staged_selection.payload_hash,
                     status="QUEUED",
                     next_attempt_at=now,
                 )
@@ -657,6 +670,8 @@ class Level2Repository:
             if existing.selection_preview_id != request.selection_preview_id:
                 raise ResourceConflict("client_request_id was already used for another report")
             return CreatedReport(existing.id, existing.sku_count, existing.batch_count)
+        for staged_selection in staged_batch_selections:
+            await self._commit_staged(tenant_id, staged_selection)
         return CreatedReport(report_id, preview.matched_count, batch_count)
 
     async def get_report(
@@ -1100,7 +1115,7 @@ class Level2Repository:
                     SelectionPreview.id == report.selection_preview_id,
                 )
             )
-            if preview is None or preview.payload_ref is None:
+            if preview is None or batch.selection_payload_ref is None:
                 raise ValueError("report selection payload is unavailable")
             if report.policy_snapshot_ref is None or report.data_cutoff is None:
                 raise ValueError("report policy or data cutoff is unavailable")
@@ -1119,7 +1134,7 @@ class Level2Repository:
                 batch_no=batch.batch_no,
                 item_offset=batch.item_offset,
                 item_count=batch.item_count,
-                selection_payload_ref=preview.payload_ref,
+                selection_payload_ref=batch.selection_payload_ref,
                 policy_snapshot_ref=report.policy_snapshot_ref,
                 data_cutoff=report.data_cutoff,
                 lease_owner=worker_id,
@@ -2036,6 +2051,37 @@ class Level2Repository:
         if not isinstance(value, dict):
             raise ValueError("payload contract is invalid")
         return value
+
+
+def _normalized_batch_selection_rows(document: Mapping[str, object]) -> list[dict[str, object]]:
+    raw_rows = document.get("rows")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        raise ValueError("selection artifact rows are unavailable")
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping):
+            raise ValueError("selection artifact row is invalid")
+        sku = raw.get("sku")
+        if not isinstance(sku, str) or not sku or sku in seen:
+            raise ValueError("selection artifact requires unique canonical SKU values")
+        seen.add(sku)
+        mode = raw.get("fulfillment_mode")
+        if mode is not None and mode not in {"AUTO", "FBA", "FBM", "MIXED"}:
+            raise ValueError("selection artifact fulfillment mode is invalid")
+        fba = raw.get("fba_ratio")
+        fbm = raw.get("fbm_ratio")
+        ratio: dict[str, object] | None = None
+        if fba is not None or fbm is not None:
+            if not isinstance(fba, (int, float)) or isinstance(fba, bool):
+                raise ValueError("selection artifact FBA ratio is invalid")
+            if not isinstance(fbm, (int, float)) or isinstance(fbm, bool):
+                raise ValueError("selection artifact FBM ratio is invalid")
+            if mode != "MIXED" or abs(float(fba) + float(fbm) - 1.0) > 1e-9:
+                raise ValueError("selection artifact MIXED ratios are invalid")
+            ratio = {"fba": float(fba), "fbm": float(fbm)}
+        normalized.append({"sku": sku, "csv_mode": mode, "csv_mixed_ratio": ratio})
+    return normalized
 
 
 def next_weekly_fire(schedule: ScheduleCreate, *, after: datetime) -> datetime:

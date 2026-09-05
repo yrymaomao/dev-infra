@@ -100,6 +100,8 @@ def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() 
         "item_count": 200,
         "policy_snapshot_ref": "payload://policy/v1",
         "data_cutoff": "2026-09-04T12:00:00Z",
+        "week_from": "2021-09-06",
+        "week_to": "2026-08-24",
         "summary_enabled": True,
     }
 

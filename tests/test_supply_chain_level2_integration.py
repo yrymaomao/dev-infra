@@ -122,6 +122,21 @@ async def test_10000_skus_freeze_to_exactly_50_durable_idempotent_batches(
     assert outbox_count == 50
     assert [batch.item_offset for batch in batches] == list(range(0, 10_000, 200))
     assert {batch.item_count for batch in batches} == {200}
+    assert all(batch.selection_payload_ref and batch.selection_payload_hash for batch in batches)
+    assert len({batch.selection_payload_ref for batch in batches}) == 50
+    first_selection = await repository._load(  # noqa: SLF001 - integration boundary proof
+        tenant_id,
+        batches[0].selection_payload_ref,
+        batches[0].selection_payload_hash,
+    )
+    last_selection = await repository._load(  # noqa: SLF001 - integration boundary proof
+        tenant_id,
+        batches[-1].selection_payload_ref,
+        batches[-1].selection_payload_hash,
+    )
+    assert len(first_selection["rows"]) == len(last_selection["rows"]) == 200
+    assert first_selection["skus"][0] == "SKU-00000"
+    assert last_selection["skus"][-1] == "SKU-09999"
 
     snapshot = await repository.get_report(
         tenant_id=tenant_id,
