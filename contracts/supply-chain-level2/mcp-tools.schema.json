@@ -154,7 +154,7 @@
             "required": ["sku", "status", "msku", "fnsku", "asin", "available", "reserved", "inbound", "unfulfillable", "age_buckets", "monthly_storage_cost"],
             "properties": {
               "sku": { "$ref": "#/$defs/CanonicalSku" },
-              "status": { "enum": ["FOUND", "NO_SNAPSHOT"] },
+              "status": { "enum": ["FOUND", "NO_SNAPSHOT", "SNAPSHOT_INCOMPLETE", "SNAPSHOT_CONFLICT"] },
               "msku": { "type": ["string", "null"], "maxLength": 128 },
               "fnsku": { "type": ["string", "null"], "maxLength": 128 },
               "asin": { "type": ["string", "null"], "maxLength": 32 },
