@@ -77,6 +77,7 @@ def test_openapi_declares_all_level2_resources() -> None:
         "/api/supply-chain/v2/reports",
         "/api/supply-chain/v2/reports/{report_run_id}",
         "/api/supply-chain/v2/reports/{report_run_id}/events",
+        "/api/supply-chain/v2/reports/{report_run_id}/export.csv",
         "/api/supply-chain/v2/reports/{report_run_id}/cancel",
         "/api/supply-chain/v2/schedules",
         "/api/supply-chain/v2/schedules/{schedule_id}",

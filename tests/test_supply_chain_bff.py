@@ -22,6 +22,7 @@ from ebiz_deployment.supply_chain_bff.contracts import BatchCreateRequest
 from ebiz_deployment.supply_chain_bff.cursor import CursorExpired, CursorInvalid, CursorSigner
 from ebiz_deployment.supply_chain_bff.dispatcher import BatchCoordinator
 from ebiz_deployment.supply_chain_bff.eta import EtaEstimator, EtaProfile
+from ebiz_deployment.supply_chain_bff.migration import upgrade
 from ebiz_deployment.supply_chain_bff.models import SCHEMA, Base, BatchItem
 from ebiz_deployment.supply_chain_bff.repository import BatchRepository
 from ebiz_deployment.supply_chain_bff.result_contract import (
@@ -504,6 +505,7 @@ async def test_persistent_queue_replays_create_and_recovers_expired_lease() -> N
         pytest.skip("SUPPLY_CHAIN_BFF_TEST_DATABASE_URL is not configured")
     if not str(make_url(database_url).database).endswith("_test"):
         pytest.fail("refusing destructive queue test outside a *_test database")
+    await asyncio.to_thread(upgrade, database_url)
     engine = create_async_engine(database_url)
     async with engine.begin() as connection:
         await connection.execute(

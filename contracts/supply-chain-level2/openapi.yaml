@@ -54,6 +54,10 @@ paths:
                 file:
                   type: string
                   format: binary
+                client_request_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
       responses:
         '202':
           description: CSV validation and preview accepted
@@ -157,6 +161,26 @@ paths:
                 type: string
         '410':
           description: Cursor expired; caller reloads report snapshot
+  /api/supply-chain/v2/reports/{report_run_id}/export.csv:
+    parameters:
+      - $ref: '#/components/parameters/ReportRunId'
+    get:
+      operationId: exportReportCsv
+      responses:
+        '200':
+          description: Complete tenant-owned report exported as UTF-8 CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Report has not reached a terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeError'
   /api/supply-chain/v2/reports/{report_run_id}/cancel:
     parameters:
       - $ref: '#/components/parameters/ReportRunId'

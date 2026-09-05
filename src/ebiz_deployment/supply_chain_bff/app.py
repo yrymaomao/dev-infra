@@ -36,6 +36,7 @@ from .level2_contracts import (
 from .level2_repository import Level2Repository, ResourceConflict, ResourceNotReady
 from .level2_worker import Level2Worker
 from .policy import PolicyInvalid, validate_policy
+from .report_export import report_export_header, report_export_row
 from .repository import BatchRepository
 from .runtime_client import RuntimeClient, RuntimeRequestError
 from .selection_csv import MAX_CSV_BYTES, CsvFileError, parse_selection_csv
@@ -412,6 +413,58 @@ def create_app(container: BffContainer) -> FastAPI:
         repository: Level2Repository = Depends(level2),
     ) -> list[dict[str, object]]:
         return await repository.list_reports(tenant_id=current.tenant_id, limit=limit)
+
+    @app.get("/api/supply-chain/v2/reports/{report_run_id}/export.csv")
+    async def export_report(
+        report_run_id: UUID,
+        current: Principal = Depends(principal),
+        repository: Level2Repository = Depends(level2),
+    ) -> StreamingResponse:
+        first_page = await repository.get_report(
+            tenant_id=current.tenant_id,
+            report_run_id=report_run_id,
+            item_offset=0,
+            item_limit=200,
+        )
+        if first_page is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        if first_page["status"] not in _TERMINAL_REPORT:
+            raise ResourceNotReady(
+                "report export is available after the report reaches terminal state"
+            )
+
+        async def generate_report_csv() -> AsyncIterator[str]:
+            yield report_export_header()
+            page = first_page
+            current_offset = 0
+            while True:
+                for item in page["items"]:
+                    if isinstance(item, Mapping):
+                        yield report_export_row(item)
+                next_offset = page["next_item_offset"]
+                if next_offset is None:
+                    return
+                if not isinstance(next_offset, int) or next_offset <= current_offset:
+                    raise RuntimeError("report pagination did not advance")
+                current_offset = next_offset
+                next_page = await repository.get_report(
+                    tenant_id=current.tenant_id,
+                    report_run_id=report_run_id,
+                    item_offset=current_offset,
+                    item_limit=200,
+                )
+                if next_page is None or next_page["status"] not in _TERMINAL_REPORT:
+                    raise RuntimeError("terminal report changed during export")
+                page = next_page
+
+        return StreamingResponse(
+            generate_report_csv(),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (f'attachment; filename="supply-chain-{report_run_id}.csv"'),
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/api/supply-chain/v2/reports/{report_run_id}/events")
     async def stream_report_events(
