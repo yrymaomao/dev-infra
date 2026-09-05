@@ -18,6 +18,11 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from ebiz_runtime_contracts.artifacts import (
+    RegistryImportArtifactGraph,
+    RegistryImportPublicationPlan,
+    artifact_digest,
+)
 
 from .attestation import Descriptor, build_attestation_environment
 from .config import DeploymentCompositionConfig
@@ -298,9 +303,11 @@ def _release(digests: dict[str, str]) -> dict[str, Any]:
         "agent_distribution": "ebiz-agent-inventory-supply-chain",
         "agent_distribution_version": "4.1.0",
         "agent_record_digest": digests["SUPPLY_CHAIN_AGENT_RECORD_DIGEST"],
-        "workflow_code": "inventory-supply-chain-daily",
+        "workflow_code": "inventory-supply-chain-batch-weekly",
         "workflow_version": 6,
         "workflow_artifact_digest": digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"],
+        "registry_import_graph_digest": digests["SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST"],
+        "registry_import_plan_digest": digests["SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST"],
         "capability_sets": [
             {
                 "set_id": "inventory.core",
@@ -394,8 +401,8 @@ def _mcp_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[str,
             "server_name": "local-dev-erp-read",
             "url": "http://127.0.0.1:18081/mcp",
             "allowed_tools": [
-                "query_inventory_batch_snapshot_v1",
                 "query_fba_inventory_snapshot_v1",
+                "query_inventory_batch_snapshot_v1",
                 "query_inventory_skus_by_threshold_v1",
                 "query_inventory_summary_v2",
                 "query_sku_boston_cohort_v1",
@@ -617,11 +624,24 @@ def _installed_digests() -> dict[str, str]:
     workflow = Path(
         str(
             distribution.locate_file(
-                "inventory_supply_chain_agent/workflows/inventory-supply-chain-daily.yaml"
+                "inventory_supply_chain_agent/workflows/inventory-supply-chain-batch-weekly.yaml"
             )
         )
     )
     digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"] = hashlib.sha256(workflow.read_bytes()).hexdigest()
+    package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent")))
+    graph = RegistryImportArtifactGraph.model_validate_json(
+        package_root.joinpath("generated-v6/registry-import-artifact-graph.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    plan = RegistryImportPublicationPlan.model_validate_json(
+        package_root.joinpath("generated-v6/registry-import-publication-plan.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    digests["SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST"] = artifact_digest(graph)
+    digests["SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST"] = artifact_digest(plan)
     return digests
 
 

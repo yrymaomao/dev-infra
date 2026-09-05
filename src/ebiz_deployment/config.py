@@ -24,8 +24,8 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
-    "query_inventory_batch_snapshot_v1",
     "query_fba_inventory_snapshot_v1",
+    "query_inventory_batch_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
     "query_sku_boston_cohort_v1",
@@ -277,9 +277,11 @@ class SupplyChainReleaseConfig(StrictModel):
     agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
     agent_distribution_version: str = Field(pattern=r"^4\.1\.0$")
     agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
-    workflow_code: str = Field(pattern=r"^inventory-supply-chain-daily$")
+    workflow_code: str = Field(pattern=r"^inventory-supply-chain-batch-weekly$")
     workflow_version: int = Field(ge=6, le=6)
     workflow_artifact_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    registry_import_graph_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    registry_import_plan_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
     streaming_bff: StreamingBffReleaseConfig
     provider_versions: dict[str, str] = Field(min_length=11, max_length=11)

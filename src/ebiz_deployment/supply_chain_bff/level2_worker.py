@@ -263,23 +263,17 @@ class Level2Worker:
         source_snapshot_id: str | None = None
         cursor: str | None = None
         for page_no in range(51):
+            execution_request = _selection_runtime_payload(
+                preview_id=claim.preview_id,
+                selector=selector,
+                page_no=page_no,
+                source_snapshot_id=source_snapshot_id,
+                cursor=cursor,
+            )
             started = await self._runtime.start(
                 authorization=self._authorization_for_tenant(claim.tenant_id),
                 respond_async=self._settings.async_start_enabled,
-                payload={
-                    "agent": {"id": "inventory-supply-chain", "version": 6},
-                    "workflow": {"code": "inventory-selection-discovery", "version": 6},
-                    "inputs": {
-                        "preview_id": str(claim.preview_id),
-                        "selector": selector,
-                        "page_size": 200,
-                        "source_snapshot_id": source_snapshot_id,
-                        "cursor": cursor,
-                    },
-                    "idempotency_key": (
-                        f"supply-chain-selection-discovery:{claim.preview_id}:page:{page_no}"
-                    ),
-                },
+                payload=execution_request,
             )
             snapshot = await self._terminal_snapshot(claim.tenant_id, started)
             page = _selection_result(snapshot, selector=selector)
@@ -409,6 +403,44 @@ def _batch_runtime_payload(
             "summary_enabled": True,
         },
         "idempotency_key": f"supply-chain-report:{claim.batch_id}",
+    }
+
+
+def _selection_runtime_payload(
+    *,
+    preview_id: UUID,
+    selector: dict[str, object],
+    page_no: int,
+    source_snapshot_id: str | None,
+    cursor: str | None,
+) -> dict[str, object]:
+    quantity_metric = selector.get("quantity_metric")
+    operator = selector.get("operator")
+    threshold = selector.get("threshold")
+    if quantity_metric != "AVAILABLE_QUANTITY" or operator != "GT":
+        raise ValueError("selection selector is unsupported")
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
+        raise ValueError("selection threshold is invalid")
+    inputs: dict[str, object] = {
+        "preview_id": str(preview_id),
+        "quantity_metric": quantity_metric,
+        "operator": operator,
+        "threshold": threshold,
+        "sort": "SKU_ASC",
+        "page_size": 200,
+    }
+    workflow_code = "inventory-selection-discovery"
+    if source_snapshot_id is not None or cursor is not None:
+        if not source_snapshot_id or not cursor:
+            raise ValueError("selection continuation requires snapshot and cursor")
+        workflow_code = "inventory-selection-discovery-continuation"
+        inputs["source_snapshot_id"] = source_snapshot_id
+        inputs["cursor"] = cursor
+    return {
+        "agent": {"id": "inventory-supply-chain", "version": 6},
+        "workflow": {"code": workflow_code, "version": 6},
+        "inputs": inputs,
+        "idempotency_key": f"supply-chain-selection-discovery:{preview_id}:page:{page_no}",
     }
 
 

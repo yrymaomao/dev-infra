@@ -6,7 +6,9 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from importlib import metadata
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 import httpx
@@ -22,6 +24,11 @@ from agent_runtime.registry.capability_manifest import (
     load_capability_publication,
 )
 from ebiz_runtime_contracts import canonical_json_bytes
+from ebiz_runtime_contracts.artifacts import (
+    RegistryImportArtifactGraph,
+    RegistryImportPublicationPlan,
+    artifact_digest,
+)
 from workflow_runtime.authoring.resources import load_resource_bundle
 
 from .attestation import (
@@ -66,6 +73,82 @@ _EXPECTED_CAPABILITY_PINS = frozenset(
         ("supply_chain.plan_batch", 1),
     }
 )
+_EXPECTED_WORKFLOW_PINS = frozenset(
+    {
+        ("inventory-selection-discovery", 6),
+        ("inventory-selection-discovery-continuation", 6),
+        ("inventory-selection-request-planner", 6),
+        ("inventory-supply-chain-batch-weekly", 6),
+    }
+)
+
+
+def resolve_registry_import_release(
+    release: SupplyChainReleaseConfig,
+) -> tuple[Path, Path]:
+    """Resolve and attest the installed v6 compilation and generated output root."""
+
+    distribution = metadata.distribution(release.agent_distribution)
+    if distribution.version != release.agent_distribution_version:
+        raise ValueError("installed Supply Chain Agent version differs from the release pin")
+    package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent"))).resolve(
+        strict=True
+    )
+    compilation = package_root.joinpath("registry-import.yaml").resolve(strict=True)
+    generated = package_root.joinpath("generated-v6").resolve(strict=True)
+    plan = RegistryImportPublicationPlan.model_validate_json(
+        generated.joinpath("registry-import-publication-plan.json").read_text(encoding="utf-8")
+    )
+    graph = RegistryImportArtifactGraph.model_validate_json(
+        generated.joinpath("registry-import-artifact-graph.json").read_text(encoding="utf-8")
+    )
+    if artifact_digest(plan) != release.registry_import_plan_digest:
+        raise ValueError("installed Registry-import Publication Plan differs from the release pin")
+    if artifact_digest(graph) != release.registry_import_graph_digest:
+        raise ValueError("installed Registry-import Artifact Graph differs from the release pin")
+    workflow_pins = frozenset((item.code, item.version) for item in plan.workflows)
+    if (
+        plan.agent_id != release.agent_id
+        or plan.registry_version != release.agent_version
+        or plan.manifest_version != release.agent_distribution_version
+        or tuple(plan.primary_workflow) != (release.workflow_code, release.workflow_version)
+        or workflow_pins != _EXPECTED_WORKFLOW_PINS
+        or any(item.ir_schema != 4 or item.compiler_version != "1.3.0" for item in plan.workflows)
+    ):
+        raise ValueError("installed Registry-import Plan differs from the reviewed v6 release")
+    workflow = package_root.joinpath("workflows", f"{release.workflow_code}.yaml")
+    if hashlib.sha256(workflow.read_bytes()).hexdigest() != release.workflow_artifact_digest:
+        raise ValueError("primary Workflow source differs from the release pin")
+    return compilation, generated
+
+
+def build_registry_import_publish_command(
+    release: SupplyChainReleaseConfig,
+    *,
+    action: Literal["publish", "activate"],
+    tenant_id: str,
+    actor_id: str,
+) -> tuple[str, ...]:
+    """Build the Runtime 0.1.6 multi-Workflow publisher command from attested wheel assets."""
+
+    if not tenant_id.strip() or not actor_id.strip():
+        raise ValueError("publisher tenant and actor are required")
+    UUID(actor_id)
+    compilation, generated = resolve_registry_import_release(release)
+    return (
+        "python",
+        "-m",
+        "agent_runtime.cli.registry_import_publisher",
+        action,
+        "--compilation",
+        str(compilation),
+        "--out",
+        generated.name,
+        "--tenant-id",
+        tenant_id,
+        "--actor-id",
+        actor_id,
+    )
 
 
 def load_public_capability_catalogs(
@@ -295,7 +378,7 @@ def build_workflow_draft_payload(
     """Build and validate Runtime's v4 Workflow draft payload from attested resources."""
 
     root = agent_root.resolve(strict=True)
-    source_path = root / "workflows/inventory-supply-chain-daily.yaml"
+    source_path = root / "workflows" / f"{release.workflow_code}.yaml"
     source = source_path.read_text(encoding="utf-8")
     if hashlib.sha256(source_path.read_bytes()).hexdigest() != release.workflow_artifact_digest:
         raise ValueError("Workflow source digest differs from the exact release pin")
@@ -568,9 +651,11 @@ __all__ = [
     "build_agent_draft_payload",
     "build_capability_publish_commands",
     "build_local_fixture_publish_command",
+    "build_registry_import_publish_command",
     "build_workflow_draft_payload",
     "load_public_capability_catalogs",
     "publish_workflow_and_agent",
+    "resolve_registry_import_release",
     "verify_installed_release",
     "write_base_ai_provider_attestation",
 ]

@@ -564,6 +564,8 @@ def test_mcp_fixture_uses_the_generated_snapshot_for_freshness_across_a_date_rol
             "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": "6" * 64,
             "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": "7" * 64,
             "SUPPLY_CHAIN_WORKFLOW_DIGEST": "8" * 64,
+            "SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST": "9" * 64,
+            "SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST": "a" * 64,
         },
     )
     assets = write_local_dev_assets(
@@ -841,6 +843,7 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
         "supply-chain-planning.level2-fulfillment@3.0.0",
         "supply-chain-planning.level2-forecast@3.0.0",
         "supply-chain-planning.level2-optimizer@3.0.0",
+        "supply-chain-planning.level2-batch@3.0.0",
     }
     field_policies = json.loads(environment["APP_CONNECTOR_FIELD_ALLOWLISTS"])
     assert set(field_policies) == targets
@@ -903,7 +906,7 @@ policy = PluginHostPolicy.model_validate_json(Path(__import__('sys').argv[1]).re
 registry = PluginRegistry(policy=policy, supported_api_version='ebizhub.runtime/v1')
 snapshot = asyncio.run(registry.load_startup())
 assert len(snapshot.plugins) == 2
-assert len(snapshot.providers) == 10
+assert len(snapshot.providers) == 11
 print('local-fixture-ready')
 """
     environment = dict(os.environ)

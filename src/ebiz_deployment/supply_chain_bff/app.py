@@ -93,6 +93,16 @@ def create_app(container: BffContainer) -> FastAPI:
 
     app = FastAPI(title="eBizHub Supply Chain BFF", version="0.1.4", lifespan=lifespan)
 
+    @app.get("/healthz", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        """Expose a credential-free liveness probe without dependency details."""
+
+        return {
+            "service": "ebiz-supply-chain-bff",
+            "status": "UP",
+            "version": "0.1.4",
+        }
+
     def level2() -> Level2Repository:
         if not container.settings.level2_enabled:
             raise HTTPException(status_code=404, detail="Level 2 service is disabled")

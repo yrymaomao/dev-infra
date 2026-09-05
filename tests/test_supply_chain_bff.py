@@ -427,6 +427,7 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
         base_url="http://bff.test",
         headers=headers,
     ) as client:
+        health = await client.get("/healthz")
         started_at = time.monotonic()
         accepted = await client.post(
             "/api/supply-chain/v2/analysis-batches",
@@ -467,6 +468,11 @@ async def test_bff_public_contract_returns_202_profile_and_replayable_sse() -> N
             },
         )
 
+    assert health.json() == {
+        "service": "ebiz-supply-chain-bff",
+        "status": "UP",
+        "version": "0.1.4",
+    }
     assert accepted.status_code == 202, accepted.text
     assert repository.created_at == snapshot_override
     assert repository.created_skus == (

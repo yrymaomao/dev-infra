@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib import metadata
 from pathlib import Path
 
 import httpx
@@ -13,13 +14,20 @@ from agent_runtime.base_ai.composition import (
 from agent_runtime.registry.capability_manifest import CapabilityPublicationError
 from base_ai.providers import discover_provider_factory_descriptors
 from ebiz_runtime_contracts import canonical_json_bytes
+from ebiz_runtime_contracts.artifacts import (
+    RegistryImportArtifactGraph,
+    RegistryImportPublicationPlan,
+    artifact_digest,
+)
 from test_config import deployment_document, deployment_env, write_runtime_policy
 
+from ebiz_deployment.attestation import attest_installed_supply_chain
 from ebiz_deployment.config import DeploymentCompositionConfig
 from ebiz_deployment.release import (
     build_agent_draft_payload,
     build_capability_publish_commands,
     build_local_fixture_publish_command,
+    build_registry_import_publish_command,
     build_workflow_draft_payload,
     load_public_capability_catalogs,
     publish_workflow_and_agent,
@@ -70,7 +78,7 @@ def _expand_test_environment(value: object, environ: dict[str, str]) -> object:
 
 def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, object]]:
     workflow = {
-        "code": "inventory-supply-chain-daily",
+        "code": "inventory-supply-chain-batch-weekly",
         "name": "Supply Chain Expert v6",
         "version": 6,
         "source_yaml": "spec_version: ebizhub.workflow/v1.3\n",
@@ -85,7 +93,7 @@ def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, obj
             "distribution_version": "4.1.0",
             "record_digest": release.agent_record_digest,  # type: ignore[attr-defined]
         },
-        "workflow_pins": [{"code": "inventory-supply-chain-daily", "version": 6}],
+        "workflow_pins": [{"code": "inventory-supply-chain-batch-weekly", "version": 6}],
         "capability_pins": [{"code": f"cap-{index}", "version": 1} for index in range(7)],
         "max_hosting_level": "ADVISORY",
     }
@@ -98,7 +106,7 @@ def _valid_release_responses(
     manifest = agent["manifest"]
     workflow_pins = [
         {
-            "code": "inventory-supply-chain-daily",
+            "code": "inventory-supply-chain-batch-weekly",
             "version": 6,
             "ir_checksum": WORKFLOW_CHECKSUM,
         }
@@ -203,7 +211,9 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     AgentDraftRequest.model_validate(payload)
     assert payload["code"] == "inventory-supply-chain"
     assert payload["version"] == 6
-    assert payload["workflow_pins"] == [{"code": "inventory-supply-chain-daily", "version": 6}]
+    assert payload["workflow_pins"] == [
+        {"code": "inventory-supply-chain-batch-weekly", "version": 6}
+    ]
     assert {
         (item["code"], item["version"]) for item in payload["capability_pins"]
     } == EXPECTED_PUBLIC_CAPABILITY_PINS
@@ -211,6 +221,52 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     assert payload["capability_pins"] == sorted(
         payload["capability_pins"], key=lambda item: (item["code"], item["version"])
     )
+
+
+def test_registry_import_publisher_binds_all_v6_workflows_and_generated_digests(
+    tmp_path: Path,
+) -> None:
+    release = release_config(tmp_path).supply_chain_release
+    distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
+    package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent")))
+    generated = package_root / "generated-v6"
+    graph = RegistryImportArtifactGraph.model_validate_json(
+        (generated / "registry-import-artifact-graph.json").read_text(encoding="utf-8")
+    )
+    plan = RegistryImportPublicationPlan.model_validate_json(
+        (generated / "registry-import-publication-plan.json").read_text(encoding="utf-8")
+    )
+    workflow = package_root / "workflows/inventory-supply-chain-batch-weekly.yaml"
+    exact = release.model_copy(
+        update={
+            "agent_record_digest": attest_installed_supply_chain().canonical_digest,
+            "workflow_artifact_digest": hashlib.sha256(workflow.read_bytes()).hexdigest(),
+            "registry_import_graph_digest": artifact_digest(graph),
+            "registry_import_plan_digest": artifact_digest(plan),
+        }
+    )
+
+    command = build_registry_import_publish_command(
+        exact,
+        action="publish",
+        tenant_id="tenant-a",
+        actor_id="00000000-0000-4000-8000-000000000001",
+    )
+
+    assert command[:5] == (
+        "python",
+        "-m",
+        "agent_runtime.cli.registry_import_publisher",
+        "publish",
+        "--compilation",
+    )
+    assert command[6:8] == ("--out", "generated-v6")
+    assert {(item.code, item.version) for item in plan.workflows} == {
+        ("inventory-selection-discovery", 6),
+        ("inventory-selection-discovery-continuation", 6),
+        ("inventory-selection-request-planner", 6),
+        ("inventory-supply-chain-batch-weekly", 6),
+    }
 
 
 def test_release_uses_runtime_base_ai_attestation_for_all_catalog_commands(
@@ -306,14 +362,14 @@ def test_local_fixture_uses_existing_publisher_and_is_guarded(tmp_path: Path) ->
 def test_workflow_draft_binds_source_digest_and_all_resources(tmp_path: Path) -> None:
     config = release_config(tmp_path)
     agent_root = AGENTS / "agents/supply-chain"
-    workflow = agent_root / "workflows/inventory-supply-chain-daily.yaml"
+    workflow = agent_root / "workflows/inventory-supply-chain-batch-weekly.yaml"
     release = config.supply_chain_release.model_copy(
         update={"workflow_artifact_digest": hashlib.sha256(workflow.read_bytes()).hexdigest()}
     )
 
     payload = build_workflow_draft_payload(release, agent_root)
 
-    assert payload["code"] == "inventory-supply-chain-daily"
+    assert payload["code"] == "inventory-supply-chain-batch-weekly"
     assert set(payload["resources"]) == {
         "policies/evidence-policy.yaml",
         "schemas/result.schema.yaml",

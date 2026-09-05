@@ -11,6 +11,7 @@ from ebiz_deployment.supply_chain_bff.level2_worker import (
     _merge_selection_pages,
     _planner_result,
     _selection_result,
+    _selection_runtime_payload,
     _timestamp,
 )
 
@@ -104,6 +105,40 @@ def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() 
         "week_to": "2026-08-24",
         "summary_enabled": True,
     }
+
+
+def test_selection_runtime_payload_splits_first_page_and_continuation() -> None:
+    preview_id = UUID("00000000-0000-4000-8000-000000000010")
+    selector = {"quantity_metric": "AVAILABLE_QUANTITY", "operator": "GT", "threshold": 20}
+    first = _selection_runtime_payload(
+        preview_id=preview_id,
+        selector=selector,
+        page_no=0,
+        source_snapshot_id=None,
+        cursor=None,
+    )
+    assert first["workflow"] == {"code": "inventory-selection-discovery", "version": 6}
+    assert first["inputs"] == {
+        "preview_id": str(preview_id),
+        "quantity_metric": "AVAILABLE_QUANTITY",
+        "operator": "GT",
+        "threshold": 20,
+        "sort": "SKU_ASC",
+        "page_size": 200,
+    }
+    continuation = _selection_runtime_payload(
+        preview_id=preview_id,
+        selector=selector,
+        page_no=1,
+        source_snapshot_id="snapshot-1",
+        cursor="cursor-1",
+    )
+    assert continuation["workflow"] == {
+        "code": "inventory-selection-discovery-continuation",
+        "version": 6,
+    }
+    assert continuation["inputs"]["source_snapshot_id"] == "snapshot-1"  # type: ignore[index]
+    assert continuation["inputs"]["cursor"] == "cursor-1"  # type: ignore[index]
 
 
 def test_selection_result_is_fail_closed() -> None:

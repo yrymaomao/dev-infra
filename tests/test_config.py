@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 READ_TOOLS = [
-    "query_inventory_batch_snapshot_v1",
     "query_fba_inventory_snapshot_v1",
+    "query_inventory_batch_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
     "query_sku_boston_cohort_v1",
@@ -214,9 +214,11 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
             "agent_distribution": "ebiz-agent-inventory-supply-chain",
             "agent_distribution_version": "4.1.0",
             "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
-            "workflow_code": "inventory-supply-chain-daily",
+            "workflow_code": "inventory-supply-chain-batch-weekly",
             "workflow_version": 6,
             "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
+            "registry_import_graph_digest": "${SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST}",
+            "registry_import_plan_digest": "${SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST}",
             "capability_sets": [
                 {
                     "set_id": "inventory.core",
@@ -264,6 +266,8 @@ def deployment_env(runtime_policy: Path) -> dict[str, str]:
         "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": "d" * 64,
         "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": "e" * 64,
         "SUPPLY_CHAIN_WORKFLOW_DIGEST": "f" * 64,
+        "SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST": "3" * 64,
+        "SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST": "4" * 64,
         "INVENTORY_CATALOG_RECORD_DIGEST": "1" * 64,
         "COMMERCE_SALES_CATALOG_RECORD_DIGEST": "2" * 64,
         "MCP_RECORD_DIGEST": "a" * 64,

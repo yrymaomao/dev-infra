@@ -48,8 +48,8 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert result.runtime_plugin_policy.plugins[0].package_digest == "d" * 64
     by_id = {deployment.provider_id: deployment for deployment in result.deployments}
     assert by_id["mcp.streamable_http"].config["allowed_tools"] == [
-        "query_inventory_batch_snapshot_v1",
         "query_fba_inventory_snapshot_v1",
+        "query_inventory_batch_snapshot_v1",
         "query_inventory_skus_by_threshold_v1",
         "query_inventory_summary_v2",
         "query_sku_boston_cohort_v1",
