@@ -8,10 +8,67 @@ import pytest
 from ebiz_deployment.supply_chain_bff.level2_repository import ClaimedReportBatch
 from ebiz_deployment.supply_chain_bff.level2_worker import (
     _batch_runtime_payload,
+    _merge_selection_pages,
     _planner_result,
     _selection_result,
     _timestamp,
 )
+
+
+def _page(
+    skus: list[str],
+    *,
+    snapshot: str = "snapshot-1",
+    next_cursor: str | None = None,
+) -> dict[str, object]:
+    return {
+        "selector": {"quantity_metric": "AVAILABLE_QUANTITY", "operator": "GT", "threshold": 20},
+        "source_snapshot_id": snapshot,
+        "snapshot_time": "2026-09-04T12:00:00Z",
+        "rows": [{"sku": sku, "available_quantity": 21} for sku in skus],
+        "warnings": [],
+        "ambiguities": [],
+        "next_cursor": next_cursor,
+    }
+
+
+def test_selection_pages_freeze_snapshot_order_and_stop_at_10001() -> None:
+    merged = _merge_selection_pages(
+        [_page(["SKU-0001", "SKU-0002"], next_cursor="cursor-2"), _page(["SKU-0003"])]
+    )
+    assert [row["sku"] for row in merged["rows"]] == ["SKU-0001", "SKU-0002", "SKU-0003"]
+    assert merged["source_snapshot_id"] == "snapshot-1"
+
+    oversized_pages = []
+    for page_no in range(51):
+        start = page_no * 200
+        end = min(start + 200, 10_001)
+        oversized_pages.append(
+            _page(
+                [f"SKU-{index:05d}" for index in range(start, end)],
+                next_cursor=(f"cursor-{page_no + 1}" if end < 10_001 else "stop-here"),
+            )
+        )
+    oversized = _merge_selection_pages(oversized_pages)
+    assert len(oversized["rows"]) == 10_001
+    assert oversized["limit_reached"] is True
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        [_page(["SKU-1"], next_cursor="cursor"), _page(["SKU-2"], snapshot="changed")],
+        [_page(["SKU-2", "SKU-1"])],
+        [_page(["SKU-1"], next_cursor="cursor"), _page(["SKU-1"])],
+        [_page(["SKU-1"], next_cursor="cursor"), _page(["SKU-2"], next_cursor="cursor")],
+        [_page([f"SKU-{index:04d}" for index in range(201)])],
+    ],
+)
+def test_selection_pages_fail_closed_on_drift_order_duplicate_or_cursor_stall(
+    pages: list[dict[str, object]],
+) -> None:
+    with pytest.raises(ValueError):
+        _merge_selection_pages(pages)
 
 
 def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() -> None:

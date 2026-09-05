@@ -35,6 +35,7 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "sku",
             "snapshot_time",
         ],
+        "inventory.get_batch_snapshot": ["market_scope", "skus"],
         "sales_profit.get_boston_cohort": ["market_scope", "snapshot_time", "target_sku"],
         "sales_profit.get_sku_windows": ["market_scope", "sku", "snapshot_time"],
     },
@@ -122,6 +123,21 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "policy_rule",
             "as_of",
             "markdown_grid",
+        ]
+    },
+    "supply-chain-planning.level2-batch@3.0.0": {
+        "supply_chain.plan_batch": [
+            "report_run_id",
+            "batch_id",
+            "item_offset",
+            "data_cutoff",
+            "selection_snapshot_ref",
+            "selection_rows",
+            "policy_rules",
+            "identity",
+            "fbm_inventory",
+            "fba_inventory",
+            "sales",
         ]
     },
 }
@@ -320,6 +336,7 @@ def _release(digests: dict[str, str]) -> dict[str, Any]:
             "supply-chain-planning.level2-fulfillment": "3.0.0",
             "supply-chain-planning.level2-forecast": "3.0.0",
             "supply-chain-planning.level2-optimizer": "3.0.0",
+            "supply-chain-planning.level2-batch": "3.0.0",
         },
     }
 
@@ -377,6 +394,7 @@ def _mcp_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[str,
             "server_name": "local-dev-erp-read",
             "url": "http://127.0.0.1:18081/mcp",
             "allowed_tools": [
+                "query_inventory_batch_snapshot_v1",
                 "query_fba_inventory_snapshot_v1",
                 "query_inventory_skus_by_threshold_v1",
                 "query_inventory_summary_v2",
@@ -404,6 +422,7 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
         "enabled_operations": [
             "catalog.resolve_sku_identity",
             "inventory.get_total_snapshot",
+            "inventory.get_batch_snapshot",
             "sales_profit.get_boston_cohort",
             "sales_profit.get_sku_windows",
             "inventory.list_skus_by_threshold",
@@ -421,6 +440,7 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
                     "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
                     "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
                     "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+                    "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
                     "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
                     "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
                     "sales_profit.get_sku_fulfillment_windows": (

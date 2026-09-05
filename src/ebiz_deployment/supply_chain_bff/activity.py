@@ -13,6 +13,7 @@ _TOOLS = frozenset(
         "query_sku_sales_profit_windows_v1",
         "query_sku_upc_mapping",
         "query_inventory_skus_by_threshold_v1",
+        "query_inventory_batch_snapshot_v1",
         "query_sku_identity_mapping_v1",
         "query_fba_inventory_snapshot_v1",
         "query_sku_fulfillment_sales_profit_windows_v2",

@@ -48,9 +48,7 @@ def validated_batch_output(
     result = outputs.get("result")
     if not isinstance(result, dict):
         raise BatchResultContractError("Runtime batch output is unavailable")
-    required = {
-        "result_artifact_ref",
-        "result_artifact_hash",
+    common = {
         "item_count",
         "complete_count",
         "blocked_count",
@@ -58,7 +56,9 @@ def validated_batch_output(
         "summary_artifact_ref",
         "risk_flags",
     }
-    if set(result) != required:
+    external = {"result_artifact_ref", "result_artifact_hash"}
+    inline = {"result_artifact"}
+    if set(result) not in {frozenset(common | external), frozenset(common | inline)}:
         raise BatchResultContractError("Runtime batch output fields are invalid")
     result_ref = result.get("result_artifact_ref")
     result_hash = result.get("result_artifact_hash")
@@ -66,14 +66,17 @@ def validated_batch_output(
         result.get(name)
         for name in ("item_count", "complete_count", "blocked_count", "failed_count")
     )
-    if not isinstance(result_ref, str) or not 1 <= len(result_ref) <= 512:
-        raise BatchResultContractError("Runtime batch result reference is invalid")
-    if (
-        not isinstance(result_hash, str)
-        or len(result_hash) != 64
-        or any(character not in "0123456789abcdef" for character in result_hash)
-    ):
-        raise BatchResultContractError("Runtime batch result hash is invalid")
+    if external.issubset(result):
+        if not isinstance(result_ref, str) or not 1 <= len(result_ref) <= 512:
+            raise BatchResultContractError("Runtime batch result reference is invalid")
+        if (
+            not isinstance(result_hash, str)
+            or len(result_hash) != 64
+            or any(character not in "0123456789abcdef" for character in result_hash)
+        ):
+            raise BatchResultContractError("Runtime batch result hash is invalid")
+    elif not isinstance(result.get("result_artifact"), dict):
+        raise BatchResultContractError("Runtime inline batch result artifact is invalid")
     if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in counts):
         raise BatchResultContractError("Runtime batch result counts are invalid")
     item_count, complete_count, blocked_count, failed_count = cast(

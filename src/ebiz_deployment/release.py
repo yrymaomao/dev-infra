@@ -55,6 +55,7 @@ _WORKFLOW_RESOURCES = (
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_CAPABILITY_PINS = frozenset(
     {
+        ("inventory.get_batch_snapshot", 1),
         ("inventory.list_skus_by_threshold", 1),
         ("catalog.resolve_sku_identity_batch", 1),
         ("inventory.get_fba_snapshot", 1),
@@ -62,6 +63,7 @@ _EXPECTED_CAPABILITY_PINS = frozenset(
         ("supply_chain.resolve_fulfillment_mode", 2),
         ("supply_chain.compute_forecast", 3),
         ("supply_chain.optimize_inventory_action", 1),
+        ("supply_chain.plan_batch", 1),
     }
 )
 

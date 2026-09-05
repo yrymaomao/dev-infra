@@ -54,6 +54,42 @@
         "next_cursor": { "type": ["string", "null"], "minLength": 1, "maxLength": 2048 }
       }
     },
+    "InventoryBatchSnapshotRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skus"],
+      "properties": { "skus": { "$ref": "#/$defs/SkuBatch" } }
+    },
+    "InventoryBatchSnapshotResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "items"],
+      "properties": {
+        "schemaVersion": { "const": "supply-chain.inventory-batch-snapshot.v1" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "sku", "availableQuantity", "holdQuantity", "transferInTransitQuantity", "purchaseInTransitQuantity", "agedInventoryQuantity", "daysSinceLastSale", "sourceSnapshotId", "asOf"],
+            "properties": {
+              "status": { "enum": ["FOUND", "NO_SNAPSHOT"] },
+              "sku": { "$ref": "#/$defs/CanonicalSku" },
+              "availableQuantity": { "type": ["integer", "null"], "minimum": 0 },
+              "holdQuantity": { "type": ["integer", "null"], "minimum": 0 },
+              "transferInTransitQuantity": { "type": ["integer", "null"], "minimum": 0 },
+              "purchaseInTransitQuantity": { "type": ["integer", "null"], "minimum": 0 },
+              "agedInventoryQuantity": { "type": ["integer", "null"], "minimum": 0 },
+              "daysSinceLastSale": { "type": ["integer", "null"], "minimum": 0 },
+              "sourceSnapshotId": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+              "asOf": { "type": ["string", "null"], "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
     "IdentityMappingRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -118,7 +154,7 @@
             "required": ["sku", "status", "msku", "fnsku", "asin", "available", "reserved", "inbound", "unfulfillable", "age_buckets", "monthly_storage_cost"],
             "properties": {
               "sku": { "$ref": "#/$defs/CanonicalSku" },
-              "status": { "enum": ["FOUND", "NO_SNAPSHOT", "SNAPSHOT_INCOMPLETE", "SNAPSHOT_CONFLICT"] },
+              "status": { "enum": ["FOUND", "NO_SNAPSHOT"] },
               "msku": { "type": ["string", "null"], "maxLength": 128 },
               "fnsku": { "type": ["string", "null"], "maxLength": 128 },
               "asin": { "type": ["string", "null"], "maxLength": 32 },

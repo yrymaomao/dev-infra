@@ -259,21 +259,36 @@ class Level2Worker:
             )
         else:
             selector = InventorySelector.model_validate(claim.selector).model_dump(mode="json")
-        started = await self._runtime.start(
-            authorization=self._authorization_for_tenant(claim.tenant_id),
-            respond_async=self._settings.async_start_enabled,
-            payload={
-                "agent": {"id": "inventory-supply-chain", "version": 6},
-                "workflow": {"code": "inventory-selection-discovery", "version": 1},
-                "inputs": {
-                    "preview_id": str(claim.preview_id),
-                    "selector": selector,
+        pages: list[dict[str, Any]] = []
+        source_snapshot_id: str | None = None
+        cursor: str | None = None
+        for page_no in range(51):
+            started = await self._runtime.start(
+                authorization=self._authorization_for_tenant(claim.tenant_id),
+                respond_async=self._settings.async_start_enabled,
+                payload={
+                    "agent": {"id": "inventory-supply-chain", "version": 6},
+                    "workflow": {"code": "inventory-selection-discovery", "version": 1},
+                    "inputs": {
+                        "preview_id": str(claim.preview_id),
+                        "selector": selector,
+                        "page_size": 200,
+                        "source_snapshot_id": source_snapshot_id,
+                        "cursor": cursor,
+                    },
+                    "idempotency_key": (
+                        f"supply-chain-selection-discovery:{claim.preview_id}:page:{page_no}"
+                    ),
                 },
-                "idempotency_key": f"supply-chain-selection-discovery:{claim.preview_id}",
-            },
-        )
-        snapshot = await self._terminal_snapshot(claim.tenant_id, started)
-        result = _selection_result(snapshot)
+            )
+            snapshot = await self._terminal_snapshot(claim.tenant_id, started)
+            page = _selection_result(snapshot)
+            pages.append(page)
+            source_snapshot_id = cast(str, page["source_snapshot_id"])
+            cursor = cast(str | None, page["next_cursor"])
+            if cursor is None or sum(len(value["rows"]) for value in pages) >= 10_001:
+                break
+        result = _merge_selection_pages(pages)
         result["ambiguities"] = list(
             dict.fromkeys([*planner_ambiguities, *result.get("ambiguities", [])])
         )
@@ -413,10 +428,15 @@ def _selection_result(snapshot: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("selection workflow rows are invalid")
     warnings = result.get("warnings", [])
     ambiguities = result.get("ambiguities", [])
+    next_cursor = result.get("next_cursor")
     if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
         raise ValueError("selection workflow warnings are invalid")
     if not isinstance(ambiguities, list) or not all(isinstance(item, str) for item in ambiguities):
         raise ValueError("selection workflow ambiguities are invalid")
+    if next_cursor is not None and (
+        not isinstance(next_cursor, str) or not 1 <= len(next_cursor) <= 2048
+    ):
+        raise ValueError("selection workflow cursor is invalid")
     return {
         "selector": selector,
         "source_snapshot_id": snapshot_id,
@@ -424,6 +444,63 @@ def _selection_result(snapshot: dict[str, Any]) -> dict[str, Any]:
         "rows": rows,
         "warnings": warnings,
         "ambiguities": ambiguities,
+        "next_cursor": next_cursor,
+    }
+
+
+def _merge_selection_pages(pages: list[dict[str, Any]]) -> dict[str, Any]:
+    if not pages:
+        raise ValueError("selection discovery returned no pages")
+    first = pages[0]
+    selector = first["selector"]
+    snapshot_id = first["source_snapshot_id"]
+    snapshot_time = first["snapshot_time"]
+    rows: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    ambiguities: list[str] = []
+    seen_cursors: set[str] = set()
+    previous_sku: str | None = None
+    for page_no, page in enumerate(pages):
+        if (
+            page["selector"] != selector
+            or page["source_snapshot_id"] != snapshot_id
+            or page["snapshot_time"] != snapshot_time
+        ):
+            raise ValueError("selection discovery snapshot changed between pages")
+        page_rows = page["rows"]
+        if len(page_rows) > 200:
+            raise ValueError("selection discovery page exceeds 200 rows")
+        for row in page_rows:
+            sku = row.get("sku")
+            if not isinstance(sku, str) or not sku:
+                raise ValueError("selection discovery row omitted canonical SKU")
+            if previous_sku is not None and sku <= previous_sku:
+                raise ValueError("selection discovery rows are not globally unique and ordered")
+            previous_sku = sku
+            rows.append(row)
+            if len(rows) == 10_001:
+                break
+        warnings.extend(cast(list[str], page.get("warnings", [])))
+        ambiguities.extend(cast(list[str], page.get("ambiguities", [])))
+        cursor = cast(str | None, page.get("next_cursor"))
+        if cursor is not None:
+            if cursor in seen_cursors:
+                raise ValueError("selection discovery cursor did not advance")
+            seen_cursors.add(cursor)
+        if len(rows) == 10_001:
+            break
+        if page_no < len(pages) - 1 and cursor is None:
+            raise ValueError("selection discovery continued after its terminal page")
+        if page_no == len(pages) - 1 and cursor is not None:
+            raise ValueError("selection discovery stopped before consuming its cursor")
+    return {
+        "selector": selector,
+        "source_snapshot_id": snapshot_id,
+        "snapshot_time": snapshot_time,
+        "rows": rows,
+        "warnings": list(dict.fromkeys(warnings)),
+        "ambiguities": list(dict.fromkeys(ambiguities)),
+        "limit_reached": len(rows) == 10_001,
     }
 
 

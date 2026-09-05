@@ -333,7 +333,7 @@ class Level2Repository:
         sku_values = cast(list[str], skus)
         if sku_values != sorted(sku_values) or len(set(sku_values)) != len(sku_values):
             raise ValueError("selection rows must be unique and ordered by SKU_ASC")
-        staged = await self._stage(tenant_id, {"rows": rows})
+        staged = await self._stage(tenant_id, {"rows": rows, "skus": sku_values})
         async with self._factory() as session, session.begin():
             preview = await session.scalar(
                 select(SelectionPreview)
@@ -1289,6 +1289,7 @@ class Level2Repository:
         batch_status = runtime_status
         result_ref: str | None = None
         result_hash: str | None = None
+        staged_result: Any | None = None
         result_risks: list[str] = []
         if runtime_status == "SUCCEEDED":
             result = validated_batch_output(
@@ -1298,11 +1299,15 @@ class Level2Repository:
             complete_count = cast(int, result["complete_count"])
             blocked_count = cast(int, result["blocked_count"])
             failed_count = cast(int, result["failed_count"])
-            result_ref = cast(str, result["result_artifact_ref"])
-            result_hash = cast(str, result["result_artifact_hash"])
             result_risks = cast(list[str], result["risk_flags"])
-            artifact = await self._load(target.tenant_id, result_ref, result_hash)
-            validated_batch_artifact(
+            inline_artifact = result.get("result_artifact")
+            if isinstance(inline_artifact, dict):
+                artifact = inline_artifact
+            else:
+                result_ref = cast(str, result["result_artifact_ref"])
+                result_hash = cast(str, result["result_artifact_hash"])
+                artifact = await self._load(target.tenant_id, result_ref, result_hash)
+            validated = validated_batch_artifact(
                 artifact,
                 report_run_id=target.report_run_id,
                 batch_id=target.batch_id,
@@ -1310,6 +1315,10 @@ class Level2Repository:
                 expected_item_count=target.item_count,
                 expected_counts=(complete_count, blocked_count, failed_count),
             )
+            if isinstance(inline_artifact, dict):
+                staged_result = await self._stage(target.tenant_id, validated)
+                result_ref = staged_result.payload_ref
+                result_hash = staged_result.payload_hash
             if failed_count == target.item_count:
                 batch_status = "FAILED"
             elif blocked_count == target.item_count:
@@ -1380,6 +1389,8 @@ class Level2Repository:
                     critical=True,
                 )
             )
+        if staged_result is not None:
+            await self._commit_staged(target.tenant_id, staged_result)
 
     async def _refresh_report(
         self,

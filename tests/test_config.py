@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 READ_TOOLS = [
+    "query_inventory_batch_snapshot_v1",
     "query_fba_inventory_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
@@ -20,6 +21,7 @@ READ_TOOLS = [
 ERP_TOOL_BY_OPERATION = {
     "catalog.resolve_sku_identity": "query_sku_upc_mapping",
     "inventory.get_total_snapshot": "query_inventory_summary_v2",
+    "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
     "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
     "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
     "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
@@ -167,13 +169,14 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "api_version": "v1",
                 "enabled_operations": [
                     "catalog.resolve_sku_identity",
-                    "inventory.get_total_snapshot",
-                    "sales_profit.get_boston_cohort",
-                    "sales_profit.get_sku_windows",
-                    "inventory.list_skus_by_threshold",
                     "catalog.resolve_sku_identity_batch",
                     "inventory.get_fba_snapshot",
+                    "inventory.get_batch_snapshot",
+                    "inventory.get_total_snapshot",
+                    "inventory.list_skus_by_threshold",
+                    "sales_profit.get_boston_cohort",
                     "sales_profit.get_sku_fulfillment_windows",
+                    "sales_profit.get_sku_windows",
                 ],
                 "egress_hosts": [],
                 "secret_names": [],
@@ -249,6 +252,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "supply-chain-planning.level2-fulfillment": "3.0.0",
                 "supply-chain-planning.level2-forecast": "3.0.0",
                 "supply-chain-planning.level2-optimizer": "3.0.0",
+                "supply-chain-planning.level2-batch": "3.0.0",
             },
         },
     }

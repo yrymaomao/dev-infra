@@ -53,6 +53,42 @@ def test_batch_output_and_restricted_artifact_are_validated_together() -> None:
     )
 
 
+def test_batch_output_accepts_an_inline_artifact_for_bff_materialization() -> None:
+    artifact = _artifact()
+    output = {
+        "result_artifact": artifact,
+        "item_count": 3,
+        "complete_count": 1,
+        "blocked_count": 1,
+        "failed_count": 1,
+        "summary_artifact_ref": None,
+        "risk_flags": ["SHORT_HISTORY"],
+    }
+    assert (
+        validated_batch_output(
+            {"outputs": {"result": output}},
+            expected_item_count=3,
+        )
+        == output
+    )
+
+
+def test_batch_output_rejects_mixed_inline_and_external_artifact_identity() -> None:
+    output = {
+        "result_artifact": _artifact(),
+        "result_artifact_ref": "memory://payloads/v1/result",
+        "result_artifact_hash": "a" * 64,
+        "item_count": 3,
+        "complete_count": 1,
+        "blocked_count": 1,
+        "failed_count": 1,
+        "summary_artifact_ref": None,
+        "risk_flags": [],
+    }
+    with pytest.raises(BatchResultContractError):
+        validated_batch_output({"outputs": {"result": output}}, expected_item_count=3)
+
+
 @pytest.mark.parametrize("field", ["result_artifact_ref", "result_artifact_hash", "item_count"])
 def test_batch_output_fails_closed_when_identity_is_missing(field: str) -> None:
     output = {

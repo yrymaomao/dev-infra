@@ -37,6 +37,7 @@ WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
 EXPECTED_PUBLIC_CAPABILITY_PINS = {
+    ("inventory.get_batch_snapshot", 1),
     ("inventory.list_skus_by_threshold", 1),
     ("catalog.resolve_sku_identity_batch", 1),
     ("inventory.get_fba_snapshot", 1),
@@ -44,6 +45,7 @@ EXPECTED_PUBLIC_CAPABILITY_PINS = {
     ("supply_chain.resolve_fulfillment_mode", 2),
     ("supply_chain.compute_forecast", 3),
     ("supply_chain.optimize_inventory_action", 1),
+    ("supply_chain.plan_batch", 1),
 }
 
 

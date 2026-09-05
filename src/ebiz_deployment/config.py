@@ -24,6 +24,7 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
+    "query_inventory_batch_snapshot_v1",
     "query_fba_inventory_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
@@ -49,6 +50,7 @@ _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
         "enabled_operations": (
             "catalog.resolve_sku_identity",
             "catalog.resolve_sku_identity_batch",
+            "inventory.get_batch_snapshot",
             "inventory.get_fba_snapshot",
             "inventory.get_total_snapshot",
             "inventory.list_skus_by_threshold",
@@ -188,6 +190,7 @@ _EXPECTED_PLANNING_PROVIDERS = {
     "supply-chain-planning.level2-fulfillment",
     "supply-chain-planning.level2-forecast",
     "supply-chain-planning.level2-optimizer",
+    "supply-chain-planning.level2-batch",
 }
 
 
@@ -279,7 +282,7 @@ class SupplyChainReleaseConfig(StrictModel):
     workflow_artifact_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
     streaming_bff: StreamingBffReleaseConfig
-    provider_versions: dict[str, str] = Field(min_length=10, max_length=10)
+    provider_versions: dict[str, str] = Field(min_length=11, max_length=11)
 
     @field_validator("capability_sets")
     @classmethod
@@ -457,6 +460,7 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
                 "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
                 "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
                 "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+                "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
                 "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
                 "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
                 "sales_profit.get_sku_fulfillment_windows": (

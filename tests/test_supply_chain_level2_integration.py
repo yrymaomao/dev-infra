@@ -246,21 +246,6 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
     artifact["item_offset"] = 0
     for ordinal, item in enumerate(artifact["items"]):
         item["ordinal"] = ordinal
-    staged = await store.put_exact_restricted(
-        tenant_id=tenant_id,
-        payload=artifact,
-        required_permission="supply-chain:level2",
-    )
-    assert staged.payload_ref is not None
-    await store.ensure_committed(
-        tenant_id=tenant_id,
-        payload_ref=staged.payload_ref,
-        payload_hash=staged.payload_hash,
-        size_bytes=staged.size_bytes,
-        content_type=staged.content_type,
-        classification=staged.classification,
-        required_permission=staged.required_permission,
-    )
     await repository.record_report_start(
         delivery,
         RuntimeStartResult(
@@ -303,8 +288,7 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
             "status": "SUCCEEDED",
             "outputs": {
                 "result": {
-                    "result_artifact_ref": staged.payload_ref,
-                    "result_artifact_hash": staged.payload_hash,
+                    "result_artifact": artifact,
                     "item_count": 3,
                     "complete_count": 1,
                     "blocked_count": 1,
