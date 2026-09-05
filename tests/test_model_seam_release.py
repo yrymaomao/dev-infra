@@ -40,7 +40,7 @@ VERSIONS = {
     "ebiz-capability-commerce-sales-catalog": "2.0.0",
     "ebiz-capability-inventory-catalog": "2.0.0",
     "ebiz-capability-supply-chain": "2.0.0",
-    "ebiz-deployment-composition": "0.1.1",
+    "ebiz-deployment-composition": "0.1.2",
     "ebiz-runtime-contracts": "0.1.6",
     "ebiz-workflow-runtime": "0.1.6",
     "ebizhub-agent-runtime": "0.1.6",
@@ -50,7 +50,7 @@ VERSIONS = {
 def bundle_document(*, crm_ready: bool = True) -> dict[str, object]:
     return {
         "bundle_id": "runtime-model-seam-0.1.6",
-        "composition_version": "0.1.1",
+        "composition_version": "0.1.2",
         "artifacts": [
             {
                 "distribution": name,

@@ -239,6 +239,7 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
         "runtime": {
             "supported_api_version": "ebizhub.runtime/v1",
             "plugin_policy_path": str(plugin_policy),
+            "governance": _runtime_governance(),
         },
         "secrets": {
             "allowed_env": {
@@ -258,6 +259,27 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
             _model_provider(network, digests),
         ],
         "supply_chain_release": _release(digests),
+    }
+
+
+def _runtime_governance() -> dict[str, Any]:
+    return {
+        "config_revision": 1,
+        "capacity_enforcement_enabled": False,
+        "registry_import_compiler_enabled": False,
+        "registry_import_publisher_enabled": False,
+        "capacity_registry_delegation_audience": "ebizhub-capacity-registry",
+        "capacity_registry_trusted_proxy_cidrs": [],
+        "capacity_cache_ttl_seconds": 60,
+        "capacity_max_concurrent_executions": 64,
+        "capacity_max_graph_steps": 200,
+        "capacity_max_model_calls": 100,
+        "capacity_max_capability_calls": 200,
+        "capacity_max_wall_seconds": 7200,
+        "capacity_max_model_timeout_seconds": 600,
+        "capacity_max_capability_timeout_seconds": 300,
+        "capacity_max_total_model_attempts": 10,
+        "capacity_monetary_model_budget_microusd": 1_000_000_000_000,
     }
 
 
@@ -353,6 +375,21 @@ def _environment(
         "EBIZ_DEPLOYMENT_CONFIG": str(assets.deployment_config),
         "RUNTIME_PLUGIN_POLICY_PATH": str(assets.plugin_policy),
         "APP_PLUGIN_POLICY_PATH": str(assets.plugin_policy),
+        "APP_CAPACITY_ENFORCEMENT_ENABLED": "false",
+        "APP_REGISTRY_IMPORT_COMPILER_ENABLED": "false",
+        "APP_REGISTRY_IMPORT_PUBLISHER_ENABLED": "false",
+        "APP_CAPACITY_REGISTRY_DELEGATION_AUDIENCE": "ebizhub-capacity-registry",
+        "APP_CAPACITY_REGISTRY_TRUSTED_PROXY_CIDRS": "",
+        "APP_CAPACITY_CACHE_TTL_SECONDS": "60",
+        "APP_CAPACITY_MAX_CONCURRENT_EXECUTIONS": "64",
+        "APP_CAPACITY_MAX_GRAPH_STEPS": "200",
+        "APP_CAPACITY_MAX_MODEL_CALLS": "100",
+        "APP_CAPACITY_MAX_CAPABILITY_CALLS": "200",
+        "APP_CAPACITY_MAX_WALL_SECONDS": "7200",
+        "APP_CAPACITY_MAX_MODEL_TIMEOUT_SECONDS": "600",
+        "APP_CAPACITY_MAX_CAPABILITY_TIMEOUT_SECONDS": "300",
+        "APP_CAPACITY_MAX_TOTAL_MODEL_ATTEMPTS": "10",
+        "APP_CAPACITY_MONETARY_MODEL_BUDGET_MICROUSD": "1000000000000",
         "BASE_AI_PROVIDER_ATTESTATION_PATH": str(assets.base_ai_attestation),
         "LOCAL_FIXTURE_PLUGIN_POLICY_PATH": str(assets.fixture_plugin_policy),
         "LOCAL_FIXTURE_CONTRACT_ROOT": str(assets.fixture_contract_root),

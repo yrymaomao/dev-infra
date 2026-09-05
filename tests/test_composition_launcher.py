@@ -126,6 +126,27 @@ def test_launcher_fails_closed_when_runtime_policy_path_disagrees(
     assert called is False
 
 
+def test_launcher_fails_closed_when_runtime_governance_environment_drifts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    _, _, environ = configured_files(tmp_path)
+    environ["APP_CAPACITY_MAX_MODEL_CALLS"] = "99"
+    called = False
+
+    def runtime_main(argv: list[str], *, provider_composition: object) -> int:
+        del argv, provider_composition
+        nonlocal called
+        called = True
+        return 0
+
+    with pytest.raises(ValueError, match="APP_CAPACITY_MAX_MODEL_CALLS"):
+        launcher_module().launch([], environ=environ, runtime_main=runtime_main)
+
+    assert called is False
+
+
 def test_launcher_rejects_bytecode_writes_before_runtime_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

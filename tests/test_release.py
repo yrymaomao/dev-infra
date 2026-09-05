@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib import metadata
 from pathlib import Path
 
 import httpx
@@ -27,11 +28,23 @@ from ebiz_deployment.release import (
     write_base_ai_provider_attestation,
 )
 
+
+def _installed_contract_root(distribution_name: str, import_root: str) -> Path:
+    distribution = metadata.distribution(distribution_name)
+    return Path(str(distribution.locate_file(f"{import_root}/contracts"))).resolve(strict=True)
+
+
 AGENTS = Path("C:/ebizhub/worktrees/ebiz-agents-supply-chain-v4")
 CONTRACT_ROOTS = {
-    "inventory.core": AGENTS / "capabilities/inventory/contracts",
-    "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts",
-    "supply-chain.planning": AGENTS / "capabilities/supply-chain/contracts",
+    "inventory.core": _installed_contract_root(
+        "ebiz-capability-inventory-catalog", "ebiz_capability_inventory_catalog"
+    ),
+    "commerce-sales.analytics": _installed_contract_root(
+        "ebiz-capability-commerce-sales-catalog", "ebiz_capability_commerce_sales_catalog"
+    ),
+    "supply-chain.planning": _installed_contract_root(
+        "ebiz-capability-supply-chain", "ebiz_capability_supply_chain"
+    ),
 }
 WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"

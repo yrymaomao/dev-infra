@@ -28,7 +28,7 @@ _EXPECTED_ARTIFACTS = {
     "ebiz-capability-commerce-sales-catalog": "2.0.0",
     "ebiz-capability-inventory-catalog": "2.0.0",
     "ebiz-capability-supply-chain": "2.0.0",
-    "ebiz-deployment-composition": "0.1.1",
+    "ebiz-deployment-composition": "0.1.2",
     "ebiz-runtime-contracts": "0.1.6",
     "ebiz-workflow-runtime": "0.1.6",
     "ebizhub-agent-runtime": "0.1.6",
@@ -298,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _validate_bundle(bundle: ReleaseBundle) -> None:
-    if bundle.bundle_id != _BUNDLE_ID or bundle.composition_version != "0.1.1":
+    if bundle.bundle_id != _BUNDLE_ID or bundle.composition_version != "0.1.2":
         raise ReleaseBundleError("release identity differs from Runtime 0.1.6")
     by_distribution = {pin.distribution: pin for pin in bundle.artifacts}
     if (

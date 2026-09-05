@@ -2,7 +2,25 @@
   "schema_version": "2",
   "runtime": {
     "supported_api_version": "ebizhub.runtime/v1",
-    "plugin_policy_path": "${RUNTIME_PLUGIN_POLICY_PATH}"
+    "plugin_policy_path": "${RUNTIME_PLUGIN_POLICY_PATH}",
+    "governance": {
+      "config_revision": 1,
+      "capacity_enforcement_enabled": false,
+      "registry_import_compiler_enabled": false,
+      "registry_import_publisher_enabled": false,
+      "capacity_registry_delegation_audience": "ebizhub-capacity-registry",
+      "capacity_registry_trusted_proxy_cidrs": [],
+      "capacity_cache_ttl_seconds": 60,
+      "capacity_max_concurrent_executions": 64,
+      "capacity_max_graph_steps": 200,
+      "capacity_max_model_calls": 100,
+      "capacity_max_capability_calls": 200,
+      "capacity_max_wall_seconds": 7200,
+      "capacity_max_model_timeout_seconds": 600,
+      "capacity_max_capability_timeout_seconds": 300,
+      "capacity_max_total_model_attempts": 10,
+      "capacity_monetary_model_budget_microusd": 1000000000000
+    }
   },
   "secrets": {
     "allowed_env": {

@@ -1,6 +1,6 @@
 [project]
 name = "ebiz-deployment-composition"
-version = "0.1.1"
+version = "0.1.2"
 description = "Production composition launcher for eBizHub Agent Runtime"
 requires-python = ">=3.11,<3.13"
 dependencies = [

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
+from ipaddress import ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -63,9 +65,50 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class RuntimeGovernanceConfig(StrictModel):
+    config_revision: int = Field(ge=1)
+    capacity_enforcement_enabled: bool
+    registry_import_compiler_enabled: bool
+    registry_import_publisher_enabled: bool
+    capacity_registry_delegation_audience: str = Field(min_length=1, max_length=128)
+    capacity_registry_trusted_proxy_cidrs: tuple[str, ...]
+    capacity_cache_ttl_seconds: int = Field(ge=1, le=3_600)
+    capacity_max_concurrent_executions: int = Field(ge=1, le=10_000)
+    capacity_max_graph_steps: int = Field(ge=1, le=200)
+    capacity_max_model_calls: int = Field(ge=1, le=100)
+    capacity_max_capability_calls: int = Field(ge=1, le=200)
+    capacity_max_wall_seconds: int = Field(ge=1, le=7_200)
+    capacity_max_model_timeout_seconds: int = Field(ge=1, le=3_600)
+    capacity_max_capability_timeout_seconds: int = Field(ge=1, le=3_600)
+    capacity_max_total_model_attempts: int = Field(ge=1, le=100)
+    capacity_monetary_model_budget_microusd: int = Field(ge=0, le=10**18)
+
+    @field_validator("capacity_registry_trusted_proxy_cidrs")
+    @classmethod
+    def validate_unique_proxy_cidrs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        try:
+            normalized = tuple(str(ip_network(item, strict=True)) for item in value)
+        except ValueError as error:
+            raise ValueError("capacity registry trusted proxy CIDRs are invalid") from error
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("capacity registry trusted proxy CIDRs must be unique and non-empty")
+        return tuple(sorted(normalized))
+
+    @property
+    def canonical_digest(self) -> str:
+        payload = json.dumps(
+            self.model_dump(mode="json"),
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+
 class RuntimeConfig(StrictModel):
     supported_api_version: str = Field(min_length=1, max_length=128)
     plugin_policy_path: Path
+    governance: RuntimeGovernanceConfig
 
 
 class SecretEnvironmentConfig(StrictModel):
@@ -284,6 +327,53 @@ def load_deployment_config(
     return config.model_copy(update={"runtime_plugin_policy": policy})
 
 
+_RUNTIME_GOVERNANCE_ENVIRONMENT = {
+    "capacity_enforcement_enabled": "APP_CAPACITY_ENFORCEMENT_ENABLED",
+    "registry_import_compiler_enabled": "APP_REGISTRY_IMPORT_COMPILER_ENABLED",
+    "registry_import_publisher_enabled": "APP_REGISTRY_IMPORT_PUBLISHER_ENABLED",
+    "capacity_registry_delegation_audience": "APP_CAPACITY_REGISTRY_DELEGATION_AUDIENCE",
+    "capacity_registry_trusted_proxy_cidrs": "APP_CAPACITY_REGISTRY_TRUSTED_PROXY_CIDRS",
+    "capacity_cache_ttl_seconds": "APP_CAPACITY_CACHE_TTL_SECONDS",
+    "capacity_max_concurrent_executions": "APP_CAPACITY_MAX_CONCURRENT_EXECUTIONS",
+    "capacity_max_graph_steps": "APP_CAPACITY_MAX_GRAPH_STEPS",
+    "capacity_max_model_calls": "APP_CAPACITY_MAX_MODEL_CALLS",
+    "capacity_max_capability_calls": "APP_CAPACITY_MAX_CAPABILITY_CALLS",
+    "capacity_max_wall_seconds": "APP_CAPACITY_MAX_WALL_SECONDS",
+    "capacity_max_model_timeout_seconds": "APP_CAPACITY_MAX_MODEL_TIMEOUT_SECONDS",
+    "capacity_max_capability_timeout_seconds": "APP_CAPACITY_MAX_CAPABILITY_TIMEOUT_SECONDS",
+    "capacity_max_total_model_attempts": "APP_CAPACITY_MAX_TOTAL_MODEL_ATTEMPTS",
+    "capacity_monetary_model_budget_microusd": "APP_CAPACITY_MONETARY_MODEL_BUDGET_MICROUSD",
+}
+
+
+def verify_runtime_governance_environment(
+    config: RuntimeGovernanceConfig,
+    environ: Mapping[str, str],
+) -> None:
+    """Fail before Runtime start if process settings differ from reviewed configuration."""
+
+    for field_name, environment_name in _RUNTIME_GOVERNANCE_ENVIRONMENT.items():
+        raw = environ.get(environment_name)
+        if raw is None:
+            raise ValueError(f"{environment_name} is required by runtime governance")
+        expected = getattr(config, field_name)
+        normalized = raw.strip()
+        if isinstance(expected, bool):
+            if normalized.lower() not in {"true", "false"}:
+                raise ValueError(f"{environment_name} must be true or false")
+            actual: object = normalized.lower() == "true"
+        elif isinstance(expected, int):
+            if re.fullmatch(r"0|[1-9][0-9]*", normalized) is None:
+                raise ValueError(f"{environment_name} must be a canonical non-negative integer")
+            actual = int(normalized)
+        elif isinstance(expected, tuple):
+            actual = tuple(sorted(item.strip() for item in normalized.split(",") if item.strip()))
+        else:
+            actual = normalized
+        if actual != expected:
+            raise ValueError(f"{environment_name} differs from reviewed runtime governance")
+
+
 def _read_json(path: Path, label: str) -> object:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -415,6 +505,8 @@ __all__ = [
     "CredentialBrokerConfig",
     "DeploymentCompositionConfig",
     "ProviderDeploymentConfig",
+    "RuntimeGovernanceConfig",
     "SupplyChainReleaseConfig",
     "load_deployment_config",
+    "verify_runtime_governance_environment",
 ]

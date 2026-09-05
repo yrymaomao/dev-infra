@@ -12,7 +12,7 @@ from agent_runtime.application.provider_composition import ProviderCompositionRo
 from agent_runtime.cli import api as runtime_api
 
 from .composition import build_provider_composition
-from .config import load_deployment_config
+from .config import load_deployment_config, verify_runtime_governance_environment
 
 
 class RuntimeMain(Protocol):
@@ -44,6 +44,7 @@ def launch(
         config.runtime.plugin_policy_path.resolve()
     ):
         raise ValueError("APP_PLUGIN_POLICY_PATH must match runtime.plugin_policy_path")
+    verify_runtime_governance_environment(config.runtime.governance, environment)
     artifacts = build_provider_composition(config, dict(environment))
     return runtime_main(
         list(argv) if argv is not None else None, provider_composition=artifacts.root

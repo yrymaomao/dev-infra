@@ -6,7 +6,7 @@ Agent Runtime; ERP protocol translation lives in Base AI.
 
 ## Runtime 0.1.6 Model Seam release
 
-Deployment Composition `0.1.1` adds the immutable bundle
+Deployment Composition `0.1.2` adds the immutable bundle
 `runtime-model-seam-0.1.6`. The bundle contains exact wheel names, SHA-256
 digests and source commits for Runtime/contracts/workflow `0.1.6`, Base AI and
 the OpenAI Adapter `0.1.1`, Supply Chain `4.0.0`, and all three Capability Set
@@ -29,6 +29,23 @@ until every joint gate is true.
 The checked lock is generated from reviewed local wheels during feature
 development. Promotion does not resolve from the lock's build-machine path; it
 uses only the exact wheel names and hashes in the reviewed Release Bundle.
+
+## Runtime governance profile
+
+Composition 0.1.2 adds a versioned `runtime.governance` block for Runtime 0.1.6
+Capacity Profiles and registry-import. It records the three independent feature
+switches, Capacity cache TTL, platform hard caps, delegation audience and trusted
+proxy CIDRs. The deployment launcher compares every `APP_*` process value with
+this reviewed block and fails before Runtime starts on a missing, malformed or
+drifted value. `canonical_digest` is the configuration material digest used by
+the Release Manifest.
+
+PostgreSQL remains authoritative for published Capacity Profiles, assignments
+and execution leases. `APP_REDIS_URL` enables only the advisory 60-second cache;
+Redis outage does not relax Capacity enforcement. The checked example keeps
+compiler, publisher and enforcement disabled for staged rollout. The delegation
+secret remains an external secret reference and is never included in the
+versioned configuration or its digest.
 
 ## Supply Chain v4 release
 
