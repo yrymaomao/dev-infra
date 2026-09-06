@@ -41,8 +41,20 @@ _CONNECTOR_FIELD_ALLOWLISTS = {
             "snapshot_time",
         ],
         "inventory.get_batch_snapshot": ["market_scope", "skus"],
+        "inventory.list_skus_by_threshold": [
+            "cursor",
+            "operator",
+            "page_size",
+            "quantity_metric",
+            "sort",
+            "source_snapshot_id",
+            "threshold",
+        ],
+        "catalog.resolve_sku_identity_batch": ["skus"],
+        "inventory.get_fba_snapshot": ["skus"],
         "sales_profit.get_boston_cohort": ["market_scope", "snapshot_time", "target_sku"],
         "sales_profit.get_sku_windows": ["market_scope", "sku", "snapshot_time"],
+        "sales_profit.get_sku_fulfillment_windows": ["skus", "week_from", "week_to"],
     },
     "supply-chain-planning.fulfillment-resolver@3.0.0": {
         "supply_chain.resolve_fulfillment_mode": ["fulfillment_mode"]

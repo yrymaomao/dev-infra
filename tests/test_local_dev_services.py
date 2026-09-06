@@ -160,6 +160,27 @@ def test_classification_connector_allowlist_matches_v4_workflow_inputs() -> None
     }
 
 
+def test_erp_connector_allowlist_covers_level2_read_only_operations() -> None:
+    operations = local_assets_module._CONNECTOR_FIELD_ALLOWLISTS["yeaher.erp@0.2.0"]
+
+    assert operations["inventory.list_skus_by_threshold"] == [
+        "cursor",
+        "operator",
+        "page_size",
+        "quantity_metric",
+        "sort",
+        "source_snapshot_id",
+        "threshold",
+    ]
+    assert operations["catalog.resolve_sku_identity_batch"] == ["skus"]
+    assert operations["inventory.get_fba_snapshot"] == ["skus"]
+    assert operations["sales_profit.get_sku_fulfillment_windows"] == [
+        "skus",
+        "week_from",
+        "week_to",
+    ]
+
+
 def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
     schema = {
         "$schema": "https://schemas.ebizhub.com/meta/runtime-contract/v1.2",
