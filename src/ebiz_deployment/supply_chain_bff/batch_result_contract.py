@@ -16,21 +16,19 @@ class BatchResultContractError(ValueError):
     """A Runtime output or its controlled result artifact violates the frozen contract."""
 
 
-_PACKAGED_SCHEMA = (
-    Path(__file__).parent / "contracts" / "level2" / ("report-batch-results.v1.schema.json")
-)
-_SOURCE_SCHEMA = (
-    Path(__file__).parents[3]
-    / "contracts"
-    / "supply-chain-level2"
-    / ("report-batch-results.v1.schema.json")
-)
-_SCHEMA = _PACKAGED_SCHEMA if _PACKAGED_SCHEMA.is_file() else _SOURCE_SCHEMA
+_SUPPORTED_SCHEMA_FILES = {
+    "supply-chain.report-batch-results.v1": "report-batch-results.v1.schema.json",
+    "supply-chain.report-batch-results.v2": "report-batch-results.v2.schema.json",
+}
 
 
-@lru_cache(maxsize=1)
-def _artifact_validator() -> Draft202012Validator:
-    schema = json.loads(_SCHEMA.read_text(encoding="utf-8"))
+@lru_cache(maxsize=len(_SUPPORTED_SCHEMA_FILES))
+def _artifact_validator(schema_version: str) -> Draft202012Validator:
+    filename = _SUPPORTED_SCHEMA_FILES[schema_version]
+    packaged = Path(__file__).parent / "contracts" / "level2" / filename
+    source = Path(__file__).parents[3] / "contracts" / "supply-chain-level2" / filename
+    schema_path = packaged if packaged.is_file() else source
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
     if not isinstance(schema, dict):
         raise BatchResultContractError("Report result schema is unavailable")
     Draft202012Validator.check_schema(schema)
@@ -116,8 +114,15 @@ def validated_batch_artifact(
     item_offset: int,
     expected_item_count: int,
     expected_counts: tuple[int, int, int],
+    allow_historical_v1: bool = False,
 ) -> dict[str, Any]:
-    error = next(_artifact_validator().iter_errors(payload), None)
+    schema_version = payload.get("schema_version")
+    allowed_versions = {"supply-chain.report-batch-results.v2"}
+    if allow_historical_v1:
+        allowed_versions.add("supply-chain.report-batch-results.v1")
+    if schema_version not in allowed_versions:
+        raise BatchResultContractError("Report result artifact schema version is invalid")
+    error = next(_artifact_validator(cast(str, schema_version)).iter_errors(payload), None)
     if error is not None:
         raise BatchResultContractError("Report result artifact violates its frozen schema")
     if payload.get("report_run_id") != str(report_run_id) or payload.get("batch_id") != str(

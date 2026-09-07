@@ -19,7 +19,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .activity import ActivityProjection
-from .batch_result_contract import validated_batch_artifact, validated_batch_output
+from .batch_result_contract import (
+    BatchResultContractError,
+    validated_batch_artifact,
+    validated_batch_output,
+)
 from .level2_contracts import (
     CsvSelectionRow,
     InventorySelector,
@@ -716,15 +720,26 @@ class Level2Repository:
                     .order_by(ReportBatch.batch_no)
                 )
             ).all()
+            preview = (
+                await session.scalar(
+                    select(SelectionPreview).where(
+                        SelectionPreview.tenant_id == tenant_id,
+                        SelectionPreview.id == report.selection_preview_id,
+                    )
+                )
+                if report.selection_preview_id is not None
+                else None
+            )
         end_offset = min(report.sku_count, item_offset + item_limit)
         items: list[dict[str, Any]] = []
+        report_items: list[dict[str, Any]] = []
+        expected_artifact_schema = (
+            "supply-chain.report-batch-results.v1"
+            if report.report_schema_version == "supply-chain.report.v1"
+            else "supply-chain.report-batch-results.v2"
+        )
         for batch in batches:
-            if (
-                batch.result_ref is None
-                or batch.result_hash is None
-                or batch.item_offset >= end_offset
-                or batch.item_offset + batch.item_count <= item_offset
-            ):
+            if batch.result_ref is None or batch.result_hash is None:
                 continue
             artifact = await self._load(tenant_id, batch.result_ref, batch.result_hash)
             validated = validated_batch_artifact(
@@ -738,15 +753,31 @@ class Level2Repository:
                     batch.blocked_count,
                     batch.failed_count,
                 ),
+                allow_historical_v1=(report.report_schema_version == "supply-chain.report.v1"),
             )
-            items.extend(
+            if validated["schema_version"] != expected_artifact_schema:
+                raise BatchResultContractError(
+                    "Report result artifact generation does not match its report"
+                )
+            batch_items = [
                 cast(dict[str, Any], item)
                 for item in cast(list[object], validated["items"])
-                if isinstance(item, dict) and item_offset <= cast(int, item["ordinal"]) < end_offset
+                if isinstance(item, dict)
+            ]
+            report_items.extend(batch_items)
+            if (
+                batch.item_offset >= end_offset
+                or batch.item_offset + batch.item_count <= item_offset
+            ):
+                continue
+            items.extend(
+                item
+                for item in batch_items
+                if item_offset <= cast(int, item["ordinal"]) < end_offset
             )
         items.sort(key=lambda item: cast(int, item["ordinal"]))
-        return {
-            "schema_version": "supply-chain.report.v1",
+        result = {
+            "schema_version": report.report_schema_version,
             "report_run_id": str(report.id),
             "status": report.status,
             "sku_count": report.sku_count,
@@ -780,6 +811,36 @@ class Level2Repository:
                 for batch in batches
             ],
         }
+        if report.report_schema_version == "supply-chain.report.v2":
+            selection_snapshot = (
+                {
+                    "preview_id": str(preview.id),
+                    "source_kind": preview.source_kind,
+                    "source_snapshot_id": preview.source_snapshot_id,
+                    "snapshot_time": preview.snapshot_time.isoformat(),
+                    "snapshot_hash": preview.payload_hash,
+                    "selector": dict(preview.selector),
+                }
+                if preview is not None
+                and preview.payload_hash is not None
+                and preview.snapshot_time is not None
+                else None
+            )
+            result.update(
+                {
+                    "selection_snapshot": selection_snapshot,
+                    "policy_snapshot": {
+                        "mode": report.policy_mode,
+                        "version": report.policy_version,
+                        "snapshot_hash": report.policy_snapshot_hash,
+                    },
+                    "external_signals": _report_external_signals(
+                        report_items, data_cutoff=result["data_cutoff"]
+                    ),
+                    "model_versions": _report_model_versions(report_items),
+                }
+            )
+        return result
 
     async def list_reports(self, *, tenant_id: str, limit: int) -> list[dict[str, Any]]:
         async with self._factory() as session:
@@ -2380,6 +2441,59 @@ def _normalized_batch_selection_rows(document: Mapping[str, object]) -> list[dic
             ratio = {"fba": float(fba), "fbm": float(fbm)}
         normalized.append({"sku": sku, "csv_mode": mode, "csv_mixed_ratio": ratio})
     return normalized
+
+
+def _report_model_versions(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    versions: set[str] = set()
+    for item in items:
+        forecast = item.get("forecast")
+        if isinstance(forecast, Mapping):
+            version = forecast.get("model_version")
+            if isinstance(version, str) and version:
+                versions.add(version)
+    return [{"model_code": "DEMAND_FORECAST", "version": version} for version in sorted(versions)]
+
+
+def _report_external_signals(
+    items: list[dict[str, Any]], *, data_cutoff: object
+) -> list[dict[str, object]]:
+    flags: set[str] = set()
+    for item in items:
+        item_flags = item.get("risk_flags")
+        if isinstance(item_flags, list):
+            flags.update(flag for flag in item_flags if isinstance(flag, str))
+        forecast = item.get("forecast")
+        if isinstance(forecast, Mapping):
+            forecast_flags = forecast.get("risk_flags")
+            if isinstance(forecast_flags, list):
+                flags.update(flag for flag in forecast_flags if isinstance(flag, str))
+    signals: list[dict[str, object]] = []
+    for flag, signal_code, status in (
+        ("HOLIDAY_SIGNAL_USED", "HOLIDAY_DEMAND_SIGNAL", "USED"),
+        ("PROMOTION_SIGNAL_USED", "PROMOTION_DEMAND_SIGNAL", "USED"),
+        ("OPTIONAL_SIGNAL_UNAVAILABLE", "OPTIONAL_DEMAND_SIGNALS", "UNAVAILABLE"),
+    ):
+        if flag in flags:
+            signals.append(
+                {
+                    "signal_code": signal_code,
+                    "status": status,
+                    "version": None,
+                    "captured_at": data_cutoff,
+                    "evidence_refs": [],
+                }
+            )
+    if items and not signals:
+        signals.append(
+            {
+                "signal_code": "OPTIONAL_DEMAND_SIGNALS",
+                "status": "NOT_CONFIGURED",
+                "version": None,
+                "captured_at": data_cutoff,
+                "evidence_refs": [],
+            }
+        )
+    return signals
 
 
 def next_weekly_fire(schedule: ScheduleCreate, *, after: datetime) -> datetime:

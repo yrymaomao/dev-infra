@@ -548,12 +548,12 @@ components:
       required: [schema_version, report_run_id, status, sku_count, batch_count, complete_count, blocked_count, failed_count, risk_flags, data_cutoff, item_offset, item_limit, returned_count, next_item_offset, items, batches]
       properties:
         schema_version:
-          const: supply-chain.report.v1
+          enum: [supply-chain.report.v1, supply-chain.report.v2]
         report_run_id:
           type: string
           format: uuid
         status:
-          enum: [SELECTING, ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
+          enum: [SELECTING, ACCEPTED, RUNNING, WAITING_FOR_DATA, SUCCEEDED, SUCCEEDED_EMPTY, PARTIAL, FAILED, CANCELLED]
         sku_count:
           type: integer
           minimum: 0
@@ -599,7 +599,9 @@ components:
           type: array
           maxItems: 200
           items:
-            $ref: './report-batch-results.v1.schema.json#/$defs/ResultItem'
+            oneOf:
+              - $ref: './report-batch-results.v1.schema.json#/$defs/ResultItem'
+              - $ref: './report-batch-results.v2.schema.json#/$defs/ResultItem'
         batches:
           type: array
           maxItems: 50
@@ -639,6 +641,73 @@ components:
               execution_id:
                 type: [string, 'null']
                 format: uuid
+        selection_snapshot:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [preview_id, source_kind, source_snapshot_id, snapshot_time, snapshot_hash, selector]
+              properties:
+                preview_id: {type: string, format: uuid}
+                source_kind: {enum: [CSV, SELECTOR, NATURAL_LANGUAGE]}
+                source_snapshot_id: {type: [string, 'null'], maxLength: 256}
+                snapshot_time: {type: string, format: date-time}
+                snapshot_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+                selector: {type: object}
+            - type: 'null'
+        policy_snapshot:
+          type: object
+          additionalProperties: false
+          required: [mode, version, snapshot_hash]
+          properties:
+            mode: {enum: [ACTIVE_AT_RUN, PINNED]}
+            version: {type: [integer, 'null'], minimum: 1}
+            snapshot_hash:
+              type: [string, 'null']
+              pattern: '^[0-9a-f]{64}$'
+        external_signals:
+          type: array
+          uniqueItems: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [signal_code, status, version, captured_at, evidence_refs]
+            properties:
+              signal_code: {type: string, minLength: 1, maxLength: 128}
+              status: {enum: [USED, UNAVAILABLE, NOT_CONFIGURED]}
+              version: {type: [string, 'null'], maxLength: 128}
+              captured_at: {type: [string, 'null'], format: date-time}
+              evidence_refs:
+                type: array
+                uniqueItems: true
+                items: {type: string, format: uuid}
+        model_versions:
+          type: array
+          uniqueItems: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [model_code, version]
+            properties:
+              model_code: {type: string, minLength: 1, maxLength: 128}
+              version: {type: string, minLength: 1, maxLength: 128}
+      oneOf:
+        - properties:
+            schema_version: {const: supply-chain.report.v1}
+            items:
+              items:
+                $ref: './report-batch-results.v1.schema.json#/$defs/ResultItem'
+          not:
+            anyOf:
+              - required: [selection_snapshot]
+              - required: [policy_snapshot]
+              - required: [external_signals]
+              - required: [model_versions]
+        - required: [selection_snapshot, policy_snapshot, external_signals, model_versions]
+          properties:
+            schema_version: {const: supply-chain.report.v2}
+            items:
+              items:
+                $ref: './report-batch-results.v2.schema.json#/$defs/ResultItem'
     ReportRuntimeError:
       type: object
       additionalProperties: false

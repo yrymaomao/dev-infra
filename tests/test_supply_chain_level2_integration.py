@@ -42,7 +42,7 @@ RESULT_FIXTURE = (
     / "contracts"
     / "supply-chain-level2"
     / "fixtures"
-    / "report-batch-results.valid.json"
+    / "report-batch-results.v2.valid.json"
 )
 
 
@@ -354,9 +354,26 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
         item_limit=2,
     )
     assert first_page is not None
+    assert first_page["schema_version"] == "supply-chain.report.v2"
     assert first_page["status"] == "PARTIAL"
     assert [item["ordinal"] for item in first_page["items"]] == [0, 1]
     assert first_page["next_item_offset"] == 2
+    assert first_page["selection_snapshot"]["preview_id"] == str(preview_id)
+    assert len(first_page["selection_snapshot"]["snapshot_hash"]) == 64
+    assert first_page["policy_snapshot"]["mode"] == "ACTIVE_AT_RUN"
+    assert len(first_page["policy_snapshot"]["snapshot_hash"]) == 64
+    assert first_page["model_versions"] == [
+        {"model_code": "DEMAND_FORECAST", "version": "rolling-mean.v1"}
+    ]
+    assert first_page["external_signals"] == [
+        {
+            "signal_code": "OPTIONAL_DEMAND_SIGNALS",
+            "status": "NOT_CONFIGURED",
+            "version": None,
+            "captured_at": first_page["data_cutoff"],
+            "evidence_refs": [],
+        }
+    ]
     second_page = await repository.get_report(
         tenant_id=tenant_id,
         report_run_id=created.report_run_id,
@@ -366,6 +383,13 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
     assert second_page is not None
     assert [item["ordinal"] for item in second_page["items"]] == [2]
     assert second_page["next_item_offset"] is None
+    for field in (
+        "selection_snapshot",
+        "policy_snapshot",
+        "model_versions",
+        "external_signals",
+    ):
+        assert second_page[field] == first_page[field]
     activities = await repository.list_report_activities(
         tenant_id=tenant_id,
         report_run_id=created.report_run_id,

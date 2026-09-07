@@ -209,6 +209,9 @@ class ReportRun(Base):
     policy_snapshot_ref: Mapped[str | None] = mapped_column(Text)
     policy_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
     policy_evidence_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    report_schema_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="supply-chain.report.v2"
+    )
     data_cutoff: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACCEPTED")
     sku_count: Mapped[int] = mapped_column(Integer, nullable=False)

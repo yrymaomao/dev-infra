@@ -1,0 +1,794 @@
+{
+  "$defs": {
+    "ActionCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "REPLENISH",
+            "KEEP",
+            "MARKDOWN",
+            "SELL_NOW",
+            "HOLD_UNTIL_REVIEW",
+            "LIQUIDATION_REVIEW"
+          ]
+        },
+        "blocked_reason": {
+          "enum": [
+            "HARD_HOLD",
+            "POLICY_INCOMPLETE",
+            null
+          ]
+        },
+        "capital_cost": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "cost_complete": {
+          "type": "boolean"
+        },
+        "discount_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "expected_gross_cash": {
+          "type": "number"
+        },
+        "expected_revenue": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "expected_units_sold": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "net_cash_recovery_npv": {
+          "type": "number"
+        },
+        "replenishment_quantity": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stockout_cost": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "storage_cost": {
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "uncertainty_penalty": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "remaining_inventory": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scenario_unit_price": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "action",
+        "discount_rate",
+        "eligible",
+        "blocked_reason",
+        "replenishment_quantity",
+        "expected_units_sold",
+        "remaining_inventory",
+        "scenario_unit_price",
+        "expected_revenue",
+        "expected_gross_cash",
+        "capital_cost",
+        "storage_cost",
+        "stockout_cost",
+        "uncertainty_penalty",
+        "net_cash_recovery_npv",
+        "cost_complete"
+      ],
+      "type": "object"
+    },
+    "BusinessIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking": {
+          "type": "boolean"
+        },
+        "code": {
+          "enum": [
+            "FULFILLMENT_UNSUPPORTED",
+            "SKU_NOT_FOUND",
+            "SKU_IDENTITY_CONFLICT",
+            "NO_INVENTORY_SNAPSHOT",
+            "SNAPSHOT_FUTURE",
+            "SNAPSHOT_STALE",
+            "SNAPSHOT_INCOMPLETE",
+            "SNAPSHOT_CONFLICT",
+            "INSUFFICIENT_HISTORY",
+            "SALES_WINDOWS_UNAVAILABLE",
+            "COHORT_INSUFFICIENT",
+            "COHORT_TOO_LARGE",
+            "COHORT_INCOMPLETE",
+            "EVIDENCE_POLICY_BLOCKED",
+            "FBA_DATA_UNAVAILABLE",
+            "FULFILLMENT_SALES_DATA_UNAVAILABLE",
+            "MIXED_RATIO_UNAVAILABLE"
+          ]
+        },
+        "message": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "blocking"
+      ],
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/ActionCandidate"
+          },
+          "maxItems": 25,
+          "minItems": 10,
+          "type": "array"
+        },
+        "hold_reason": {
+          "maxLength": 1000,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hold_status": {
+          "enum": [
+            "NONE",
+            "PENDING",
+            "ACTIVE",
+            "EXPIRED"
+          ]
+        },
+        "risk_flags": {
+          "items": {
+            "enum": [
+              "CAPITAL_COST_DEFAULTED_1_PERCENT",
+              "STORAGE_COST_UNAVAILABLE",
+              "REPLENISHMENT_POLICY_INCOMPLETE"
+            ]
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "selected_action": {
+          "enum": [
+            "REPLENISH",
+            "KEEP",
+            "MARKDOWN",
+            "SELL_NOW",
+            "HOLD_UNTIL_REVIEW",
+            "LIQUIDATION_REVIEW"
+          ]
+        },
+        "selected_discount_rate": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "selected_action",
+        "selected_discount_rate",
+        "candidates",
+        "hold_status",
+        "hold_reason",
+        "risk_flags"
+      ],
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "capability_version": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "evidence_ref": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "evidence_ref",
+        "source_type",
+        "captured_at",
+        "content_hash",
+        "capability_id",
+        "capability_version",
+        "source_system"
+      ],
+      "type": "object"
+    },
+    "Forecast": {
+      "additionalProperties": false,
+      "properties": {
+        "data_cutoff": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "feature_snapshot_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "model_version": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "risk_flags": {
+          "items": {
+            "enum": [
+              "SHORT_HISTORY",
+              "NEW_PRODUCT",
+              "INTERMITTENT_DEMAND",
+              "PROMOTION_SIGNAL_USED",
+              "HOLIDAY_SIGNAL_USED",
+              "OPTIONAL_SIGNAL_UNAVAILABLE",
+              "DATA_SNAPSHOT_LAGGED"
+            ]
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "supply-chain.forecast.v1"
+        },
+        "sku": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "weeks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "p10": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "p50": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "p90": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "revenue_mean": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "units_mean": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "variance": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "week_start": {
+                "format": "date",
+                "type": "string"
+              }
+            },
+            "required": [
+              "week_start",
+              "units_mean",
+              "revenue_mean",
+              "variance",
+              "p10",
+              "p50",
+              "p90"
+            ],
+            "type": "object"
+          },
+          "maxItems": 13,
+          "minItems": 13,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "sku",
+        "model_version",
+        "data_cutoff",
+        "feature_snapshot_ref",
+        "weeks",
+        "risk_flags"
+      ],
+      "type": "object"
+    },
+    "ResultItem": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "result_status": {
+                "const": "COMPLETE"
+              }
+            },
+            "required": [
+              "result_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "business_issues": {
+                "items": {
+                  "properties": {
+                    "blocking": {
+                      "const": false
+                    }
+                  }
+                }
+              },
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              },
+              "forecast": {
+                "$ref": "#/$defs/Forecast"
+              },
+              "fulfillment_mode": {
+                "enum": [
+                  "FBA",
+                  "FBM",
+                  "MIXED"
+                ]
+              },
+              "fulfillment_source": {
+                "enum": [
+                  "CSV",
+                  "POLICY",
+                  "DEFAULT_FBM",
+                  "CSV_RATIO",
+                  "POLICY_RATIO",
+                  "HISTORICAL_8_13_WEEKS"
+                ]
+              },
+              "runtime_error": {
+                "type": "null"
+              },
+              "lane_breakdown": {
+                "minItems": 1
+              },
+              "evidence_refs": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result_status": {
+                "const": "BLOCKED"
+              }
+            },
+            "required": [
+              "result_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "business_issues": {
+                "contains": {
+                  "properties": {
+                    "blocking": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "blocking"
+                  ]
+                },
+                "minItems": 1
+              },
+              "runtime_error": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result_status": {
+                "const": "FAILED"
+              }
+            },
+            "required": [
+              "result_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "business_issues": {
+                "maxItems": 0
+              },
+              "decision": {
+                "type": "null"
+              },
+              "evidence_refs": {
+                "maxItems": 0
+              },
+              "forecast": {
+                "type": "null"
+              },
+              "fulfillment_mode": {
+                "type": "null"
+              },
+              "fulfillment_source": {
+                "type": "null"
+              },
+              "risk_flags": {
+                "maxItems": 0
+              },
+              "runtime_error": {
+                "$ref": "#/$defs/RuntimeError"
+              },
+              "lane_breakdown": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "business_issues": {
+          "items": {
+            "$ref": "#/$defs/BusinessIssue"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "decision": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "forecast": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Forecast"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fulfillment_mode": {
+          "enum": [
+            "FBA",
+            "FBM",
+            "MIXED",
+            null
+          ]
+        },
+        "fulfillment_source": {
+          "enum": [
+            "CSV",
+            "POLICY",
+            "DEFAULT_FBM",
+            "CSV_RATIO",
+            "POLICY_RATIO",
+            "HISTORICAL_8_13_WEEKS",
+            null
+          ]
+        },
+        "ordinal": {
+          "maximum": 9999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result_status": {
+          "enum": [
+            "COMPLETE",
+            "BLOCKED",
+            "FAILED"
+          ]
+        },
+        "risk_flags": {
+          "items": {
+            "$ref": "#/$defs/RiskFlag"
+          },
+          "maxItems": 50,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "runtime_error": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sku": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^,\\s]+$",
+          "type": "string"
+        },
+        "lane_breakdown": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/LaneBreakdown"
+          }
+        }
+      },
+      "required": [
+        "ordinal",
+        "sku",
+        "result_status",
+        "fulfillment_mode",
+        "fulfillment_source",
+        "forecast",
+        "decision",
+        "business_issues",
+        "risk_flags",
+        "evidence_refs",
+        "runtime_error",
+        "lane_breakdown"
+      ],
+      "type": "object"
+    },
+    "RiskFlag": {
+      "enum": [
+        "FULFILLMENT_DEFAULTED_TO_FBM",
+        "SHORT_HISTORY",
+        "NEW_PRODUCT",
+        "INTERMITTENT_DEMAND",
+        "PROMOTION_SIGNAL_USED",
+        "HOLIDAY_SIGNAL_USED",
+        "OPTIONAL_SIGNAL_UNAVAILABLE",
+        "DATA_SNAPSHOT_LAGGED",
+        "CAPITAL_COST_DEFAULTED_1_PERCENT",
+        "STORAGE_COST_UNAVAILABLE",
+        "REPLENISHMENT_POLICY_INCOMPLETE"
+      ]
+    },
+    "RuntimeError": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "validation",
+            "authorization",
+            "configuration",
+            "transient",
+            "permanent",
+            "conflict"
+          ]
+        },
+        "error_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "validation",
+            "routing",
+            "invocation",
+            "persistence",
+            "governance",
+            "recovery"
+          ]
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "safe_message": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "category",
+        "phase",
+        "retryable",
+        "safe_message",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "LaneMoney": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "LaneBreakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fulfillment_mode",
+        "available_quantity",
+        "sales_units_13w",
+        "gross_profit_13w",
+        "forecast_units_mean_13w",
+        "evidence_refs"
+      ],
+      "properties": {
+        "fulfillment_mode": {
+          "enum": [
+            "FBA",
+            "FBM"
+          ]
+        },
+        "available_quantity": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sales_units_13w": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "gross_profit_13w": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LaneMoney"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "forecast_units_mean_13w": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Tenant-free business payload stored as a tenant-bound restricted PayloadStore artifact.",
+  "properties": {
+    "batch_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "item_offset": {
+      "maximum": 9999,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ResultItem"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "type": "array"
+    },
+    "report_run_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "supply-chain.report-batch-results.v2"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_run_id",
+    "batch_id",
+    "item_offset",
+    "items"
+  ],
+  "title": "Supply Chain Level 2 report batch results v2",
+  "type": "object",
+  "x-ebizhub-payload-store": {
+    "classification": "RESTRICTED",
+    "integrity": "sha256",
+    "required_permission": "supply-chain:level2",
+    "tenant_binding": "metadata"
+  }
+}

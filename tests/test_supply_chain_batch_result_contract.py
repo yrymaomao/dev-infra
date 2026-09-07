@@ -14,7 +14,8 @@ from ebiz_deployment.supply_chain_bff.batch_result_contract import (
 )
 
 CONTRACT_ROOT = Path(__file__).parents[1] / "contracts" / "supply-chain-level2"
-FIXTURE = CONTRACT_ROOT / "fixtures" / "report-batch-results.valid.json"
+FIXTURE = CONTRACT_ROOT / "fixtures" / "report-batch-results.v2.valid.json"
+LEGACY_FIXTURE = CONTRACT_ROOT / "fixtures" / "report-batch-results.valid.json"
 
 
 def _artifact() -> dict[str, object]:
@@ -50,6 +51,31 @@ def test_batch_output_and_restricted_artifact_are_validated_together() -> None:
             expected_counts=(1, 1, 1),
         )
         == artifact
+    )
+
+
+def test_new_writes_reject_v1_but_historical_reads_remain_supported() -> None:
+    legacy = json.loads(LEGACY_FIXTURE.read_text(encoding="utf-8"))
+    with pytest.raises(BatchResultContractError, match="schema version"):
+        validated_batch_artifact(
+            legacy,
+            report_run_id=UUID("11111111-1111-4111-8111-111111111111"),
+            batch_id=UUID("22222222-2222-4222-8222-222222222222"),
+            item_offset=400,
+            expected_item_count=3,
+            expected_counts=(1, 1, 1),
+        )
+    assert (
+        validated_batch_artifact(
+            legacy,
+            report_run_id=UUID("11111111-1111-4111-8111-111111111111"),
+            batch_id=UUID("22222222-2222-4222-8222-222222222222"),
+            item_offset=400,
+            expected_item_count=3,
+            expected_counts=(1, 1, 1),
+            allow_historical_v1=True,
+        )["schema_version"]
+        == "supply-chain.report-batch-results.v1"
     )
 
 

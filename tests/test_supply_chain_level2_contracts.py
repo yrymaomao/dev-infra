@@ -26,6 +26,7 @@ def test_contract_schemas_are_draft_2020_12_valid() -> None:
         ROOT / "policy.v1.schema.json",
         ROOT / "forecast.v1.schema.json",
         ROOT / "report-batch-results.v1.schema.json",
+        ROOT / "report-batch-results.v2.schema.json",
     ]
     for path in paths:
         jsonschema.Draft202012Validator.check_schema(_load_json(path))
@@ -65,6 +66,15 @@ def test_agent_batch_result_fixture_is_frozen_and_validates() -> None:
     )
 
 
+def test_agent_v2_batch_result_fixture_validates() -> None:
+    schema = _load_json(ROOT / "report-batch-results.v2.schema.json")
+    fixture = _load_json(ROOT / "fixtures" / "report-batch-results.v2.valid.json")
+    jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(
+        fixture
+    )
+    assert fixture["schema_version"] == "supply-chain.report-batch-results.v2"
+
+
 def test_openapi_declares_all_level2_resources() -> None:
     document = yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))
     assert document["openapi"] == "3.1.0"
@@ -88,6 +98,17 @@ def test_openapi_declares_all_level2_resources() -> None:
         "/api/supply-chain/v2/policies/{version}/activate",
     }
     assert expected <= set(paths)
+    report = document["components"]["schemas"]["ReportSnapshot"]
+    assert report["properties"]["schema_version"]["enum"] == [
+        "supply-chain.report.v1",
+        "supply-chain.report.v2",
+    ]
+    assert set(report["oneOf"][1]["required"]) == {
+        "selection_snapshot",
+        "policy_snapshot",
+        "external_signals",
+        "model_versions",
+    }
 
 
 def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:

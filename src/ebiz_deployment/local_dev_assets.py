@@ -255,7 +255,7 @@ def _streaming_bff_release() -> dict[str, Any]:
     return {
         "version": "0.1.4",
         "schema": "supply_chain_bff",
-        "migration_head": "0005_schedule_idempotency",
+        "migration_head": "0006_report_v2_contract",
         "secret_references": [
             "supply_chain_bff_postgresql_url",
             "supply_chain_cursor_hmac_signing_key",
