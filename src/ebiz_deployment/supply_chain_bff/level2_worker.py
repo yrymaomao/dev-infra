@@ -555,13 +555,18 @@ def _selection_result(
     result = _agent_result_payload(result)
     if not isinstance(result, dict):
         raise ValueError("selection workflow omitted result")
-    if selector is not None and set(result) == {
+    discovery_keys = {
         "schema_version",
         "source_snapshot_id",
         "snapshot_time",
         "items",
         "next_cursor",
-    }:
+    }
+    if (
+        selector is not None
+        and discovery_keys <= set(result)
+        and set(result) <= discovery_keys | {"evidence_ref"}
+    ):
         result = {
             "selector": selector,
             "source_snapshot_id": result["source_snapshot_id"],

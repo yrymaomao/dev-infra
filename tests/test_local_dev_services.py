@@ -324,7 +324,7 @@ def test_openai_responses_endpoint_rejects_non_exact_or_unsatisfied_schema() -> 
     assert [response.status_code for response in responses] == [422] * len(responses)
 
 
-def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v5_read_tools() -> None:
+def test_mcp_requires_broker_token_and_exposes_supply_chain_v6_read_tools() -> None:
     init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -426,6 +426,11 @@ def test_mcp_requires_broker_token_and_exposes_only_supply_chain_v5_read_tools()
         "query_inventory_summary_v2",
         "query_sku_sales_profit_windows_v1",
         "query_sku_boston_cohort_v1",
+        "query_inventory_skus_by_threshold_v1",
+        "query_inventory_batch_snapshot_v1",
+        "query_sku_identity_mapping_v1",
+        "query_fba_inventory_snapshot_v1",
+        "query_sku_fulfillment_sales_profit_windows_v2",
     }
     for tool in listed.json()["result"]["tools"]:
         assert tool["inputSchema"]["additionalProperties"] is False

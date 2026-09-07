@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal, cast
 
 import uvicorn
@@ -53,6 +53,12 @@ PageSize = Annotated[int, Field(ge=1, le=1000)]
 PageIndex = Annotated[int, Field(ge=1)]
 SnapshotDate = Annotated[str, Field(pattern=r"^\d{8}$"), AfterValidator(_valid_yyyymmdd)]
 ExactSearch = Literal["exactSearch"]
+SkuBatch = Annotated[list[Sku], Field(min_length=1, max_length=200)]
+Level2PageSize = Annotated[int, Field(ge=1, le=200)]
+Threshold = Annotated[int, Field(ge=0)]
+SnapshotRef = Annotated[str, Field(min_length=1, max_length=256)]
+Cursor = Annotated[str, Field(min_length=1, max_length=2048)]
+IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 _CANONICAL_RFC3339_UTC_SECONDS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 _ALLOWED_CREDENTIAL_PROVIDERS = frozenset({"mcp.streamable_http", "yeaher.erp"})
@@ -486,11 +492,143 @@ def _formal_output_schemas() -> dict[str, dict[str, Any]]:
             "nextCursor": cohort["properties"]["nextCursor"],
         }
     )
+    sku = {"type": "string", "minLength": 1, "maxLength": 128}
+    nullable_nonnegative_integer = {"type": ["integer", "null"], "minimum": 0}
+    threshold_page = _closed_schema(
+        {
+            "schema_version": {"const": "supply-chain.inventory-threshold.v1"},
+            "source_snapshot_id": {"type": "string", "minLength": 1},
+            "snapshot_time": {"type": "string", "format": "date-time"},
+            "items": {
+                "type": "array",
+                "maxItems": 200,
+                "items": _closed_schema(
+                    {"sku": sku, "available_quantity": {"type": "integer", "minimum": 0}}
+                ),
+            },
+            "next_cursor": {"type": ["string", "null"]},
+        }
+    )
+    inventory_batch_item = _closed_schema(
+        {
+            "status": {"enum": ["FOUND", "NO_SNAPSHOT"]},
+            "sku": sku,
+            "availableQuantity": nullable_nonnegative_integer,
+            "holdQuantity": nullable_nonnegative_integer,
+            "transferInTransitQuantity": nullable_nonnegative_integer,
+            "purchaseInTransitQuantity": nullable_nonnegative_integer,
+            "agedInventoryQuantity": nullable_nonnegative_integer,
+            "daysSinceLastSale": nullable_nonnegative_integer,
+            "sourceSnapshotId": {"type": ["string", "null"]},
+            "asOf": {"type": ["string", "null"], "format": "date-time"},
+        }
+    )
+    inventory_batch = _closed_schema(
+        {
+            "schemaVersion": {"const": "supply-chain.inventory-batch-snapshot.v1"},
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "items": inventory_batch_item,
+            },
+        }
+    )
+    identity_item = _closed_schema(
+        {
+            "sku": sku,
+            "status": {"enum": ["FOUND", "NO_FOUND", "CONFLICT"]},
+            "msku_status": {"enum": ["FOUND", "NO_MAPPING", "CONFLICT", "NOT_APPLICABLE"]},
+            "msku": {"type": ["string", "null"]},
+            "asin_status": {"const": "UNAVAILABLE_NOT_OWNED"},
+            "asins": {"type": ["array", "null"], "items": {"type": "string"}},
+            "source": {"type": "string", "minLength": 1},
+            "valid_from": {"type": ["string", "null"], "format": "date-time"},
+            "valid_to": {"type": ["string", "null"], "format": "date-time"},
+        }
+    )
+    identity_batch = _closed_schema(
+        {
+            "schema_version": {"const": "supply-chain.sku-identity-mapping.v1"},
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "items": identity_item,
+            },
+        }
+    )
+    age_buckets = _closed_schema(
+        {
+            "days_0_90": nullable_nonnegative_integer,
+            "days_91_180": nullable_nonnegative_integer,
+            "days_181_270": nullable_nonnegative_integer,
+            "days_271_365": nullable_nonnegative_integer,
+            "days_365_plus": nullable_nonnegative_integer,
+        }
+    )
+    fba_item = _closed_schema(
+        {
+            "sku": sku,
+            "status": {
+                "enum": [
+                    "FOUND",
+                    "NO_SNAPSHOT",
+                    "SNAPSHOT_INCOMPLETE",
+                    "SNAPSHOT_CONFLICT",
+                ]
+            },
+            "msku": {"type": ["string", "null"]},
+            "fnsku": {"type": ["string", "null"]},
+            "asin": {"type": ["string", "null"]},
+            "available": nullable_nonnegative_integer,
+            "reserved": nullable_nonnegative_integer,
+            "inbound": nullable_nonnegative_integer,
+            "unfulfillable": nullable_nonnegative_integer,
+            "age_buckets": age_buckets,
+            "monthly_storage_cost": {"type": ["number", "null"], "minimum": 0},
+        }
+    )
+    fba_batch = _closed_schema(
+        {
+            "schema_version": {"const": "supply-chain.fba-inventory-snapshot.v1"},
+            "source_snapshot_id": {"type": "string", "minLength": 1},
+            "snapshot_time": {"type": "string", "format": "date-time"},
+            "items": {"type": "array", "minItems": 1, "maxItems": 200, "items": fba_item},
+        }
+    )
+    fulfillment_sale = _closed_schema(
+        {
+            "sku": sku,
+            "business_week": {"type": "string", "format": "date"},
+            "fulfillment": {"enum": ["FBA", "FBM", "UNKNOWN"]},
+            "units": {"type": "number"},
+            "revenue": {"type": "number"},
+            "profit": {"type": ["number", "null"]},
+            "returns": {"type": "number", "minimum": 0},
+            "discount": {"type": "number", "minimum": 0},
+        }
+    )
+    fulfillment_sales = _closed_schema(
+        {
+            "schema_version": {"const": "supply-chain.fulfillment-sales-profit-windows.v2"},
+            "source_snapshot_id": {"type": "string", "minLength": 1},
+            "latest_complete_week": {"type": "string", "format": "date"},
+            "items": {"type": "array", "items": fulfillment_sale},
+        }
+    )
     return {
         "query_sku_upc_mapping": _yeaher_result_schema(identity_page),
         "query_inventory_summary_v2": _result_data_schema(_closed_schema(inventory_properties)),
         "query_sku_sales_profit_windows_v1": _yeaher_result_schema(batch),
         "query_sku_boston_cohort_v1": _yeaher_result_schema(cohort_page),
+        "query_inventory_skus_by_threshold_v1": _yeaher_result_schema(threshold_page),
+        "query_inventory_batch_snapshot_v1": _yeaher_result_schema(inventory_batch),
+        "query_sku_identity_mapping_v1": _yeaher_result_schema(identity_batch),
+        "query_fba_inventory_snapshot_v1": _yeaher_result_schema(fba_batch),
+        "query_sku_fulfillment_sales_profit_windows_v2": _yeaher_result_schema(
+            fulfillment_sales
+        ),
     }
 
 
@@ -599,6 +737,180 @@ def create_mcp_app() -> ASGIApp:
                 "sourceMaxBizDate": source_max_biz_date,
                 "sourceWatermark": f"local-cohort-watermark-{source_max_biz_date}",
                 "incompleteReason": None,
+            }
+        )
+
+    @server.tool(name="query_inventory_skus_by_threshold_v1", structured_output=True)
+    async def inventory_skus_by_threshold(
+        quantity_metric: Literal["AVAILABLE_QUANTITY"],
+        operator: Literal["GT"],
+        threshold: Threshold,
+        sort: Literal["SKU_ASC"],
+        page_size: Level2PageSize,
+        source_snapshot_id: SnapshotRef | None = None,
+        cursor: Cursor | None = None,
+    ) -> dict[str, Any]:
+        del quantity_metric, operator, sort
+        snapshot_id = "local-ims-level2-snapshot-1"
+        if source_snapshot_id not in {None, snapshot_id}:
+            raise ValueError("source_snapshot_id does not match the frozen local snapshot")
+        if cursor is not None:
+            raise ValueError("deterministic local selection has exactly one page")
+        candidates = (
+            ("SKU-LOCAL-FBA", 31),
+            ("SKU-LOCAL-FBM", 30),
+            ("SKU-LOCAL-MIXED", 60),
+        )
+        items = [
+            {"sku": sku, "available_quantity": quantity}
+            for sku, quantity in candidates
+            if quantity > threshold
+        ][:page_size]
+        return _yeaher_result(
+            {
+                "schema_version": "supply-chain.inventory-threshold.v1",
+                "source_snapshot_id": snapshot_id,
+                "snapshot_time": inventory_as_of,
+                "items": items,
+                "next_cursor": None,
+            }
+        )
+
+    @server.tool(name="query_inventory_batch_snapshot_v1", structured_output=True)
+    async def inventory_batch_snapshot(skus: SkuBatch) -> dict[str, Any]:
+        if len(skus) != len(set(skus)):
+            raise ValueError("skus must be unique")
+        return _yeaher_result(
+            {
+                "schemaVersion": "supply-chain.inventory-batch-snapshot.v1",
+                "items": [
+                    {
+                        "status": "FOUND",
+                        "sku": sku,
+                        "availableQuantity": 30 if "MIXED" not in sku else 48,
+                        "holdQuantity": 0,
+                        "transferInTransitQuantity": 0,
+                        "purchaseInTransitQuantity": 12,
+                        "agedInventoryQuantity": 4,
+                        "daysSinceLastSale": 1,
+                        "sourceSnapshotId": "local-ims-level2-snapshot-1",
+                        "asOf": inventory_as_of,
+                    }
+                    for sku in skus
+                ],
+            }
+        )
+
+    @server.tool(name="query_sku_identity_mapping_v1", structured_output=True)
+    async def sku_identity_mapping(skus: SkuBatch) -> dict[str, Any]:
+        if len(skus) != len(set(skus)):
+            raise ValueError("skus must be unique")
+        return _yeaher_result(
+            {
+                "schema_version": "supply-chain.sku-identity-mapping.v1",
+                "items": [
+                    {
+                        "sku": sku,
+                        "status": "FOUND",
+                        "msku_status": "FOUND",
+                        "msku": f"MSKU-{sku.removeprefix('SKU-')}",
+                        "asin_status": "UNAVAILABLE_NOT_OWNED",
+                        "asins": None,
+                        "source": "LOCAL_DETERMINISTIC:SKU_MAPPING",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "valid_to": None,
+                    }
+                    for sku in skus
+                ],
+            }
+        )
+
+    @server.tool(name="query_fba_inventory_snapshot_v1", structured_output=True)
+    async def fba_inventory_snapshot(skus: SkuBatch) -> dict[str, Any]:
+        if len(skus) != len(set(skus)):
+            raise ValueError("skus must be unique")
+        missing_ages = {
+            "days_0_90": None,
+            "days_91_180": None,
+            "days_181_270": None,
+            "days_271_365": None,
+            "days_365_plus": None,
+        }
+        items: list[dict[str, Any]] = []
+        for sku in skus:
+            has_fba = "FBA" in sku or "MIXED" in sku
+            items.append(
+                {
+                    "sku": sku,
+                    "status": "FOUND" if has_fba else "NO_SNAPSHOT",
+                    "msku": f"MSKU-{sku.removeprefix('SKU-')}" if has_fba else None,
+                    "fnsku": f"FNSKU-{sku.removeprefix('SKU-')}" if has_fba else None,
+                    "asin": "B000000001" if has_fba else None,
+                    "available": 21 if "FBA" in sku else (12 if has_fba else None),
+                    "reserved": 2 if has_fba else None,
+                    "inbound": 5 if has_fba else None,
+                    "unfulfillable": 1 if has_fba else None,
+                    "age_buckets": dict(missing_ages),
+                    "monthly_storage_cost": 3.5 if has_fba else None,
+                }
+            )
+        return _yeaher_result(
+            {
+                "schema_version": "supply-chain.fba-inventory-snapshot.v1",
+                "source_snapshot_id": "local-fba-level2-snapshot-1",
+                "snapshot_time": inventory_as_of,
+                "items": items,
+            }
+        )
+
+    @server.tool(name="query_sku_fulfillment_sales_profit_windows_v2", structured_output=True)
+    async def sku_fulfillment_sales_profit_windows(
+        skus: SkuBatch,
+        week_from: IsoDate,
+        week_to: IsoDate,
+    ) -> dict[str, Any]:
+        if len(skus) != len(set(skus)):
+            raise ValueError("skus must be unique")
+        try:
+            first_week = date.fromisoformat(week_from)
+            last_week = date.fromisoformat(week_to)
+        except ValueError:
+            raise ValueError("week range must use valid ISO dates") from None
+        if first_week > last_week:
+            raise ValueError("week_from must not follow week_to")
+        weeks: list[date] = []
+        current = first_week
+        while current <= last_week and len(weeks) < 53:
+            weeks.append(current)
+            current += timedelta(days=7)
+        items: list[dict[str, Any]] = []
+        for sku in skus:
+            fulfillments = (
+                ("FBA", "FBM")
+                if "MIXED" in sku
+                else (("FBA",) if "FBA" in sku else ("FBM",))
+            )
+            for index, business_week in enumerate(weeks):
+                for fulfillment in fulfillments:
+                    units = 8 + index + (2 if fulfillment == "FBA" else 0)
+                    items.append(
+                        {
+                            "sku": sku,
+                            "business_week": business_week.isoformat(),
+                            "fulfillment": fulfillment,
+                            "units": units,
+                            "revenue": float(units * 25),
+                            "profit": float(units * 8),
+                            "returns": 0.0,
+                            "discount": 0.0,
+                        }
+                    )
+        return _yeaher_result(
+            {
+                "schema_version": "supply-chain.fulfillment-sales-profit-windows.v2",
+                "source_snapshot_id": "local-sales-level2-snapshot-1",
+                "latest_complete_week": last_week.isoformat(),
+                "items": items,
             }
         )
 
