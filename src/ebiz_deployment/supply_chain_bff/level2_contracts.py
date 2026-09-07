@@ -123,6 +123,16 @@ class ReportRunRequest(StrictModel):
         return self
 
 
+class ReportCancelAccepted(StrictModel):
+    schema_version: Literal["supply-chain.report-cancel-accepted.v1"] = (
+        "supply-chain.report-cancel-accepted.v1"
+    )
+    report_run_id: UUID = Field(strict=False)
+    status: Literal["CANCEL_REQUESTED"] = "CANCEL_REQUESTED"
+    semantics: Literal["BEST_EFFORT"] = "BEST_EFFORT"
+    runtime_completion: Literal["NOT_CONFIRMED"] = "NOT_CONFIRMED"
+
+
 class ScheduleCreate(StrictModel):
     name: str = Field(min_length=1, max_length=128)
     timezone: TenantTimezone

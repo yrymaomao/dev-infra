@@ -28,6 +28,7 @@ from .cursor import CursorExpired, CursorInvalid, CursorSigner
 from .dispatcher import BatchCoordinator
 from .eta import EtaEstimator
 from .level2_contracts import (
+    ReportCancelAccepted,
     ReportRunRequest,
     ScheduleCreate,
     SchedulePatch,
@@ -555,7 +556,7 @@ def create_app(container: BffContainer) -> FastAPI:
         report_run_id: UUID,
         current: Principal = Depends(principal),
         repository: Level2Repository = Depends(level2),
-    ) -> dict[str, object]:
+    ) -> ReportCancelAccepted:
         found = (
             await container.level2_worker.cancel_report(
                 tenant_id=current.tenant_id,
@@ -569,7 +570,7 @@ def create_app(container: BffContainer) -> FastAPI:
         )
         if not found:
             raise HTTPException(status_code=404, detail="report not found")
-        return {"report_run_id": str(report_run_id), "status": "CANCEL_REQUESTED"}
+        return ReportCancelAccepted(report_run_id=report_run_id)
 
     @app.post("/api/supply-chain/v2/policies/validate")
     async def validate_policy_document(

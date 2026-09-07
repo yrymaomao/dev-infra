@@ -116,6 +116,13 @@ def test_openapi_declares_all_level2_resources() -> None:
         "external_signals",
         "model_versions",
     }
+    cancel_response = paths["/api/supply-chain/v2/reports/{report_run_id}/cancel"]["post"][
+        "responses"
+    ]["202"]["content"]["application/json"]["schema"]
+    assert cancel_response == {"$ref": "#/components/schemas/ReportCancelAccepted"}
+    assert document["components"]["schemas"]["ReportCancelAccepted"]["properties"][
+        "semantics"
+    ]["const"] == "BEST_EFFORT"
 
 
 def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
@@ -138,9 +145,10 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
             level2_repository=object(),  # type: ignore[arg-type]
         )
     )
+    generated_document = app.openapi()
     generated = {
         path
-        for path in app.openapi()["paths"]
+        for path in generated_document["paths"]
         if path.startswith("/api/supply-chain/v2/")
         and not path.startswith("/api/supply-chain/v2/analysis-batches")
         and path
@@ -151,6 +159,9 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
     }
     frozen = set(yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))["paths"])
     assert generated == frozen
+    cancel_schema = generated_document["components"]["schemas"]["ReportCancelAccepted"]
+    assert cancel_schema["properties"]["semantics"]["const"] == "BEST_EFFORT"
+    assert cancel_schema["properties"]["runtime_completion"]["const"] == "NOT_CONFIRMED"
 
 
 def test_pure_v6_mode_removes_legacy_analysis_batch_routes() -> None:

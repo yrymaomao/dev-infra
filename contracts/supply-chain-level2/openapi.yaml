@@ -188,7 +188,11 @@ paths:
       operationId: cancelReport
       responses:
         '202':
-          description: Cancellation requested
+          description: Cancellation accepted; callers must not infer Runtime execution completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportCancelAccepted'
   /api/supply-chain/v2/schedules:
     get:
       operationId: listSchedules
@@ -386,6 +390,24 @@ components:
           type: string
         request_id:
           type: [string, 'null']
+    ReportCancelAccepted:
+      type: object
+      additionalProperties: false
+      required: [schema_version, report_run_id, status, semantics, runtime_completion]
+      properties:
+        schema_version:
+          const: supply-chain.report-cancel-accepted.v1
+        report_run_id:
+          type: string
+          format: uuid
+        status:
+          const: CANCEL_REQUESTED
+        semantics:
+          const: BEST_EFFORT
+          description: Runtime cancellation is attempted but is not synchronously confirmed.
+        runtime_completion:
+          const: NOT_CONFIRMED
+          description: Observe Runtime execution state separately when completion confirmation is required.
     InventorySelector:
       type: object
       additionalProperties: false
