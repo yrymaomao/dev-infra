@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -21,6 +22,7 @@ from ebiz_deployment.supply_chain_bff.level2_models import (
 )
 from ebiz_deployment.supply_chain_bff.level2_repository import (
     ActiveReportExecution,
+    ClaimedReportBatch,
     Level2Repository,
 )
 from ebiz_deployment.supply_chain_bff.migration import upgrade
@@ -35,6 +37,27 @@ RESULT_FIXTURE = (
     / "fixtures"
     / "report-batch-results.valid.json"
 )
+
+
+async def _bind_test_evidence(
+    repository: Level2Repository,
+    delivery: ClaimedReportBatch,
+) -> ClaimedReportBatch:
+    selection_id = uuid4()
+    policy_id = uuid4()
+    documents = await repository.load_report_artifacts(delivery)
+    assert documents.selection["rows"]
+    assert documents.policy["schema_version"] == "supply-chain.policy.v1"
+    await repository.record_report_evidence_refs(
+        delivery,
+        selection_evidence_id=selection_id,
+        policy_evidence_id=policy_id,
+    )
+    return replace(
+        delivery,
+        selection_evidence_id=selection_id,
+        policy_evidence_id=policy_id,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -172,6 +195,7 @@ async def test_10000_skus_freeze_to_exactly_50_durable_idempotent_batches(
         global_concurrency=8,
     )
     assert delivery is not None
+    delivery = await _bind_test_evidence(repository, delivery)
     execution_id = UUID("00000000-0000-4000-8000-000000000099")
     await repository.record_report_start(
         delivery,
@@ -254,6 +278,7 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
         global_concurrency=8,
     )
     assert delivery is not None
+    delivery = await _bind_test_evidence(repository, delivery)
     execution_id = uuid4()
     artifact = json.loads(RESULT_FIXTURE.read_text(encoding="utf-8"))
     artifact["report_run_id"] = str(created.report_run_id)

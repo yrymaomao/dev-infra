@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -17,10 +19,16 @@ from .level2_repository import (
     ClaimedPreview,
     ClaimedReportBatch,
     Level2Repository,
+    ResourceConflict,
     ResourceNotReady,
 )
 from .report_mq import DeferredDelivery, ReportBatchMessage, ReportMessageBus
-from .runtime_client import RuntimeClient, RuntimeRequestError, RuntimeStartResult
+from .runtime_client import (
+    RuntimeArtifactClient,
+    RuntimeClient,
+    RuntimeRequestError,
+    RuntimeStartResult,
+)
 
 _TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 AuthorizationFactory = Callable[[str], str]
@@ -32,12 +40,14 @@ class Level2Worker:
         *,
         repository: Level2Repository,
         runtime: RuntimeClient,
+        artifacts: RuntimeArtifactClient,
         settings: BffSettings,
         authorization_for_tenant: AuthorizationFactory,
         bus: ReportMessageBus | None,
     ) -> None:
         self._repository = repository
         self._runtime = runtime
+        self._artifacts = artifacts
         self._settings = settings
         self._authorization_for_tenant = authorization_for_tenant
         self._bus = bus
@@ -303,6 +313,7 @@ class Level2Worker:
         if claim is None:
             return
         try:
+            claim = await self._governed_claim(claim)
             result = await self._runtime.start(
                 authorization=self._authorization_for_tenant(claim.tenant_id),
                 respond_async=self._settings.async_start_enabled,
@@ -338,6 +349,21 @@ class Level2Worker:
             )
             if error.retryable:
                 raise DeferredDelivery(error.safe_message) from None
+        except ResourceNotReady as error:
+            raise DeferredDelivery(str(error)) from None
+        except ResourceConflict as error:
+            await self._repository.record_report_dispatch_error(
+                claim,
+                now=now,
+                retryable=False,
+                safe_error={
+                    "phase": "artifact-registration",
+                    "category": "contract",
+                    "retryable": False,
+                    "safe_message": str(error)[:1024],
+                    "request_id": None,
+                },
+            )
         except (TypeError, ValueError) as error:
             await self._repository.record_report_dispatch_error(
                 claim,
@@ -351,6 +377,56 @@ class Level2Worker:
                     "request_id": None,
                 },
             )
+
+    async def _governed_claim(self, claim: ClaimedReportBatch) -> ClaimedReportBatch:
+        documents = await self._repository.load_report_artifacts(claim)
+        authorization = self._authorization_for_tenant(claim.tenant_id)
+        selection_evidence_id = claim.selection_evidence_id
+        if selection_evidence_id is None:
+            registered = await self._artifacts.register(
+                authorization=authorization,
+                idempotency_key=_artifact_idempotency_key(
+                    "selection",
+                    claim=claim,
+                    content_hash=claim.selection_payload_hash,
+                ),
+                source_type="supply-chain.selection-snapshot",
+                external_object_id=(f"report:{claim.report_run_id}:batch:{claim.batch_id}"),
+                captured_at=_utc_timestamp(claim.data_cutoff),
+                content_schema="supply-chain.selection-batch.v1",
+                content_hash=claim.selection_payload_hash,
+                document=documents.selection,
+            )
+            selection_evidence_id = registered.evidence_id
+        policy_evidence_id = claim.policy_evidence_id
+        if policy_evidence_id is None:
+            registered = await self._artifacts.register(
+                authorization=authorization,
+                idempotency_key=_artifact_idempotency_key(
+                    "policy",
+                    claim=claim,
+                    content_hash=claim.policy_snapshot_hash,
+                ),
+                source_type="supply-chain.policy-snapshot",
+                external_object_id=(
+                    f"report:{claim.report_run_id}:policy:{claim.policy_version or 'default'}"
+                ),
+                captured_at=_utc_timestamp(claim.data_cutoff),
+                content_schema="supply-chain.policy.v1",
+                content_hash=claim.policy_snapshot_hash,
+                document=documents.policy,
+            )
+            policy_evidence_id = registered.evidence_id
+        await self._repository.record_report_evidence_refs(
+            claim,
+            selection_evidence_id=selection_evidence_id,
+            policy_evidence_id=policy_evidence_id,
+        )
+        return replace(
+            claim,
+            selection_evidence_id=selection_evidence_id,
+            policy_evidence_id=policy_evidence_id,
+        )
 
     async def _terminal_snapshot(
         self,
@@ -384,6 +460,8 @@ class Level2Worker:
 def _batch_runtime_payload(
     claim: ClaimedReportBatch,
 ) -> dict[str, object]:
+    if claim.selection_evidence_id is None or claim.policy_evidence_id is None:
+        raise ValueError("Runtime EvidenceRef registration is required before dispatch")
     cutoff_date = claim.data_cutoff.date()
     week_to = cutoff_date - timedelta(days=cutoff_date.weekday() + 7)
     week_from = week_to - timedelta(weeks=259)
@@ -393,10 +471,10 @@ def _batch_runtime_payload(
         "inputs": {
             "report_run_id": str(claim.report_run_id),
             "batch_id": str(claim.batch_id),
-            "selection_snapshot_ref": claim.selection_payload_ref,
+            "selection_snapshot_ref": str(claim.selection_evidence_id),
             "item_offset": claim.item_offset,
             "item_count": claim.item_count,
-            "policy_snapshot_ref": claim.policy_snapshot_ref,
+            "policy_snapshot_ref": str(claim.policy_evidence_id),
             "data_cutoff": claim.data_cutoff.isoformat().replace("+00:00", "Z"),
             "week_from": week_from.isoformat(),
             "week_to": week_to.isoformat(),
@@ -404,6 +482,27 @@ def _batch_runtime_payload(
         },
         "idempotency_key": f"supply-chain-report:{claim.batch_id}",
     }
+
+
+def _artifact_idempotency_key(
+    kind: str,
+    *,
+    claim: ClaimedReportBatch,
+    content_hash: str,
+) -> str:
+    identity = "\x1f".join(
+        (
+            claim.tenant_id,
+            str(claim.report_run_id),
+            str(claim.batch_id) if kind == "selection" else str(claim.policy_version or "default"),
+            content_hash,
+        )
+    )
+    return f"sc.{kind}.{hashlib.sha256(identity.encode('utf-8')).hexdigest()}"
+
+
+def _utc_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _selection_runtime_payload(

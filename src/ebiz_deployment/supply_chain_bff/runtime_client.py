@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
+from uuid import UUID
 
 import httpx
 
@@ -39,6 +40,85 @@ class RuntimeStartResult:
     root_execution_id: str
     session_id: str | None
     snapshot: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeArtifactResult:
+    evidence_id: UUID
+    content_hash: str
+    content_type: Literal["application/json"]
+    size_bytes: int
+    access_level: Literal["runtime:payload:read"]
+
+
+class RuntimeArtifactClient:
+    """Register BFF-owned JSON as Runtime-governed input evidence."""
+
+    def __init__(self, http: httpx.AsyncClient, *, base_url: str) -> None:
+        if not base_url.startswith(("http://127.0.0.1:", "http://localhost:", "https://")):
+            raise ValueError("Runtime URL must be loopback HTTP or HTTPS")
+        self._http = http
+        self._base_url = base_url.rstrip("/")
+
+    async def register(
+        self,
+        *,
+        authorization: str,
+        idempotency_key: str,
+        source_type: str,
+        external_object_id: str,
+        captured_at: str,
+        content_schema: str,
+        content_hash: str,
+        document: Mapping[str, object],
+    ) -> RuntimeArtifactResult:
+        try:
+            response = await self._http.post(
+                f"{self._base_url}/v1/governed-artifacts",
+                headers={
+                    "Authorization": authorization,
+                    "Accept": "application/json",
+                    "Idempotency-Key": idempotency_key,
+                },
+                json={
+                    "schema_version": "runtime.governed-artifact-registration.v1",
+                    "source_type": source_type,
+                    "source_system": "supply-chain-bff",
+                    "external_object_id": external_object_id,
+                    "captured_at": captured_at,
+                    "content_schema": content_schema,
+                    "content_hash": content_hash,
+                    "document": dict(document),
+                },
+            )
+        except httpx.HTTPError:
+            raise RuntimeClient._transport_error() from None
+        body = RuntimeClient._body(response)
+        if response.status_code != 201:
+            raise RuntimeClient._error(response, body)
+        if body.get("schema_version") != "runtime.governed-artifact-registration-result.v1":
+            raise ValueError("Runtime returned an unsupported governed artifact contract")
+        try:
+            evidence_id = UUID(RuntimeClient._required_string(body, "evidence_id"))
+        except ValueError:
+            raise ValueError("Runtime returned an invalid EvidenceRef UUID") from None
+        returned_hash = RuntimeClient._required_string(body, "content_hash")
+        if returned_hash != content_hash:
+            raise ValueError("Runtime returned a mismatched governed artifact hash")
+        if body.get("content_type") != "application/json":
+            raise ValueError("Runtime returned an invalid governed artifact content type")
+        size_bytes = body.get("size_bytes")
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes < 0:
+            raise ValueError("Runtime returned an invalid governed artifact size")
+        if body.get("access_level") != "runtime:payload:read":
+            raise ValueError("Runtime returned an invalid governed artifact access level")
+        return RuntimeArtifactResult(
+            evidence_id=evidence_id,
+            content_hash=returned_hash,
+            content_type="application/json",
+            size_bytes=size_bytes,
+            access_level="runtime:payload:read",
+        )
 
 
 class RuntimeClient:

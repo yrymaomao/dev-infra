@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_runtime.payloads.contracts import PayloadAuthorizationError, PayloadStore
+from agent_runtime.payloads.redaction import canonical_json_bytes
 from pydantic import JsonValue
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -90,7 +91,12 @@ class ClaimedReportBatch:
     item_offset: int
     item_count: int
     selection_payload_ref: str
+    selection_payload_hash: str
+    selection_evidence_id: UUID | None
     policy_snapshot_ref: str
+    policy_snapshot_hash: str
+    policy_evidence_id: UUID | None
+    policy_version: int | None
     data_cutoff: datetime
     lease_owner: str
 
@@ -119,7 +125,14 @@ class ClaimedScheduledReport:
 class ResolvedPolicySnapshot:
     version: int | None
     document_ref: str
+    document_hash: str
     risk_flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReportArtifactDocuments:
+    selection: dict[str, Any]
+    policy: dict[str, Any]
 
 
 class Level2Repository:
@@ -623,6 +636,7 @@ class Level2Repository:
                         policy_mode=request.policy_mode,
                         policy_version=policy.version,
                         policy_snapshot_ref=policy.document_ref,
+                        policy_snapshot_hash=policy.document_hash,
                         data_cutoff=preview.snapshot_time,
                         status="ACCEPTED",
                         sku_count=preview.matched_count,
@@ -1115,9 +1129,17 @@ class Level2Repository:
                     SelectionPreview.id == report.selection_preview_id,
                 )
             )
-            if preview is None or batch.selection_payload_ref is None:
+            if (
+                preview is None
+                or batch.selection_payload_ref is None
+                or batch.selection_payload_hash is None
+            ):
                 raise ValueError("report selection payload is unavailable")
-            if report.policy_snapshot_ref is None or report.data_cutoff is None:
+            if (
+                report.policy_snapshot_ref is None
+                or report.policy_snapshot_hash is None
+                or report.data_cutoff is None
+            ):
                 raise ValueError("report policy or data cutoff is unavailable")
             batch.status = "DISPATCHING"
             batch.attempt_count += 1
@@ -1135,10 +1157,80 @@ class Level2Repository:
                 item_offset=batch.item_offset,
                 item_count=batch.item_count,
                 selection_payload_ref=batch.selection_payload_ref,
+                selection_payload_hash=batch.selection_payload_hash,
+                selection_evidence_id=batch.selection_evidence_id,
                 policy_snapshot_ref=report.policy_snapshot_ref,
+                policy_snapshot_hash=report.policy_snapshot_hash,
+                policy_evidence_id=report.policy_evidence_id,
+                policy_version=report.policy_version,
                 data_cutoff=report.data_cutoff,
                 lease_owner=worker_id,
             )
+
+    async def load_report_artifacts(
+        self,
+        claim: ClaimedReportBatch,
+    ) -> ReportArtifactDocuments:
+        selection = await self._load(
+            claim.tenant_id,
+            claim.selection_payload_ref,
+            claim.selection_payload_hash,
+        )
+        policy = await self._load(
+            claim.tenant_id,
+            claim.policy_snapshot_ref,
+            claim.policy_snapshot_hash,
+        )
+        selection_hash = hashlib.sha256(
+            canonical_json_bytes(cast(JsonValue, selection))
+        ).hexdigest()
+        policy_hash = hashlib.sha256(canonical_json_bytes(cast(JsonValue, policy))).hexdigest()
+        if selection_hash != claim.selection_payload_hash:
+            raise ValueError("selection artifact canonical hash mismatch")
+        if policy_hash != claim.policy_snapshot_hash:
+            raise ValueError("policy artifact canonical hash mismatch")
+        return ReportArtifactDocuments(selection=selection, policy=policy)
+
+    async def record_report_evidence_refs(
+        self,
+        claim: ClaimedReportBatch,
+        *,
+        selection_evidence_id: UUID,
+        policy_evidence_id: UUID,
+    ) -> None:
+        async with self._factory() as session, session.begin():
+            batch = await session.scalar(
+                select(ReportBatch)
+                .where(
+                    ReportBatch.tenant_id == claim.tenant_id,
+                    ReportBatch.id == claim.batch_id,
+                    ReportBatch.status == "DISPATCHING",
+                    ReportBatch.lease_owner == claim.lease_owner,
+                )
+                .with_for_update()
+            )
+            report = await session.scalar(
+                select(ReportRun)
+                .where(
+                    ReportRun.tenant_id == claim.tenant_id,
+                    ReportRun.id == claim.report_run_id,
+                )
+                .with_for_update()
+            )
+            if batch is None or report is None:
+                raise ResourceNotReady("report batch dispatch lease is no longer owned")
+            if (
+                batch.selection_evidence_id is not None
+                and batch.selection_evidence_id != selection_evidence_id
+            ):
+                raise ResourceConflict("selection EvidenceRef identity changed")
+            if (
+                report.policy_evidence_id is not None
+                and report.policy_evidence_id != policy_evidence_id
+            ):
+                raise ResourceConflict("policy EvidenceRef identity changed")
+            batch.selection_evidence_id = selection_evidence_id
+            report.policy_evidence_id = policy_evidence_id
 
     async def record_report_start(
         self,
@@ -1160,6 +1252,22 @@ class Level2Repository:
             )
             if batch is None:
                 return
+            report = await session.scalar(
+                select(ReportRun).where(
+                    ReportRun.tenant_id == claim.tenant_id,
+                    ReportRun.id == claim.report_run_id,
+                )
+            )
+            if (
+                report is None
+                or claim.selection_evidence_id is None
+                or claim.policy_evidence_id is None
+                or batch.selection_evidence_id != claim.selection_evidence_id
+                or report.policy_evidence_id != claim.policy_evidence_id
+            ):
+                raise ValueError(
+                    "Runtime EvidenceRef identities were not persisted before dispatch"
+                )
             batch.runtime_execution_id = UUID(result.execution_id)
             batch.status = "DISPATCHED"
             batch.lease_owner = None
@@ -1700,6 +1808,39 @@ class Level2Repository:
             policy_mode=report_configuration.policy_mode,
             policy_version=report_configuration.policy_version,
         )
+        staged_batch_selections: list[Any] = []
+        if report_configuration.selection_preview_id is not None:
+            async with self._factory() as session:
+                preview_configuration = await session.scalar(
+                    select(SelectionPreview).where(
+                        SelectionPreview.tenant_id == claim.tenant_id,
+                        SelectionPreview.id == report_configuration.selection_preview_id,
+                    )
+                )
+            if (
+                preview_configuration is not None
+                and preview_configuration.status == "READY"
+                and preview_configuration.payload_ref is not None
+                and preview_configuration.payload_hash is not None
+            ):
+                selection_document = await self._load(
+                    claim.tenant_id,
+                    preview_configuration.payload_ref,
+                    preview_configuration.payload_hash,
+                )
+                selection_rows = _normalized_batch_selection_rows(selection_document)
+                if len(selection_rows) != preview_configuration.matched_count:
+                    raise ValueError(
+                        "selection artifact count does not match the scheduled preview"
+                    )
+                for index in range(0, len(selection_rows), 200):
+                    batch_rows = selection_rows[index : index + 200]
+                    staged_batch_selections.append(
+                        await self._stage(
+                            claim.tenant_id,
+                            {"rows": batch_rows, "skus": [row["sku"] for row in batch_rows]},
+                        )
+                    )
         async with self._factory() as session, session.begin():
             report = await session.scalar(
                 select(ReportRun)
@@ -1743,6 +1884,7 @@ class Level2Repository:
                 return True
             report.policy_version = policy.version
             report.policy_snapshot_ref = policy.document_ref
+            report.policy_snapshot_hash = policy.document_hash
             report.data_cutoff = preview.snapshot_time
             report.risk_flags = list(dict.fromkeys([*report.risk_flags, *policy.risk_flags]))
             report.sku_count = preview.matched_count
@@ -1756,6 +1898,9 @@ class Level2Repository:
             for index in range(report.batch_count):
                 batch_id = uuid4()
                 item_count = min(200, report.sku_count - index * 200)
+                if index >= len(staged_batch_selections):
+                    raise ValueError("scheduled batch selection payload is unavailable")
+                staged_selection = staged_batch_selections[index]
                 report_batches.append(
                     ReportBatch(
                         id=batch_id,
@@ -1764,6 +1909,8 @@ class Level2Repository:
                         batch_no=index + 1,
                         item_offset=index * 200,
                         item_count=item_count,
+                        selection_payload_ref=staged_selection.payload_ref,
+                        selection_payload_hash=staged_selection.payload_hash,
                         status="QUEUED",
                         next_attempt_at=now,
                     )
@@ -1813,6 +1960,8 @@ class Level2Repository:
                     critical=True,
                 )
             )
+        for staged_selection in staged_batch_selections:
+            await self._commit_staged(claim.tenant_id, staged_selection)
         return True
 
     async def retry_scheduled_report(
@@ -1930,6 +2079,7 @@ class Level2Repository:
             return ResolvedPolicySnapshot(
                 version=policy.version,
                 document_ref=policy.document_ref,
+                document_hash=policy.digest,
             )
         if policy_mode == "PINNED":
             return None
@@ -1940,6 +2090,7 @@ class Level2Repository:
         return ResolvedPolicySnapshot(
             version=None,
             document_ref=cast(str, staged.payload_ref),
+            document_hash=staged.payload_hash,
             risk_flags=("POLICY_DEFAULTED", "CAPITAL_COST_DEFAULTED_1_PERCENT"),
         )
 

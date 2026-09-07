@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -30,7 +31,11 @@ from ebiz_deployment.supply_chain_bff.result_contract import (
     public_result,
     validated_result,
 )
-from ebiz_deployment.supply_chain_bff.runtime_client import RuntimeClient, RuntimeRequestError
+from ebiz_deployment.supply_chain_bff.runtime_client import (
+    RuntimeArtifactClient,
+    RuntimeClient,
+    RuntimeRequestError,
+)
 
 
 def profile() -> EtaProfile:
@@ -188,6 +193,56 @@ async def test_runtime_client_supports_async_and_015_sync_fallback() -> None:
     assert async_result.session_id == "session-1"
     assert sync_result.mode == "sync-polling"
     assert sync_result.snapshot["status"] == "SUCCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_runtime_artifact_client_registers_only_governed_document() -> None:
+    evidence_id = "00000000-0000-4000-8000-000000000099"
+    content_hash = "a" * 64
+
+    async def register(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/governed-artifacts"
+        assert request.headers["authorization"] == "Bearer service-token"
+        assert request.headers["idempotency-key"] == "sc.selection.stable-key"
+        body = json.loads(request.content)
+        assert "tenant_id" not in body
+        assert "access_level" not in body
+        assert body == {
+            "schema_version": "runtime.governed-artifact-registration.v1",
+            "source_type": "supply-chain.selection-snapshot",
+            "source_system": "supply-chain-bff",
+            "external_object_id": "report:r1:batch:b1",
+            "captured_at": "2026-09-07T12:00:00Z",
+            "content_schema": "supply-chain.selection-batch.v1",
+            "content_hash": content_hash,
+            "document": {"rows": [{"sku": "SKU-1"}]},
+        }
+        return httpx.Response(
+            201,
+            json={
+                "schema_version": "runtime.governed-artifact-registration-result.v1",
+                "evidence_id": evidence_id,
+                "content_hash": content_hash,
+                "content_type": "application/json",
+                "size_bytes": 26,
+                "access_level": "runtime:payload:read",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(register)) as http:
+        client = RuntimeArtifactClient(http, base_url="http://127.0.0.1:8000")
+        result = await client.register(
+            authorization="Bearer service-token",
+            idempotency_key="sc.selection.stable-key",
+            source_type="supply-chain.selection-snapshot",
+            external_object_id="report:r1:batch:b1",
+            captured_at="2026-09-07T12:00:00Z",
+            content_schema="supply-chain.selection-batch.v1",
+            content_hash=content_hash,
+            document={"rows": [{"sku": "SKU-1"}]},
+        )
+    assert str(result.evidence_id) == evidence_id
+    assert result.access_level == "runtime:payload:read"
 
 
 @pytest.mark.asyncio

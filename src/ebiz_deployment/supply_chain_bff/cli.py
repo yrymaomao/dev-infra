@@ -21,7 +21,7 @@ from .level2_worker import Level2Worker
 from .migration import upgrade
 from .report_mq import AioPikaReportBus
 from .repository import BatchRepository
-from .runtime_client import RuntimeClient
+from .runtime_client import RuntimeArtifactClient, RuntimeClient
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -40,6 +40,7 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as http:
         runtime = RuntimeClient(http, base_url=settings.runtime_url)
+        artifacts = RuntimeArtifactClient(http, base_url=settings.runtime_url)
         repository = BatchRepository(
             factory,
             payload_store=payload_store,
@@ -67,6 +68,7 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
             Level2Worker(
                 repository=level2_repository,
                 runtime=runtime,
+                artifacts=artifacts,
                 settings=settings,
                 authorization_for_tenant=coordinator.authorization_for_tenant,
                 bus=report_bus,

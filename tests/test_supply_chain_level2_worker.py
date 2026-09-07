@@ -81,8 +81,13 @@ def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() 
         batch_no=1,
         item_offset=0,
         item_count=200,
-        selection_payload_ref="payload://selection/frozen",
-        policy_snapshot_ref="payload://policy/v1",
+        selection_payload_ref="s3://bff-private/selection/frozen",
+        selection_payload_hash="1" * 64,
+        selection_evidence_id=UUID("00000000-0000-4000-8000-000000000004"),
+        policy_snapshot_ref="s3://bff-private/policy/v1",
+        policy_snapshot_hash="2" * 64,
+        policy_evidence_id=UUID("00000000-0000-4000-8000-000000000005"),
+        policy_version=7,
         data_cutoff=datetime(2026, 9, 4, 12, tzinfo=UTC),
         lease_owner="worker-a",
     )
@@ -96,15 +101,16 @@ def test_bulk_runtime_payload_contains_refs_not_skus_and_is_stably_idempotent() 
     assert payload["inputs"] == {  # type: ignore[index]
         "report_run_id": "00000000-0000-4000-8000-000000000002",
         "batch_id": "00000000-0000-4000-8000-000000000003",
-        "selection_snapshot_ref": "payload://selection/frozen",
+        "selection_snapshot_ref": "00000000-0000-4000-8000-000000000004",
         "item_offset": 0,
         "item_count": 200,
-        "policy_snapshot_ref": "payload://policy/v1",
+        "policy_snapshot_ref": "00000000-0000-4000-8000-000000000005",
         "data_cutoff": "2026-09-04T12:00:00Z",
         "week_from": "2021-09-06",
         "week_to": "2026-08-24",
         "summary_enabled": True,
     }
+    assert "s3://" not in str(payload)
 
 
 def test_selection_runtime_payload_splits_first_page_and_continuation() -> None:
