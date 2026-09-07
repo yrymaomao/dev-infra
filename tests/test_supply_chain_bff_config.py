@@ -22,6 +22,7 @@ def test_level2_flags_default_off_and_product_limits_are_bounded(
 ) -> None:
     _required_environment(monkeypatch)
     settings = BffSettings.from_environment()
+    assert settings.legacy_batches_enabled is False
     assert settings.level2_enabled is False
     assert settings.level2_mq_enabled is False
     assert settings.rabbitmq_url is None
@@ -31,6 +32,17 @@ def test_level2_flags_default_off_and_product_limits_are_bounded(
     assert settings.global_bulk_concurrency == 8
     assert settings.etl_wait_seconds == 1800
     assert settings.etl_poll_seconds == 60
+
+
+def test_legacy_batches_can_be_explicitly_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_LEGACY_BATCHES_ENABLED", "true")
+
+    settings = BffSettings.from_environment()
+
+    assert settings.legacy_batches_enabled is True
 
 
 def test_level2_mq_requires_parent_flag_and_broker_reference(

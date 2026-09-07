@@ -42,7 +42,9 @@ from .runtime_client import RuntimeClient, RuntimeRequestError
 from .selection_csv import MAX_CSV_BYTES, CsvFileError, parse_selection_csv
 
 _TERMINAL_BATCH = frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "PARTIAL", "CANCELLED"})
-_TERMINAL_REPORT = frozenset({"SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"})
+_TERMINAL_REPORT = frozenset(
+    {"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"}
+)
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
@@ -66,9 +68,13 @@ def create_app(container: BffContainer) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            container.coordinator.run_forever(stop=stop),
-            name="supply-chain-bff-coordinator",
+        legacy_task = (
+            asyncio.create_task(
+                container.coordinator.run_forever(stop=stop),
+                name="supply-chain-bff-coordinator",
+            )
+            if container.settings.legacy_batches_enabled
+            else None
         )
         level2_task = (
             asyncio.create_task(
@@ -82,11 +88,13 @@ def create_app(container: BffContainer) -> FastAPI:
             yield
         finally:
             stop.set()
-            task.cancel()
+            if legacy_task is not None:
+                legacy_task.cancel()
             if level2_task is not None:
                 level2_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            if legacy_task is not None:
+                with suppress(asyncio.CancelledError):
+                    await legacy_task
             if level2_task is not None:
                 with suppress(asyncio.CancelledError):
                     await level2_task
@@ -782,6 +790,15 @@ def create_app(container: BffContainer) -> FastAPI:
             retryable=error.status_code in {429, 503},
             headers=error.headers,
         )
+
+    if not container.settings.legacy_batches_enabled:
+        app.router.routes[:] = [
+            route
+            for route in app.router.routes
+            if not getattr(route, "path", "").startswith(
+                "/api/supply-chain/v2/analysis-batches"
+            )
+        ]
 
     return app
 

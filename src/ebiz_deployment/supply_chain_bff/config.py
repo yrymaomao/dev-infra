@@ -39,6 +39,7 @@ class BffSettings:
     stream_enabled: bool = False
     activity_ui_enabled: bool = False
     model_error_polish_enabled: bool = False
+    legacy_batches_enabled: bool = True
     level2_enabled: bool = False
     level2_mq_enabled: bool = False
     max_selected_skus: int = 10_000
@@ -117,6 +118,7 @@ class BffSettings:
             stream_enabled=_boolean("BFF_STREAM_ENABLED", False),
             activity_ui_enabled=_boolean("BFF_ACTIVITY_UI_ENABLED", False),
             model_error_polish_enabled=_boolean("BFF_MODEL_ERROR_POLISH_ENABLED", False),
+            legacy_batches_enabled=_boolean("BFF_LEGACY_BATCHES_ENABLED", False),
             level2_enabled=level2_enabled,
             level2_mq_enabled=level2_mq_enabled,
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),

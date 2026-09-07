@@ -151,3 +151,30 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
     }
     frozen = set(yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))["paths"])
     assert generated == frozen
+
+
+def test_pure_v6_mode_removes_legacy_analysis_batch_routes() -> None:
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"c" * 32,
+        jwt_secret="j" * 32,
+        runtime_url="http://127.0.0.1:8000",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:runtime-service",
+        legacy_batches_enabled=False,
+        level2_enabled=True,
+    )
+    app = create_app(
+        BffContainer(
+            settings=settings,
+            repository=object(),  # type: ignore[arg-type]
+            runtime=object(),  # type: ignore[arg-type]
+            coordinator=object(),  # type: ignore[arg-type]
+            cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
+            level2_repository=object(),  # type: ignore[arg-type]
+        )
+    )
+
+    paths = set(app.openapi()["paths"])
+    assert not any(path.startswith("/api/supply-chain/v2/analysis-batches") for path in paths)
+    assert "/api/supply-chain/v2/report-runs" in paths
