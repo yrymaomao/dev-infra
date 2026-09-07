@@ -172,6 +172,16 @@ async def test_runtime_client_supports_async_and_015_sync_fallback() -> None:
                     "outputs": {"result": {"status": "COMPLETE"}},
                 },
             ),
+            httpx.Response(
+                202,
+                json={
+                    "execution_id": "execution-3",
+                    "session_id": "session-3",
+                    "root_execution_id": "execution-3",
+                    "status": "SUCCEEDED",
+                    "outputs": {"result": {"status": "COMPLETE"}},
+                },
+            ),
         ]
     )
 
@@ -189,10 +199,16 @@ async def test_runtime_client_supports_async_and_015_sync_fallback() -> None:
             authorization="Bearer token",
             payload={"idempotency_key": "two"},
         )
+        raced_terminal_result = await client.start(
+            authorization="Bearer token",
+            payload={"idempotency_key": "three"},
+        )
     assert async_result.mode == "async"
     assert async_result.session_id == "session-1"
     assert sync_result.mode == "sync-polling"
     assert sync_result.snapshot["status"] == "SUCCEEDED"
+    assert raced_terminal_result.mode == "async"
+    assert raced_terminal_result.snapshot["status"] == "SUCCEEDED"
 
 
 @pytest.mark.asyncio

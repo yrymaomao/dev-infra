@@ -156,7 +156,17 @@ class RuntimeClient:
         root_execution_id = self._required_string(body, "root_execution_id")
         if response.status_code == 202:
             session_id = self._required_string(body, "session_id")
-            if body.get("status") not in {"CREATED", "RUNNING"}:
+            # A fast worker can advance the durable execution between Runtime's
+            # insert and its 202 response.  Treat every public execution status
+            # as a valid snapshot instead of rejecting successful races.
+            if body.get("status") not in {
+                "CREATED",
+                "RUNNING",
+                "WAITING",
+                "SUCCEEDED",
+                "FAILED",
+                "CANCELLED",
+            }:
                 raise ValueError("Runtime async response has an invalid status")
             mode: Literal["async", "sync-polling"] = "async"
         else:
