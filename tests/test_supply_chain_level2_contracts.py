@@ -19,6 +19,13 @@ def _load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _git_text_sha256(path: Path) -> str:
+    """Hash the repository text bytes independent of checkout line endings."""
+
+    normalized = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def test_contract_schemas_are_draft_2020_12_valid() -> None:
     paths = [
         ROOT / "mcp-tools.schema.json",
@@ -58,10 +65,10 @@ def test_agent_batch_result_fixture_is_frozen_and_validates() -> None:
     jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(
         fixture
     )
-    assert hashlib.sha256(schema_path.read_bytes()).hexdigest() == (
+    assert _git_text_sha256(schema_path) == (
         "81f0c736538e3f841c7bb5145828076af0bfe28197120a247e558f20bcd14267"
     )
-    assert hashlib.sha256(fixture_path.read_bytes()).hexdigest() == (
+    assert _git_text_sha256(fixture_path) == (
         "16abec2ba6b93f815ed7f467597029f60dd9abb896f3997bde302825933f65e3"
     )
 
