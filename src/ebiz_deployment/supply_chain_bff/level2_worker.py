@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
+import re
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
@@ -31,7 +33,42 @@ from .runtime_client import (
 )
 
 _TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
+_LOG_TOKEN = re.compile(r"[A-Za-z0-9_.:@-]{1,256}")
+_LOGGER = logging.getLogger(__name__)
 AuthorizationFactory = Callable[[str], str]
+
+
+def _safe_log_token(value: object, *, fallback: str = "unknown") -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, str) and _LOG_TOKEN.fullmatch(value):
+        return value
+    return fallback
+
+
+def _log_runtime_failure(
+    *,
+    event: str,
+    report_run_id: UUID,
+    batch_id: UUID,
+    execution_id: UUID | None,
+    error: dict[str, object],
+) -> None:
+    """Log only bounded routing metadata needed to join BFF and Runtime failures."""
+
+    _LOGGER.error(
+        "supply_chain.runtime_failure event=%s report_run_id=%s batch_id=%s "
+        "execution_id=%s error_code=%s phase=%s category=%s retryable=%s request_id=%s",
+        _safe_log_token(event),
+        report_run_id,
+        batch_id,
+        execution_id or "none",
+        _safe_log_token(error.get("error_code")),
+        _safe_log_token(error.get("phase")),
+        _safe_log_token(error.get("category")),
+        _safe_log_token(error.get("retryable")),
+        _safe_log_token(error.get("request_id"), fallback="none"),
+    )
 
 
 class Level2Worker:
@@ -188,6 +225,15 @@ class Level2Worker:
                     authorization=self._authorization_for_tenant(target.tenant_id),
                     execution_id=str(target.execution_id),
                 )
+                if snapshot.get("status") == "FAILED":
+                    raw_error = snapshot.get("error")
+                    _log_runtime_failure(
+                        event="terminal",
+                        report_run_id=target.report_run_id,
+                        batch_id=target.batch_id,
+                        execution_id=target.execution_id,
+                        error=(raw_error if isinstance(raw_error, dict) else {}),
+                    )
                 await self._repository.record_report_snapshot(
                     target=target,
                     snapshot=snapshot,
@@ -335,6 +381,19 @@ class Level2Worker:
                     now=datetime.now(UTC),
                 )
         except RuntimeRequestError as error:
+            _log_runtime_failure(
+                event="dispatch",
+                report_run_id=claim.report_run_id,
+                batch_id=claim.batch_id,
+                execution_id=None,
+                error={
+                    "error_code": error.error_code,
+                    "phase": error.phase,
+                    "category": error.category,
+                    "retryable": error.retryable,
+                    "request_id": error.request_id,
+                },
+            )
             await self._repository.record_report_dispatch_error(
                 claim,
                 now=now,

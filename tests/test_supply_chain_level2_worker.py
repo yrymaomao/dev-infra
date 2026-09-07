@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -8,12 +9,42 @@ import pytest
 from ebiz_deployment.supply_chain_bff.level2_repository import ClaimedReportBatch
 from ebiz_deployment.supply_chain_bff.level2_worker import (
     _batch_runtime_payload,
+    _log_runtime_failure,
     _merge_selection_pages,
     _planner_result,
     _selection_result,
     _selection_runtime_payload,
     _timestamp,
 )
+
+
+def test_runtime_failure_log_keeps_correlation_and_drops_untrusted_detail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(
+        logging.ERROR,
+        logger="ebiz_deployment.supply_chain_bff.level2_worker",
+    ):
+        _log_runtime_failure(
+            event="terminal",
+            report_run_id=UUID("00000000-0000-4000-8000-000000000002"),
+            batch_id=UUID("00000000-0000-4000-8000-000000000003"),
+            execution_id=UUID("00000000-0000-4000-8000-000000000004"),
+            error={
+                "error_code": "PINNED_PROVIDER_UNAVAILABLE",
+                "phase": "routing",
+                "category": "configuration",
+                "retryable": False,
+                "unsafe_detail": "Bearer do-not-log",
+            },
+        )
+
+    message = caplog.records[-1].getMessage()
+    assert "report_run_id=00000000-0000-4000-8000-000000000002" in message
+    assert "batch_id=00000000-0000-4000-8000-000000000003" in message
+    assert "execution_id=00000000-0000-4000-8000-000000000004" in message
+    assert "error_code=PINNED_PROVIDER_UNAVAILABLE" in message
+    assert "Bearer do-not-log" not in message
 
 
 def _page(
