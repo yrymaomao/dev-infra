@@ -34,9 +34,15 @@ class _IdleCoordinator:
 
 class _ScheduleRepository:
     async def create_schedule(
-        self, *, tenant_id: str, request: ScheduleCreate, now: datetime
+        self,
+        *,
+        tenant_id: str,
+        request: ScheduleCreate,
+        idempotency_key: str,
+        now: datetime,
     ) -> dict[str, object]:
         assert tenant_id == "tenant-a"
+        assert idempotency_key == "schedule-create-stable-1"
         assert request.local_time.isoformat() == "12:00:00"
         assert request.fixed_skus == ()
         return {"schedule_id": "00000000-0000-4000-8000-000000000001"}
@@ -167,6 +173,7 @@ async def test_schedule_create_accepts_the_frozen_openapi_json_shape() -> None:
     ) as client:
         response = await client.post(
             "/api/supply-chain/v2/schedules",
+            headers={"Idempotency-Key": "schedule-create-stable-1"},
             json={
                 "name": "Weekly Supply Chain Review",
                 "timezone": "America/Los_Angeles",
@@ -186,6 +193,19 @@ async def test_schedule_create_accepts_the_frozen_openapi_json_shape() -> None:
         )
 
     assert response.status_code == 201, response.text
+
+
+def test_schedule_patch_can_atomically_change_selection_mode() -> None:
+    patch = SchedulePatch.model_validate(
+        {
+            "selection_mode": "FIXED_SKUS",
+            "selector": None,
+            "fixed_skus": ["SKU-1", "SKU-2"],
+        }
+    )
+    assert patch.selection_mode == "FIXED_SKUS"
+    assert patch.selector is None
+    assert patch.fixed_skus == ("SKU-1", "SKU-2")
 
 
 def test_schedule_patch_distinguishes_missing_local_time_from_null() -> None:

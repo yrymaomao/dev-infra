@@ -154,6 +154,9 @@ class SchedulePatch(StrictModel):
     timezone: TenantTimezone | None = None
     weekday: int | None = Field(default=None, ge=1, le=7)
     local_time: LocalTime | None = None
+    selection_mode: Literal["DYNAMIC_SELECTOR", "FIXED_SKUS"] | None = None
+    selector: InventorySelector | None = None
+    fixed_skus: FrozenSkus = Field(default=(), max_length=10_000)
     active: bool | None = None
     policy_mode: Literal["ACTIVE_AT_RUN", "PINNED"] | None = None
     policy_version: int | None = Field(default=None, ge=1)

@@ -35,6 +35,7 @@ from .level2_models import (
     ReportOutbox,
     ReportRun,
     ReportSchedule,
+    ScheduleIdempotency,
     SelectionPreview,
 )
 from .policy import default_policy_document, validate_policy
@@ -43,7 +44,7 @@ from .runtime_client import RuntimeStartResult
 from .selection_csv import CsvSelection
 
 _PAYLOAD_PERMISSION = "supply-chain:level2"
-_TERMINAL_REPORT = frozenset({"SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"})
+_TERMINAL_REPORT = frozenset({"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"})
 
 
 class ResourceConflict(RuntimeError):
@@ -370,7 +371,7 @@ class Level2Repository:
             preview.payload_hash = staged.payload_hash
             preview.warnings = list(warnings or [])
             preview.ambiguities = list(ambiguities or [])
-            preview.status = "READY" if 0 < len(rows) <= 10_000 else "REJECTED"
+            preview.status = "READY" if len(rows) <= 10_000 else "REJECTED"
             preview.lease_owner = None
             preview.lease_expires_at = None
             if len(rows) > 10_000:
@@ -1560,7 +1561,12 @@ class Level2Repository:
         report.completed_at = datetime.now(UTC)
 
     async def create_schedule(
-        self, *, tenant_id: str, request: ScheduleCreate, now: datetime
+        self,
+        *,
+        tenant_id: str,
+        request: ScheduleCreate,
+        idempotency_key: str,
+        now: datetime,
     ) -> dict[str, Any]:
         if request.policy_mode == "PINNED":
             policy = await self._resolve_policy_snapshot(
@@ -1577,7 +1583,14 @@ class Level2Repository:
             staged = await self._stage(tenant_id, {"skus": list(request.fixed_skus)})
             fixed_ref = staged.payload_ref
             fixed_hash = staged.payload_hash
+        schedule_id = uuid4()
+        request_digest = _schedule_request_digest(
+            operation="CREATE",
+            schedule_id=None,
+            payload=request.model_dump(mode="json"),
+        )
         schedule = ReportSchedule(
+            id=schedule_id,
             tenant_id=tenant_id,
             name=request.name,
             timezone=request.timezone,
@@ -1592,9 +1605,44 @@ class Level2Repository:
             active=request.active,
             next_fire_at_utc=next_weekly_fire(request, after=now),
         )
+        created = False
         async with self._factory() as session, session.begin():
-            session.add(schedule)
-        if staged is not None:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"schedule-idempotency:{tenant_id}:{idempotency_key}"},
+            )
+            replay = await session.scalar(
+                select(ScheduleIdempotency).where(
+                    ScheduleIdempotency.tenant_id == tenant_id,
+                    ScheduleIdempotency.idempotency_key == idempotency_key,
+                )
+            )
+            if replay is not None:
+                if replay.operation != "CREATE" or replay.request_digest != request_digest:
+                    raise ResourceConflict("Idempotency-Key was reused for another request")
+                persisted = await session.scalar(
+                    select(ReportSchedule).where(
+                        ReportSchedule.tenant_id == tenant_id,
+                        ReportSchedule.id == replay.schedule_id,
+                    )
+                )
+                if persisted is None:
+                    raise ResourceConflict("idempotent schedule is no longer available")
+                schedule = persisted
+            else:
+                session.add(schedule)
+                await session.flush()
+                session.add(
+                    ScheduleIdempotency(
+                        tenant_id=tenant_id,
+                        idempotency_key=idempotency_key,
+                        request_digest=request_digest,
+                        operation="CREATE",
+                        schedule_id=schedule.id,
+                    )
+                )
+                created = True
+        if created and staged is not None:
             await self._commit_staged(tenant_id, staged)
         return await self._public_schedule(schedule)
 
@@ -1820,6 +1868,7 @@ class Level2Repository:
             if (
                 preview_configuration is not None
                 and preview_configuration.status == "READY"
+                and preview_configuration.matched_count > 0
                 and preview_configuration.payload_ref is not None
                 and preview_configuration.payload_hash is not None
             ):
@@ -1868,7 +1917,7 @@ class Level2Repository:
             if (
                 preview.status != "READY"
                 or preview.snapshot_time is None
-                or not 1 <= preview.matched_count <= 10_000
+                or not 0 <= preview.matched_count <= 10_000
             ):
                 report.status = "FAILED"
                 report.failed_count = preview.matched_count
@@ -1889,6 +1938,28 @@ class Level2Repository:
             report.risk_flags = list(dict.fromkeys([*report.risk_flags, *policy.risk_flags]))
             report.sku_count = preview.matched_count
             report.batch_count = (preview.matched_count + 199) // 200
+            if preview.matched_count == 0:
+                report.status = "SUCCEEDED_EMPTY"
+                report.completed_at = now
+                report.lease_owner = None
+                report.lease_expires_at = None
+                preview.confirmed = True
+                session.add(
+                    ReportActivity(
+                        tenant_id=claim.tenant_id,
+                        report_run_id=report.id,
+                        event_key="report:succeeded-empty",
+                        event_type="report.succeeded-empty",
+                        phase="report",
+                        state="complete",
+                        safe_message="The scheduled selection returned no SKU.",
+                        progress_current=0,
+                        progress_total=0,
+                        payload={"schema_version": "business-agent.activity-event.v1"},
+                        critical=True,
+                    )
+                )
+                return True
             report.status = "ACCEPTED"
             report.lease_owner = None
             report.lease_expires_at = None
@@ -2026,9 +2097,69 @@ class Level2Repository:
         tenant_id: str,
         schedule_id: UUID,
         patch: SchedulePatch,
+        idempotency_key: str,
         now: datetime,
     ) -> dict[str, Any] | None:
+        async with self._factory() as session:
+            current = await session.scalar(
+                select(ReportSchedule).where(
+                    ReportSchedule.tenant_id == tenant_id,
+                    ReportSchedule.id == schedule_id,
+                )
+            )
+        if current is None:
+            return None
+        current_template = await self._schedule_template(current)
+        values = current_template.model_dump(mode="python")
+        values.update(patch.model_dump(mode="python", exclude_unset=True))
+        merged = ScheduleCreate.model_validate(values)
+        if merged.policy_mode == "PINNED":
+            policy = await self._resolve_policy_snapshot(
+                tenant_id=tenant_id,
+                policy_mode=merged.policy_mode,
+                policy_version=merged.policy_version,
+            )
+            if policy is None:
+                raise ResourceNotReady("pinned policy version does not exist")
+        selection_changed = bool(
+            patch.model_fields_set & {"selection_mode", "selector", "fixed_skus"}
+        )
+        staged = None
+        if selection_changed and merged.selection_mode == "FIXED_SKUS":
+            staged = await self._stage(tenant_id, {"skus": list(merged.fixed_skus)})
+        request_digest = _schedule_request_digest(
+            operation="UPDATE",
+            schedule_id=schedule_id,
+            payload=patch.model_dump(mode="json", exclude_unset=True),
+        )
+        updated = False
         async with self._factory() as session, session.begin():
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"schedule-idempotency:{tenant_id}:{idempotency_key}"},
+            )
+            replay = await session.scalar(
+                select(ScheduleIdempotency).where(
+                    ScheduleIdempotency.tenant_id == tenant_id,
+                    ScheduleIdempotency.idempotency_key == idempotency_key,
+                )
+            )
+            if replay is not None:
+                if (
+                    replay.operation != "UPDATE"
+                    or replay.schedule_id != schedule_id
+                    or replay.request_digest != request_digest
+                ):
+                    raise ResourceConflict("Idempotency-Key was reused for another request")
+                schedule = await session.scalar(
+                    select(ReportSchedule).where(
+                        ReportSchedule.tenant_id == tenant_id,
+                        ReportSchedule.id == schedule_id,
+                    )
+                )
+                if schedule is None:
+                    return None
+                return await self._public_schedule(schedule)
             schedule = await session.scalar(
                 select(ReportSchedule)
                 .where(
@@ -2039,26 +2170,31 @@ class Level2Repository:
             )
             if schedule is None:
                 return None
-            values = patch.model_dump(exclude_unset=True)
-            for name, value in values.items():
-                setattr(schedule, name, value)
-            template = ScheduleCreate(
-                name=schedule.name,
-                timezone=schedule.timezone,
-                weekday=schedule.weekday,
-                local_time=schedule.local_time,
-                selection_mode=cast(Any, schedule.selection_mode),
-                selector=(
-                    InventorySelector.model_validate(schedule.selector)
-                    if schedule.selector is not None
-                    else None
-                ),
-                fixed_skus=("PAYLOAD_REF",) if schedule.fixed_skus_ref else (),
-                policy_mode=cast(Any, schedule.policy_mode),
-                policy_version=schedule.policy_version,
-                active=schedule.active,
+            schedule.name = merged.name
+            schedule.timezone = merged.timezone
+            schedule.weekday = merged.weekday
+            schedule.local_time = merged.local_time
+            schedule.selection_mode = merged.selection_mode
+            schedule.selector = merged.selector.model_dump(mode="json") if merged.selector else None
+            if selection_changed:
+                schedule.fixed_skus_ref = staged.payload_ref if staged is not None else None
+                schedule.fixed_skus_hash = staged.payload_hash if staged is not None else None
+            schedule.policy_mode = merged.policy_mode
+            schedule.policy_version = merged.policy_version
+            schedule.active = merged.active
+            schedule.next_fire_at_utc = next_weekly_fire(merged, after=now)
+            session.add(
+                ScheduleIdempotency(
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    request_digest=request_digest,
+                    operation="UPDATE",
+                    schedule_id=schedule.id,
+                )
             )
-            schedule.next_fire_at_utc = next_weekly_fire(template, after=now)
+            updated = True
+        if updated and staged is not None:
+            await self._commit_staged(tenant_id, staged)
         return await self._public_schedule(schedule)
 
     async def _resolve_policy_snapshot(
@@ -2130,6 +2266,17 @@ class Level2Repository:
         }
 
     async def _schedule_template(self, schedule: ReportSchedule) -> ScheduleCreate:
+        fixed_skus: tuple[str, ...] = ()
+        if schedule.fixed_skus_ref is not None:
+            fixed = await self._load(
+                schedule.tenant_id,
+                schedule.fixed_skus_ref,
+                schedule.fixed_skus_hash,
+            )
+            raw_skus = fixed.get("skus")
+            if not isinstance(raw_skus, list) or not all(isinstance(sku, str) for sku in raw_skus):
+                raise ValueError("fixed schedule SKU payload is invalid")
+            fixed_skus = tuple(cast(list[str], raw_skus))
         return ScheduleCreate(
             name=schedule.name,
             timezone=schedule.timezone,
@@ -2141,7 +2288,7 @@ class Level2Repository:
                 if schedule.selector is not None
                 else None
             ),
-            fixed_skus=("PAYLOAD_REF",) if schedule.fixed_skus_ref else (),
+            fixed_skus=fixed_skus,
             policy_mode=cast(Any, schedule.policy_mode),
             policy_version=schedule.policy_version,
             active=schedule.active,
@@ -2249,6 +2396,20 @@ def next_weekly_fire(schedule: ScheduleCreate, *, after: datetime) -> datetime:
     if candidate <= local_after:
         candidate += timedelta(days=7)
     return candidate.astimezone(UTC)
+
+
+def _schedule_request_digest(
+    *,
+    operation: str,
+    schedule_id: UUID | None,
+    payload: Mapping[str, object],
+) -> str:
+    document = {
+        "operation": operation,
+        "schedule_id": str(schedule_id) if schedule_id is not None else None,
+        "payload": dict(payload),
+    }
+    return hashlib.sha256(canonical_json_bytes(cast(JsonValue, document))).hexdigest()
 
 
 def _safe_runtime_error(value: object) -> dict[str, object]:

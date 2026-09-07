@@ -145,6 +145,34 @@ class ReportSchedule(Base):
     )
 
 
+class ScheduleIdempotency(Base):
+    __tablename__ = "schedule_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "schedule_id"],
+            [f"{SCHEMA}.report_schedule.tenant_id", f"{SCHEMA}.report_schedule.id"],
+            name="fk_schedule_idempotency_schedule",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_schedule_idempotency_key",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    schedule_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class ReportRun(Base):
     __tablename__ = "report_run"
     __table_args__ = (

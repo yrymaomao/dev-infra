@@ -14,7 +14,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ebiz_deployment.supply_chain_bff.activity import ActivityProjection
-from ebiz_deployment.supply_chain_bff.level2_contracts import CsvSelectionRow, ReportRunRequest
+from ebiz_deployment.supply_chain_bff.level2_contracts import (
+    CsvSelectionRow,
+    InventorySelector,
+    ReportRunRequest,
+    ScheduleCreate,
+    SchedulePatch,
+)
 from ebiz_deployment.supply_chain_bff.level2_models import (
     ReportBatch,
     ReportInbox,
@@ -24,6 +30,7 @@ from ebiz_deployment.supply_chain_bff.level2_repository import (
     ActiveReportExecution,
     ClaimedReportBatch,
     Level2Repository,
+    ResourceConflict,
 )
 from ebiz_deployment.supply_chain_bff.migration import upgrade
 from ebiz_deployment.supply_chain_bff.report_mq import ReportBatchMessage
@@ -372,4 +379,142 @@ async def test_terminal_batch_result_is_authorized_validated_and_paginated(
         )
         is None
     )
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_schedule_idempotency_update_run_now_and_empty_terminal(
+    level2_database_url: str,
+) -> None:
+    engine = create_async_engine(level2_database_url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "TRUNCATE supply_chain_bff.report_activity, "
+                "supply_chain_bff.report_inbox, supply_chain_bff.report_outbox, "
+                "supply_chain_bff.report_batch, supply_chain_bff.report_run, "
+                "supply_chain_bff.schedule_idempotency, supply_chain_bff.report_schedule, "
+                "supply_chain_bff.policy_version, supply_chain_bff.selection_preview CASCADE"
+            )
+        )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = MemoryPayloadStore(redacted_fields=frozenset(), inline_classifications=frozenset())
+    repository = Level2Repository(factory, payload_store=store)
+    tenant_id = f"schedule-{uuid4().hex}"
+    now = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    request = ScheduleCreate(
+        name="Weekly Supply Chain Review",
+        timezone="America/Los_Angeles",
+        selection_mode="DYNAMIC_SELECTOR",
+        selector=InventorySelector(),
+    )
+    created = await repository.create_schedule(
+        tenant_id=tenant_id,
+        request=request,
+        idempotency_key="create-1",
+        now=now,
+    )
+    replay = await repository.create_schedule(
+        tenant_id=tenant_id,
+        request=request,
+        idempotency_key="create-1",
+        now=now + timedelta(seconds=1),
+    )
+    assert replay["schedule_id"] == created["schedule_id"]
+    with pytest.raises(ResourceConflict):
+        await repository.create_schedule(
+            tenant_id=tenant_id,
+            request=request.model_copy(update={"name": "Different"}),
+            idempotency_key="create-1",
+            now=now,
+        )
+
+    schedule_id = UUID(str(created["schedule_id"]))
+    switched = await repository.update_schedule(
+        tenant_id=tenant_id,
+        schedule_id=schedule_id,
+        patch=SchedulePatch(
+            selection_mode="FIXED_SKUS",
+            selector=None,
+            fixed_skus=("SKU-1", "SKU-2"),
+            active=False,
+        ),
+        idempotency_key="update-1",
+        now=now,
+    )
+    assert switched is not None
+    assert switched["selection_mode"] == "FIXED_SKUS"
+    assert switched["fixed_skus"] == ["SKU-1", "SKU-2"]
+    assert switched["active"] is False
+    replay_update = await repository.update_schedule(
+        tenant_id=tenant_id,
+        schedule_id=schedule_id,
+        patch=SchedulePatch(
+            selection_mode="FIXED_SKUS",
+            selector=None,
+            fixed_skus=("SKU-1", "SKU-2"),
+            active=False,
+        ),
+        idempotency_key="update-1",
+        now=now + timedelta(seconds=1),
+    )
+    assert replay_update is not None
+    assert replay_update["schedule_id"] == str(schedule_id)
+    restored = await repository.update_schedule(
+        tenant_id=tenant_id,
+        schedule_id=schedule_id,
+        patch=SchedulePatch(
+            selection_mode="DYNAMIC_SELECTOR",
+            selector=InventorySelector(),
+            fixed_skus=(),
+            active=True,
+        ),
+        idempotency_key="update-2",
+        now=now,
+    )
+    assert restored is not None
+    assert restored["selection_mode"] == "DYNAMIC_SELECTOR"
+
+    report_id = await repository.create_schedule_run(
+        tenant_id=tenant_id,
+        schedule_id=schedule_id,
+        idempotency_key="run-1",
+        now=now,
+    )
+    assert report_id is not None
+    assert (
+        await repository.create_schedule_run(
+            tenant_id=tenant_id,
+            schedule_id=schedule_id,
+            idempotency_key="run-1",
+            now=now + timedelta(seconds=1),
+        )
+        == report_id
+    )
+    scheduled = await repository.claim_scheduled_report(worker_id="schedule-worker", now=now)
+    assert scheduled is not None
+    preview_id = await repository.prepare_scheduled_selection(scheduled, now=now)
+    preview = await repository.claim_preview(worker_id="selection-worker", now=now)
+    assert preview is not None and preview.preview_id == preview_id
+    await repository.complete_preview(
+        tenant_id=tenant_id,
+        preview_id=preview_id,
+        lease_owner=preview.lease_owner,
+        selector={"quantity_metric": "AVAILABLE_QUANTITY", "operator": "GT", "threshold": 20},
+        source_snapshot_id="dev-empty-snapshot",
+        snapshot_time=now,
+        rows=[],
+    )
+    scheduled = await repository.claim_scheduled_report(worker_id="schedule-worker", now=now)
+    assert scheduled is not None
+    assert await repository.materialize_scheduled_report(
+        scheduled,
+        now=now,
+        trace_id="schedule-empty",
+    )
+    report = await repository.get_report(tenant_id=tenant_id, report_run_id=report_id)
+    assert report is not None
+    assert report["status"] == "SUCCEEDED_EMPTY"
+    assert report["sku_count"] == 0
+    assert report["batch_count"] == 0
     await engine.dispose()

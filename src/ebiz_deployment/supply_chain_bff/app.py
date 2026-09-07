@@ -622,12 +622,16 @@ def create_app(container: BffContainer) -> FastAPI:
     @app.post("/api/supply-chain/v2/schedules", status_code=201)
     async def create_schedule(
         body: ScheduleCreate,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
         current: Principal = Depends(principal),
         repository: Level2Repository = Depends(level2),
     ) -> dict[str, object]:
+        if _REQUEST_ID.fullmatch(idempotency_key) is None:
+            raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
         return await repository.create_schedule(
             tenant_id=current.tenant_id,
             request=body,
+            idempotency_key=idempotency_key,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
         )
 
@@ -642,13 +646,17 @@ def create_app(container: BffContainer) -> FastAPI:
     async def update_schedule(
         schedule_id: UUID,
         body: SchedulePatch,
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
         current: Principal = Depends(principal),
         repository: Level2Repository = Depends(level2),
     ) -> dict[str, object]:
+        if _REQUEST_ID.fullmatch(idempotency_key) is None:
+            raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
         schedule = await repository.update_schedule(
             tenant_id=current.tenant_id,
             schedule_id=schedule_id,
             patch=body,
+            idempotency_key=idempotency_key,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
         )
         if schedule is None:
