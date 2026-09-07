@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AfterValidator, Field, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, model_validator
 
 from .contracts import StrictModel
 
@@ -34,6 +34,26 @@ def _timezone(value: str) -> str:
 
 
 TenantTimezone = Annotated[str, Field(min_length=1, max_length=64), AfterValidator(_timezone)]
+
+
+def _local_time(value: object) -> time:
+    if isinstance(value, time):
+        return value
+    if not isinstance(value, str) or re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value) is None:
+        raise ValueError("local_time must use strict HH:mm format")
+    return time.fromisoformat(value)
+
+
+def _fixed_skus(value: object) -> tuple[object, ...]:
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    raise ValueError("fixed_skus must be a JSON array")
+
+
+LocalTime = Annotated[time, BeforeValidator(_local_time)]
+FrozenSkus = Annotated[tuple[CanonicalSku, ...], BeforeValidator(_fixed_skus)]
 
 
 class InventorySelector(StrictModel):
@@ -107,10 +127,10 @@ class ScheduleCreate(StrictModel):
     name: str = Field(min_length=1, max_length=128)
     timezone: TenantTimezone
     weekday: int = Field(default=1, ge=1, le=7)
-    local_time: time = time(hour=12)
+    local_time: LocalTime = time(hour=12)
     selection_mode: Literal["DYNAMIC_SELECTOR", "FIXED_SKUS"]
     selector: InventorySelector | None = None
-    fixed_skus: tuple[CanonicalSku, ...] = Field(default=(), max_length=10_000)
+    fixed_skus: FrozenSkus = Field(default=(), max_length=10_000)
     policy_mode: Literal["ACTIVE_AT_RUN", "PINNED"] = "ACTIVE_AT_RUN"
     policy_version: int | None = Field(default=None, ge=1)
     active: bool = True
@@ -133,7 +153,7 @@ class SchedulePatch(StrictModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     timezone: TenantTimezone | None = None
     weekday: int | None = Field(default=None, ge=1, le=7)
-    local_time: time | None = None
+    local_time: LocalTime | None = None
     active: bool | None = None
     policy_mode: Literal["ACTIVE_AT_RUN", "PINNED"] | None = None
     policy_version: int | None = Field(default=None, ge=1)
@@ -142,6 +162,8 @@ class SchedulePatch(StrictModel):
     def non_empty_patch(self) -> SchedulePatch:
         if not self.model_fields_set:
             raise ValueError("schedule patch must contain at least one field")
+        if "local_time" in self.model_fields_set and self.local_time is None:
+            raise ValueError("local_time cannot be null")
         if self.policy_mode == "PINNED" and self.policy_version is None:
             raise ValueError("PINNED policy mode requires policy_version")
         if self.policy_mode == "ACTIVE_AT_RUN" and self.policy_version is not None:

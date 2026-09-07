@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import time as clock_time
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 
+import httpx
+import jwt
 import pytest
 from pydantic import ValidationError
 
+from ebiz_deployment.supply_chain_bff.app import BffContainer, create_app
+from ebiz_deployment.supply_chain_bff.config import BffSettings
+from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
 from ebiz_deployment.supply_chain_bff.level2_contracts import (
     InventorySelector,
     ReportRunRequest,
     ScheduleCreate,
+    SchedulePatch,
     SelectionPreviewRequest,
 )
 from ebiz_deployment.supply_chain_bff.level2_repository import next_weekly_fire
@@ -18,6 +25,21 @@ from ebiz_deployment.supply_chain_bff.policy import PolicyInvalid, validate_poli
 from ebiz_deployment.supply_chain_bff.selection_csv import CsvFileError, parse_selection_csv
 
 ROOT = Path(__file__).parents[1]
+
+
+class _IdleCoordinator:
+    async def run_forever(self, *, stop: object) -> None:
+        return None
+
+
+class _ScheduleRepository:
+    async def create_schedule(
+        self, *, tenant_id: str, request: ScheduleCreate, now: datetime
+    ) -> dict[str, object]:
+        assert tenant_id == "tenant-a"
+        assert request.local_time.isoformat() == "12:00:00"
+        assert request.fixed_skus == ()
+        return {"schedule_id": "00000000-0000-4000-8000-000000000001"}
 
 
 def test_selection_request_requires_exactly_one_source() -> None:
@@ -104,6 +126,73 @@ def test_schedule_defaults_to_monday_noon_and_validates_modes() -> None:
             selection_mode="DYNAMIC_SELECTOR",
             selector=InventorySelector(),
         )
+
+
+@pytest.mark.anyio
+async def test_schedule_create_accepts_the_frozen_openapi_json_shape() -> None:
+    secret = "j" * 32
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"c" * 32,
+        jwt_secret=secret,
+        runtime_url="http://127.0.0.1:8000",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:runtime-service",
+        level2_enabled=True,
+    )
+    token = jwt.encode(
+        {
+            "aud": "agent-runtime",
+            "sub": "user-a",
+            "tenant_id": "tenant-a",
+            "exp": int(clock_time.time()) + 60,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    app = create_app(
+        BffContainer(
+            settings=settings,
+            repository=object(),  # type: ignore[arg-type]
+            runtime=object(),  # type: ignore[arg-type]
+            coordinator=_IdleCoordinator(),  # type: ignore[arg-type]
+            cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
+            level2_repository=_ScheduleRepository(),  # type: ignore[arg-type]
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://bff.test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as client:
+        response = await client.post(
+            "/api/supply-chain/v2/schedules",
+            json={
+                "name": "Weekly Supply Chain Review",
+                "timezone": "America/Los_Angeles",
+                "weekday": 1,
+                "local_time": "12:00",
+                "selection_mode": "DYNAMIC_SELECTOR",
+                "selector": {
+                    "quantity_metric": "AVAILABLE_QUANTITY",
+                    "operator": "GT",
+                    "threshold": 20,
+                },
+                "fixed_skus": [],
+                "policy_mode": "ACTIVE_AT_RUN",
+                "policy_version": None,
+                "active": True,
+            },
+        )
+
+    assert response.status_code == 201, response.text
+
+
+def test_schedule_patch_distinguishes_missing_local_time_from_null() -> None:
+    assert SchedulePatch.model_validate({"active": False}).active is False
+    assert SchedulePatch.model_validate({"local_time": "23:59"}).local_time == time(23, 59)
+    with pytest.raises(ValidationError):
+        SchedulePatch.model_validate({"local_time": None})
 
 
 def test_weekly_fire_uses_tenant_timezone_across_dst() -> None:
