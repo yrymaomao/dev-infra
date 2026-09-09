@@ -413,7 +413,7 @@ def _mcp_provider(network: dict[str, Any], digests: dict[str, str]) -> dict[str,
             "server_name": "local-dev-erp-read",
             "url": "http://127.0.0.1:18081/mcp",
             "allowed_tools": [
-                "query_fba_inventory_snapshot_v1",
+                "query_sku_fulfillment_inventory_snapshot_v1",
                 "query_inventory_batch_snapshot_v1",
                 "query_inventory_skus_by_threshold_v1",
                 "query_inventory_summary_v2",
@@ -461,7 +461,7 @@ def _erp_provider(digests: dict[str, str]) -> dict[str, Any]:
                     "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
                     "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
                     "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
-                    "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+                    "inventory.get_fba_snapshot": "query_sku_fulfillment_inventory_snapshot_v1",
                     "sales_profit.get_sku_fulfillment_windows": (
                         "query_sku_fulfillment_sales_profit_windows_v2"
                     ),

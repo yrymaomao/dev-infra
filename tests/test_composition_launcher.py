@@ -48,7 +48,7 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert result.runtime_plugin_policy.plugins[0].package_digest == "d" * 64
     by_id = {deployment.provider_id: deployment for deployment in result.deployments}
     assert by_id["mcp.streamable_http"].config["allowed_tools"] == [
-        "query_fba_inventory_snapshot_v1",
+        "query_sku_fulfillment_inventory_snapshot_v1",
         "query_inventory_batch_snapshot_v1",
         "query_inventory_skus_by_threshold_v1",
         "query_inventory_summary_v2",
@@ -73,7 +73,7 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert by_id["yeaher.erp"].config["mcp"]["tools"] == {
         "catalog.resolve_sku_identity": "query_sku_upc_mapping",
         "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
-        "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+        "inventory.get_fba_snapshot": "query_sku_fulfillment_inventory_snapshot_v1",
         "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
         "inventory.get_total_snapshot": "query_inventory_summary_v2",
         "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",

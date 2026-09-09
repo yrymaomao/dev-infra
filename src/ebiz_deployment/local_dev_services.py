@@ -625,10 +625,8 @@ def _formal_output_schemas() -> dict[str, dict[str, Any]]:
         "query_inventory_skus_by_threshold_v1": _yeaher_result_schema(threshold_page),
         "query_inventory_batch_snapshot_v1": _yeaher_result_schema(inventory_batch),
         "query_sku_identity_mapping_v1": _yeaher_result_schema(identity_batch),
-        "query_fba_inventory_snapshot_v1": _yeaher_result_schema(fba_batch),
-        "query_sku_fulfillment_sales_profit_windows_v2": _yeaher_result_schema(
-            fulfillment_sales
-        ),
+        "query_sku_fulfillment_inventory_snapshot_v1": _yeaher_result_schema(fba_batch),
+        "query_sku_fulfillment_sales_profit_windows_v2": _yeaher_result_schema(fulfillment_sales),
     }
 
 
@@ -825,7 +823,7 @@ def create_mcp_app() -> ASGIApp:
             }
         )
 
-    @server.tool(name="query_fba_inventory_snapshot_v1", structured_output=True)
+    @server.tool(name="query_sku_fulfillment_inventory_snapshot_v1", structured_output=True)
     async def fba_inventory_snapshot(skus: SkuBatch) -> dict[str, Any]:
         if len(skus) != len(set(skus)):
             raise ValueError("skus must be unique")
@@ -886,9 +884,7 @@ def create_mcp_app() -> ASGIApp:
         items: list[dict[str, Any]] = []
         for sku in skus:
             fulfillments = (
-                ("FBA", "FBM")
-                if "MIXED" in sku
-                else (("FBA",) if "FBA" in sku else ("FBM",))
+                ("FBA", "FBM") if "MIXED" in sku else (("FBA",) if "FBA" in sku else ("FBM",))
             )
             for index, business_week in enumerate(weeks):
                 for fulfillment in fulfillments:

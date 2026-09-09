@@ -151,7 +151,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["sku", "status", "msku", "fnsku", "asin", "available", "reserved", "inbound", "unfulfillable", "age_buckets", "monthly_storage_cost"],
+            "required": ["sku", "status"],
             "properties": {
               "sku": { "$ref": "#/$defs/CanonicalSku" },
               "status": { "enum": ["FOUND", "NO_SNAPSHOT", "SNAPSHOT_INCOMPLETE", "SNAPSHOT_CONFLICT"] },
@@ -162,19 +162,12 @@
               "reserved": { "type": ["integer", "null"], "minimum": 0 },
               "inbound": { "type": ["integer", "null"], "minimum": 0 },
               "unfulfillable": { "type": ["integer", "null"], "minimum": 0 },
-              "age_buckets": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["days_0_90", "days_91_180", "days_181_270", "days_271_365", "days_365_plus"],
-                "properties": {
-                  "days_0_90": { "type": ["integer", "null"], "minimum": 0 },
-                  "days_91_180": { "type": ["integer", "null"], "minimum": 0 },
-                  "days_181_270": { "type": ["integer", "null"], "minimum": 0 },
-                  "days_271_365": { "type": ["integer", "null"], "minimum": 0 },
-                  "days_365_plus": { "type": ["integer", "null"], "minimum": 0 }
-                }
-              },
-              "monthly_storage_cost": { "type": ["number", "null"], "minimum": 0 }
+              "unavailable_fields": {
+                "type": ["array", "null"],
+                "items": { "enum": ["AVAILABLE", "RESERVED", "INBOUND", "UNFULFILLABLE"] },
+                "minItems": 1,
+                "maxItems": 4
+              }
             }
           }
         }

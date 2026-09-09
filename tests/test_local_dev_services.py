@@ -429,7 +429,7 @@ def test_mcp_requires_broker_token_and_exposes_supply_chain_v6_read_tools() -> N
         "query_inventory_skus_by_threshold_v1",
         "query_inventory_batch_snapshot_v1",
         "query_sku_identity_mapping_v1",
-        "query_fba_inventory_snapshot_v1",
+        "query_sku_fulfillment_inventory_snapshot_v1",
         "query_sku_fulfillment_sales_profit_windows_v2",
     }
     for tool in listed.json()["result"]["tools"]:

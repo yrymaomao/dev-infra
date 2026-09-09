@@ -15,7 +15,7 @@ _TOOLS = frozenset(
         "query_inventory_skus_by_threshold_v1",
         "query_inventory_batch_snapshot_v1",
         "query_sku_identity_mapping_v1",
-        "query_fba_inventory_snapshot_v1",
+        "query_sku_fulfillment_inventory_snapshot_v1",
         "query_sku_fulfillment_sales_profit_windows_v2",
     }
 )
@@ -26,7 +26,7 @@ _TOOLS_BY_NODE = {
     "read_cohort": "query_sku_boston_cohort_v1",
     "select_inventory": "query_inventory_skus_by_threshold_v1",
     "resolve_identity_batch": "query_sku_identity_mapping_v1",
-    "read_fba_inventory": "query_fba_inventory_snapshot_v1",
+    "read_fba_inventory": "query_sku_fulfillment_inventory_snapshot_v1",
     "read_fulfillment_sales": "query_sku_fulfillment_sales_profit_windows_v2",
 }
 

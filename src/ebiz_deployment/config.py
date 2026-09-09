@@ -24,7 +24,7 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
-    "query_fba_inventory_snapshot_v1",
+    "query_sku_fulfillment_inventory_snapshot_v1",
     "query_inventory_batch_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
@@ -464,7 +464,7 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
                 "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
                 "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
                 "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
-                "inventory.get_fba_snapshot": "query_fba_inventory_snapshot_v1",
+                "inventory.get_fba_snapshot": "query_sku_fulfillment_inventory_snapshot_v1",
                 "sales_profit.get_sku_fulfillment_windows": (
                     "query_sku_fulfillment_sales_profit_windows_v2"
                 ),
