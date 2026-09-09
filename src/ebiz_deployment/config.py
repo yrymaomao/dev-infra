@@ -24,11 +24,11 @@ _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
 _READ_TOOLS = (
-    "query_sku_fulfillment_inventory_snapshot_v1",
     "query_inventory_batch_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
     "query_inventory_summary_v2",
     "query_sku_boston_cohort_v1",
+    "query_sku_fulfillment_inventory_snapshot_v1",
     "query_sku_fulfillment_sales_profit_windows_v2",
     "query_sku_identity_mapping_v1",
     "query_sku_sales_profit_windows_v1",
