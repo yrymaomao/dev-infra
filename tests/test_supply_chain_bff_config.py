@@ -94,6 +94,28 @@ def test_external_rabbitmq_must_use_tls(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.rabbitmq_url is not None
 
 
+def test_level2_mq_names_are_explicitly_loaded_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_LEVEL2_ENABLED", "true")
+    monkeypatch.setenv("BFF_LEVEL2_MQ_ENABLED", "true")
+    monkeypatch.setenv("BFF_RABBITMQ_URL", "amqp://service:secret@127.0.0.1/")
+    monkeypatch.setenv("BFF_RABBITMQ_EXCHANGE", "supply-chain.report.dev-r1")
+    monkeypatch.setenv("BFF_RABBITMQ_QUEUE", "supply-chain.report-batch.dev-r1")
+    monkeypatch.setenv("BFF_RABBITMQ_ROUTING_KEY", "supply-chain.report-batch.requested.dev-r1")
+
+    settings = BffSettings.from_environment()
+
+    assert settings.rabbitmq_exchange == "supply-chain.report.dev-r1"
+    assert settings.rabbitmq_queue == "supply-chain.report-batch.dev-r1"
+    assert settings.rabbitmq_routing_key == "supply-chain.report-batch.requested.dev-r1"
+
+    monkeypatch.setenv("BFF_RABBITMQ_QUEUE", "invalid/name")
+    with pytest.raises(ValueError, match="BFF_RABBITMQ_QUEUE must be a bounded RabbitMQ name"):
+        BffSettings.from_environment()
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [

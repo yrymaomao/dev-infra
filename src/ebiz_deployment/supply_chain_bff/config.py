@@ -13,6 +13,7 @@ from sqlalchemy.engine import make_url
 from .eta import EtaProfile
 
 _CREDENTIAL_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+_RABBIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,11 @@ class BffSettings:
             skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
             runtime_credential_ref=credential_ref,
             rabbitmq_url=rabbitmq_url,
+            rabbitmq_exchange=_rabbit_name("BFF_RABBITMQ_EXCHANGE", "supply-chain.report.v1"),
+            rabbitmq_queue=_rabbit_name("BFF_RABBITMQ_QUEUE", "supply-chain.report-batch.v1"),
+            rabbitmq_routing_key=_rabbit_name(
+                "BFF_RABBITMQ_ROUTING_KEY", "supply-chain.report-batch.requested.v1"
+            ),
             snapshot_time_override=_optional_datetime("BFF_SUPPLY_CHAIN_SNAPSHOT_TIME"),
             tenant_dispatch_concurrency=concurrency,
             global_dispatch_concurrency=_integer(
@@ -150,6 +156,13 @@ def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise ValueError(f"{name} is required")
+    return value
+
+
+def _rabbit_name(name: str, default: str) -> str:
+    value = os.environ.get(name, default).strip()
+    if _RABBIT_NAME.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a bounded RabbitMQ name")
     return value
 
 
