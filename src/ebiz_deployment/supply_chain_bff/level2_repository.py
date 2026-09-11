@@ -147,10 +147,14 @@ class Level2Repository:
         *,
         payload_store: PayloadStore,
         preview_ttl: timedelta = timedelta(hours=1),
+        report_schema_version: str = "supply-chain.report.v2",
     ) -> None:
+        if report_schema_version != "supply-chain.report.v2":
+            raise ValueError("new reports must use supply-chain.report.v2")
         self._factory = factory
         self._payload_store = payload_store
         self._preview_ttl = preview_ttl
+        self._report_schema_version = report_schema_version
 
     async def create_preview(
         self,
@@ -642,6 +646,7 @@ class Level2Repository:
                         policy_version=policy.version,
                         policy_snapshot_ref=policy.document_ref,
                         policy_snapshot_hash=policy.document_hash,
+                        report_schema_version=self._report_schema_version,
                         data_cutoff=preview.snapshot_time,
                         status="ACCEPTED",
                         sku_count=preview.matched_count,
@@ -1477,6 +1482,18 @@ class Level2Repository:
         staged_result: Any | None = None
         result_risks: list[str] = []
         if runtime_status == "SUCCEEDED":
+            async with self._factory() as session:
+                report_schema_version = await session.scalar(
+                    select(ReportRun.report_schema_version).where(
+                        ReportRun.tenant_id == target.tenant_id,
+                        ReportRun.id == target.report_run_id,
+                    )
+                )
+            if report_schema_version not in {
+                "supply-chain.report.v1",
+                "supply-chain.report.v2",
+            }:
+                raise BatchResultContractError("Report schema version is invalid")
             result = validated_batch_output(
                 snapshot,
                 expected_item_count=target.item_count,
@@ -1499,7 +1516,17 @@ class Level2Repository:
                 item_offset=target.item_offset,
                 expected_item_count=target.item_count,
                 expected_counts=(complete_count, blocked_count, failed_count),
+                allow_historical_v1=(report_schema_version == "supply-chain.report.v1"),
             )
+            expected_artifact_schema = (
+                "supply-chain.report-batch-results.v1"
+                if report_schema_version == "supply-chain.report.v1"
+                else "supply-chain.report-batch-results.v2"
+            )
+            if validated["schema_version"] != expected_artifact_schema:
+                raise BatchResultContractError(
+                    "Report result artifact generation does not match its report"
+                )
             if isinstance(inline_artifact, dict):
                 staged_result = await self._stage(target.tenant_id, validated)
                 result_ref = staged_result.payload_ref
@@ -1742,6 +1769,7 @@ class Level2Repository:
                 policy_mode=schedule.policy_mode,
                 policy_version=schedule.policy_version,
                 policy_snapshot_ref=None,
+                report_schema_version=self._report_schema_version,
                 status="SELECTING",
                 sku_count=0,
                 batch_count=0,
@@ -1785,6 +1813,7 @@ class Level2Repository:
                             policy_mode=schedule.policy_mode,
                             policy_version=schedule.policy_version,
                             policy_snapshot_ref=None,
+                            report_schema_version=self._report_schema_version,
                             status="SELECTING",
                             sku_count=0,
                             batch_count=0,

@@ -53,7 +53,11 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
             runtime=runtime,
             settings=settings,
         )
-        level2_repository = Level2Repository(factory, payload_store=payload_store)
+        level2_repository = Level2Repository(
+            factory,
+            payload_store=payload_store,
+            report_schema_version=settings.report_schema_version,
+        )
         report_bus = (
             AioPikaReportBus(
                 url=settings.rabbitmq_url,

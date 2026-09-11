@@ -32,6 +32,27 @@ def test_level2_flags_default_off_and_product_limits_are_bounded(
     assert settings.global_bulk_concurrency == 8
     assert settings.etl_wait_seconds == 1800
     assert settings.etl_poll_seconds == 60
+    assert settings.report_schema_version == "supply-chain.report.v2"
+
+
+def test_report_schema_version_rejects_v1_for_new_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_REPORT_SCHEMA_VERSION", "supply-chain.report.v1")
+
+    with pytest.raises(ValueError, match="must be supply-chain.report.v2"):
+        BffSettings.from_environment()
+
+
+def test_report_schema_version_rejects_unknown_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_REPORT_SCHEMA_VERSION", "supply-chain.report.v3")
+
+    with pytest.raises(ValueError, match="must be supply-chain.report.v2"):
+        BffSettings.from_environment()
 
 
 def test_legacy_batches_can_be_explicitly_enabled(

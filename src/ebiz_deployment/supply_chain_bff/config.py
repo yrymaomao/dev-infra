@@ -48,6 +48,7 @@ class BffSettings:
     global_bulk_concurrency: int = 8
     etl_wait_seconds: int = 1800
     etl_poll_seconds: int = 60
+    report_schema_version: str = "supply-chain.report.v2"
     rabbitmq_exchange: str = "supply-chain.report.v1"
     rabbitmq_queue: str = "supply-chain.report-batch.v1"
     rabbitmq_routing_key: str = "supply-chain.report-batch.requested.v1"
@@ -131,6 +132,10 @@ class BffSettings:
             ),
             etl_wait_seconds=_integer("BFF_ETL_WAIT_SECONDS", 1800, minimum=0, maximum=7200),
             etl_poll_seconds=_integer("BFF_ETL_POLL_SECONDS", 60, minimum=5, maximum=600),
+            report_schema_version=_fixed(
+                "BFF_REPORT_SCHEMA_VERSION",
+                "supply-chain.report.v2",
+            ),
             eta_profile=EtaProfile(
                 version=os.environ.get("BFF_ETA_PROFILE_VERSION", "supply-chain-v5-bootstrap-1"),
                 fixed_seconds=_float("BFF_ETA_FIXED_SECONDS", 2.0, minimum=0),
@@ -192,3 +197,10 @@ def _boolean(name: str, default: bool) -> bool:
     if raw not in {"true", "false"}:
         raise ValueError(f"{name} must be true or false")
     return raw == "true"
+
+
+def _fixed(name: str, expected: str) -> str:
+    value = os.environ.get(name, expected).strip()
+    if value != expected:
+        raise ValueError(f"{name} must be {expected}")
+    return value
