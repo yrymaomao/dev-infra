@@ -99,6 +99,7 @@ def test_openapi_declares_all_level2_resources() -> None:
         "/api/supply-chain/v2/schedules",
         "/api/supply-chain/v2/schedules/{schedule_id}",
         "/api/supply-chain/v2/schedules/{schedule_id}/run-now",
+        "/api/supply-chain/v2/schedules/dispatch-due",
         "/api/supply-chain/v2/policies/validate",
         "/api/supply-chain/v2/policies",
         "/api/supply-chain/v2/policies/{version}",
@@ -120,9 +121,12 @@ def test_openapi_declares_all_level2_resources() -> None:
         "responses"
     ]["202"]["content"]["application/json"]["schema"]
     assert cancel_response == {"$ref": "#/components/schemas/ReportCancelAccepted"}
-    assert document["components"]["schemas"]["ReportCancelAccepted"]["properties"][
-        "semantics"
-    ]["const"] == "BEST_EFFORT"
+    assert (
+        document["components"]["schemas"]["ReportCancelAccepted"]["properties"]["semantics"][
+            "const"
+        ]
+        == "BEST_EFFORT"
+    )
 
 
 def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import re
+import secrets
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -28,6 +30,10 @@ from .cursor import CursorExpired, CursorInvalid, CursorSigner
 from .dispatcher import BatchCoordinator
 from .eta import EtaEstimator
 from .level2_contracts import (
+    OnDemandContextRequest,
+    OpenClawCredentialRequest,
+    OpenClawEndRunRequest,
+    OpenClawPolicyCheckRequest,
     ReportCancelAccepted,
     ReportRunRequest,
     ScheduleCreate,
@@ -43,9 +49,7 @@ from .runtime_client import RuntimeClient, RuntimeRequestError
 from .selection_csv import MAX_CSV_BYTES, CsvFileError, parse_selection_csv
 
 _TERMINAL_BATCH = frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "PARTIAL", "CANCELLED"})
-_TERMINAL_REPORT = frozenset(
-    {"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"}
-)
+_TERMINAL_REPORT = frozenset({"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"})
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
@@ -142,6 +146,23 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=401, detail="authentication failed")
         return Principal(tenant_id=tenant_id)
 
+    def openclaw_connector(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        configured = container.settings.openclaw_connector_credential
+        supplied = (
+            authorization.removeprefix("Bearer ")
+            if authorization and authorization.startswith("Bearer ")
+            else ""
+        )
+        if (
+            not container.settings.openclaw_enabled
+            or configured is None
+            or not supplied
+            or not hmac.compare_digest(supplied, configured)
+        ):
+            raise HTTPException(status_code=403, detail="connector binding denied")
+
     @app.get("/api/supply-chain/v2/runtime-profile")
     async def runtime_profile(
         _principal: Principal = Depends(principal),
@@ -163,6 +184,80 @@ def create_app(container: BffContainer) -> FastAPI:
             tenant_bulk_concurrency=container.settings.tenant_bulk_concurrency,
             global_bulk_concurrency=container.settings.global_bulk_concurrency,
         ).model_dump(mode="json")
+
+    @app.post("/api/supply-chain/v2/openclaw/credentials")
+    async def exchange_openclaw_credential(
+        body: OpenClawCredentialRequest,
+        _connector: None = Depends(openclaw_connector),
+        repository: Level2Repository = Depends(level2),
+    ) -> dict[str, object]:
+        settings = container.settings
+        if body.selector != settings.openclaw_selector or settings.tool_gateway_jwt_key is None:
+            raise HTTPException(status_code=403, detail="connector binding denied")
+        now = datetime.now(UTC)
+        identity = await repository.exchange_openclaw_run(
+            selector=body.selector,
+            run_id=body.run_id,
+            tenant_id=settings.openclaw_tenant_id,
+            principal_id=settings.openclaw_principal_id,
+            now=now,
+        )
+        issued = int(now.timestamp())
+        expires = issued + 120
+        token = jwt.encode(
+            {
+                "iss": settings.tool_gateway_issuer,
+                "aud": settings.tool_gateway_audience,
+                "sub": identity["principalId"],
+                "tenant_id": identity["tenantId"],
+                "session_key": identity["sessionKey"],
+                "iat": issued,
+                "exp": expires,
+                "jti": secrets.token_hex(16),
+            },
+            settings.tool_gateway_jwt_key,
+            algorithm="HS256",
+        )
+        return {"identity": identity, "jwt": token, "expiresAt": expires * 1000}
+
+    @app.post("/api/supply-chain/v2/openclaw/runs/end")
+    async def end_openclaw_run(
+        body: OpenClawEndRunRequest,
+        _connector: None = Depends(openclaw_connector),
+        repository: Level2Repository = Depends(level2),
+    ) -> dict[str, bool]:
+        ended = await repository.end_openclaw_run(
+            run_id=body.run_id,
+            now=datetime.now(UTC),
+        )
+        return {"ended": ended}
+
+    @app.post("/internal/supply-chain/v2/openclaw/authorize", include_in_schema=False)
+    async def authorize_openclaw_run(
+        body: OpenClawPolicyCheckRequest,
+        _connector: None = Depends(openclaw_connector),
+        repository: Level2Repository = Depends(level2),
+    ) -> dict[str, object]:
+        active, revision = await repository.authorize_openclaw_run(
+            tenant_id=body.tenant_id,
+            principal_id=body.principal_id,
+            session_key=body.session_key,
+            now=datetime.now(UTC),
+        )
+        allowed = (
+            [
+                offer_id
+                for offer_id in body.candidate_offer_ids
+                if offer_id == container.settings.openclaw_offer_id
+            ]
+            if active
+            else []
+        )
+        return {
+            "binding_active": active,
+            "policy_revision": revision,
+            "allowed_offer_ids": allowed,
+        }
 
     @app.post("/api/supply-chain/v2/analysis-batches", status_code=202)
     async def create_batch(
@@ -697,6 +792,36 @@ def create_app(container: BffContainer) -> FastAPI:
             "status": "SELECTING",
         }
 
+    @app.post("/api/supply-chain/v2/schedules/dispatch-due", status_code=202)
+    async def dispatch_due_schedules(
+        current: Principal = Depends(principal),
+        repository: Level2Repository = Depends(level2),
+    ) -> dict[str, object]:
+        if container.level2_worker is None or not container.settings.level2_mq_enabled:
+            raise HTTPException(status_code=503, detail="Level 2 schedule worker is unavailable")
+        created = await repository.enqueue_due_schedules(
+            tenant_id=current.tenant_id,
+            now=container.settings.snapshot_time_override or datetime.now(UTC),
+        )
+        return {
+            "schema_version": "supply-chain.schedule-dispatch.v1",
+            "accepted": True,
+            "created_report_count": created,
+        }
+
+    @app.post("/internal/supply-chain/v2/on-demand-context", include_in_schema=False)
+    async def prepare_on_demand_context(
+        body: OnDemandContextRequest,
+        current: Principal = Depends(principal),
+        repository: Level2Repository = Depends(level2),
+    ) -> dict[str, object]:
+        return await repository.prepare_on_demand_context(
+            tenant_id=current.tenant_id,
+            skus=body.skus,
+            invocation_key=body.invocation_key,
+            now=container.settings.snapshot_time_override or datetime.now(UTC),
+        )
+
     @app.exception_handler(CursorInvalid)
     async def invalid_cursor(request: Request, _error: CursorInvalid) -> JSONResponse:
         return _safe_error(
@@ -796,9 +921,7 @@ def create_app(container: BffContainer) -> FastAPI:
         app.router.routes[:] = [
             route
             for route in app.router.routes
-            if not getattr(route, "path", "").startswith(
-                "/api/supply-chain/v2/analysis-batches"
-            )
+            if not getattr(route, "path", "").startswith("/api/supply-chain/v2/analysis-batches")
         ]
 
     return app

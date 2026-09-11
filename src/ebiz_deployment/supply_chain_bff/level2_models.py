@@ -112,6 +112,34 @@ class PolicyVersion(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OpenClawRunBinding(Base):
+    __tablename__ = "openclaw_run_binding"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "session_key", name="uq_openclaw_run_session"),
+        Index("ix_openclaw_run_active", "tenant_id", "active", "expires_at"),
+        {"schema": SCHEMA},
+    )
+
+    run_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    selector: Mapped[str] = mapped_column(String(256), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+    )
+    row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ReportSchedule(Base):
     __tablename__ = "report_schedule"
     __table_args__ = (

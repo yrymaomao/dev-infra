@@ -255,11 +255,13 @@ def _streaming_bff_release() -> dict[str, Any]:
     return {
         "version": "0.1.4",
         "schema": "supply_chain_bff",
-        "migration_head": "0006_report_v2_contract",
+        "migration_head": "0007_openclaw_run_binding",
         "secret_references": [
             "supply_chain_bff_postgresql_url",
             "supply_chain_cursor_hmac_signing_key",
             "supply_chain_bff_rabbitmq_url",
+            "supply_chain_openclaw_connector_credential",
+            "supply_chain_tool_gateway_jwt_key",
         ],
         "features": {
             "async_start": False,
@@ -311,7 +313,7 @@ def _streaming_bff_release() -> dict[str, Any]:
 def _release(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "agent_id": "inventory-supply-chain",
-        "agent_version": 6,
+        "agent_version": 7,
         "agent_distribution": "ebiz-agent-inventory-supply-chain",
         "agent_distribution_version": "4.1.0",
         "agent_record_digest": digests["SUPPLY_CHAIN_AGENT_RECORD_DIGEST"],
@@ -346,6 +348,7 @@ def _release(digests: dict[str, str]) -> dict[str, Any]:
         "streaming_bff": _streaming_bff_release(),
         "provider_versions": {
             "yeaher.erp": "0.2.0",
+            "deployment.supply-chain-on-demand-context": "0.1.4",
             "supply-chain-planning.fulfillment-resolver": "3.0.0",
             "supply-chain-planning.forecast-engine": "3.0.0",
             "supply-chain-planning.classification-engine": "3.0.0",
@@ -380,6 +383,8 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
                 "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
                 "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
                 "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
+                "supply_chain_openclaw_connector_credential": "BFF_OPENCLAW_CONNECTOR_CREDENTIAL",
+                "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY",
             }
         },
         "credential_broker": {
@@ -643,12 +648,12 @@ def _installed_digests() -> dict[str, str]:
     digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"] = hashlib.sha256(workflow.read_bytes()).hexdigest()
     package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent")))
     graph = RegistryImportArtifactGraph.model_validate_json(
-        package_root.joinpath("generated-v6/registry-import-artifact-graph.json").read_text(
+        package_root.joinpath("generated-v7/registry-import-artifact-graph.json").read_text(
             encoding="utf-8"
         )
     )
     plan = RegistryImportPublicationPlan.model_validate_json(
-        package_root.joinpath("generated-v6/registry-import-publication-plan.json").read_text(
+        package_root.joinpath("generated-v7/registry-import-publication-plan.json").read_text(
             encoding="utf-8"
         )
     )

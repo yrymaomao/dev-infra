@@ -247,8 +247,8 @@ class StreamingBffEtaProfile(StrictModel):
 class StreamingBffReleaseConfig(StrictModel):
     version: Literal["0.1.4"]
     schema_name: Literal["supply_chain_bff"] = Field(alias="schema")
-    migration_head: Literal["0006_report_v2_contract"]
-    secret_references: tuple[str, ...] = Field(min_length=3, max_length=3)
+    migration_head: Literal["0007_openclaw_run_binding"]
+    secret_references: tuple[str, ...] = Field(min_length=5, max_length=5)
     features: StreamingBffFeatures
     limits: StreamingBffLimits
     etl_wait: StreamingBffEtlWait
@@ -265,15 +265,17 @@ class StreamingBffReleaseConfig(StrictModel):
             "supply_chain_bff_postgresql_url",
             "supply_chain_cursor_hmac_signing_key",
             "supply_chain_bff_rabbitmq_url",
+            "supply_chain_openclaw_connector_credential",
+            "supply_chain_tool_gateway_jwt_key",
         }
         if set(value) != expected or len(set(value)) != len(value):
-            raise ValueError("streaming_bff must use the exact three secret references")
+            raise ValueError("streaming_bff must use the exact five secret references")
         return tuple(sorted(value))
 
 
 class SupplyChainReleaseConfig(StrictModel):
     agent_id: str = Field(pattern=r"^inventory-supply-chain$")
-    agent_version: int = Field(ge=6, le=6)
+    agent_version: int = Field(ge=7, le=7)
     agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
     agent_distribution_version: str = Field(pattern=r"^4\.1\.0$")
     agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -284,7 +286,7 @@ class SupplyChainReleaseConfig(StrictModel):
     registry_import_plan_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=3, max_length=3)
     streaming_bff: StreamingBffReleaseConfig
-    provider_versions: dict[str, str] = Field(min_length=11, max_length=11)
+    provider_versions: dict[str, str] = Field(min_length=12, max_length=12)
 
     @field_validator("capability_sets")
     @classmethod
@@ -305,18 +307,24 @@ class SupplyChainReleaseConfig(StrictModel):
                 distribution,
                 distribution_version,
             ):
-                raise ValueError("capability set identity differs from the reviewed v6 release")
+                raise ValueError("capability set identity differs from the reviewed v7 release")
         return tuple(sorted(value, key=lambda item: item.set_id))
 
     @field_validator("provider_versions")
     @classmethod
     def validate_provider_versions(cls, value: dict[str, str]) -> dict[str, str]:
-        if set(value) != {"yeaher.erp", *_EXPECTED_PLANNING_PROVIDERS}:
-            raise ValueError("provider_versions must contain the exact v6 provider pins")
-        if value["yeaher.erp"] != "0.2.0" or any(
-            value[provider] != "3.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS
+        if set(value) != {
+            "yeaher.erp",
+            "deployment.supply-chain-on-demand-context",
+            *_EXPECTED_PLANNING_PROVIDERS,
+        }:
+            raise ValueError("provider_versions must contain the exact v7 provider pins")
+        if (
+            value["yeaher.erp"] != "0.2.0"
+            or any(value[provider] != "3.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS)
+            or value["deployment.supply-chain-on-demand-context"] != "0.1.4"
         ):
-            raise ValueError("provider_versions differ from the reviewed v6 wheels")
+            raise ValueError("provider_versions differ from the reviewed v7 wheels")
         return dict(sorted(value.items()))
 
 

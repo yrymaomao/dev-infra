@@ -104,7 +104,8 @@ class Level2Worker:
             )
         try:
             while not stop.is_set():
-                await self._repository.enqueue_due_schedules(now=datetime.now(UTC))
+                if self._settings.autonomous_schedule_dispatch_enabled:
+                    await self._repository.enqueue_due_schedules(now=datetime.now(UTC))
                 await self.process_scheduled_report_once()
                 await self.process_selection_once()
                 if self._bus is not None:

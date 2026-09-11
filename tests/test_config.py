@@ -59,11 +59,13 @@ def streaming_bff_document() -> dict[str, object]:
     return {
         "version": "0.1.4",
         "schema": "supply_chain_bff",
-        "migration_head": "0006_report_v2_contract",
+        "migration_head": "0007_openclaw_run_binding",
         "secret_references": [
             "supply_chain_bff_postgresql_url",
             "supply_chain_cursor_hmac_signing_key",
             "supply_chain_bff_rabbitmq_url",
+            "supply_chain_openclaw_connector_credential",
+            "supply_chain_tool_gateway_jwt_key",
         ],
         "features": {
             "async_start": False,
@@ -126,6 +128,8 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
                 "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
                 "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
+                "supply_chain_openclaw_connector_credential": "BFF_OPENCLAW_CONNECTOR_CREDENTIAL",
+                "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY",
             }
         },
         "credential_broker": {
@@ -210,7 +214,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         ],
         "supply_chain_release": {
             "agent_id": "inventory-supply-chain",
-            "agent_version": 6,
+            "agent_version": 7,
             "agent_distribution": "ebiz-agent-inventory-supply-chain",
             "agent_distribution_version": "4.1.0",
             "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
@@ -245,6 +249,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
             "streaming_bff": streaming_bff_document(),
             "provider_versions": {
                 "yeaher.erp": "0.2.0",
+                "deployment.supply-chain-on-demand-context": "0.1.4",
                 "supply-chain-planning.fulfillment-resolver": "3.0.0",
                 "supply-chain-planning.forecast-engine": "3.0.0",
                 "supply-chain-planning.classification-engine": "3.0.0",
@@ -299,7 +304,7 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
     ]
     assert config.runtime_plugin_policy.plugins[0].plugin_id == "supply-chain-planning"
     assert "cockpit" not in json.dumps(config.model_dump(mode="json")).lower()
-    assert config.supply_chain_release.agent_version == 6
+    assert config.supply_chain_release.agent_version == 7
     assert [item.set_id for item in config.supply_chain_release.capability_sets] == [
         "commerce-sales.analytics",
         "inventory.core",

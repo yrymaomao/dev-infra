@@ -43,6 +43,16 @@ class BffSettings:
     legacy_batches_enabled: bool = True
     level2_enabled: bool = False
     level2_mq_enabled: bool = False
+    autonomous_schedule_dispatch_enabled: bool = True
+    openclaw_enabled: bool = False
+    openclaw_connector_credential: str | None = field(default=None, repr=False)
+    tool_gateway_jwt_key: str | None = field(default=None, repr=False)
+    tool_gateway_issuer: str = "ebizhub-supply-chain-bff"
+    tool_gateway_audience: str = "ebizhub-tool-gateway"
+    openclaw_selector: str = "supply-chain-dev"
+    openclaw_tenant_id: str = "tenant-local-dev"
+    openclaw_principal_id: str = "openclaw-supply-chain"
+    openclaw_offer_id: str = "supply-chain-on-demand"
     max_selected_skus: int = 10_000
     bulk_batch_size: int = 200
     tenant_bulk_concurrency: int = 2
@@ -97,6 +107,18 @@ class BffSettings:
                 raise ValueError("BFF_RABBITMQ_URL must use AMQP(S)")
             if rabbit.scheme == "amqp" and rabbit.hostname not in {"127.0.0.1", "localhost"}:
                 raise ValueError("BFF_RABBITMQ_URL requires AMQPS outside loopback")
+        openclaw_enabled = _boolean("BFF_OPENCLAW_ENABLED", False)
+        openclaw_connector_credential = (
+            os.environ.get("BFF_OPENCLAW_CONNECTOR_CREDENTIAL", "").strip() or None
+        )
+        tool_gateway_jwt_key = os.environ.get("TOOL_GATEWAY_JWT_KEY", "").strip() or None
+        if openclaw_enabled and (
+            openclaw_connector_credential is None
+            or len(openclaw_connector_credential) < 32
+            or tool_gateway_jwt_key is None
+            or len(tool_gateway_jwt_key) < 32
+        ):
+            raise ValueError("OpenClaw requires bounded connector and Gateway secrets")
         return cls(
             database_url=database_url,
             cursor_hmac_key=key,
@@ -128,6 +150,18 @@ class BffSettings:
             legacy_batches_enabled=_boolean("BFF_LEGACY_BATCHES_ENABLED", False),
             level2_enabled=level2_enabled,
             level2_mq_enabled=level2_mq_enabled,
+            autonomous_schedule_dispatch_enabled=_boolean(
+                "BFF_AUTONOMOUS_SCHEDULE_DISPATCH_ENABLED", True
+            ),
+            openclaw_enabled=openclaw_enabled,
+            openclaw_connector_credential=openclaw_connector_credential,
+            tool_gateway_jwt_key=tool_gateway_jwt_key,
+            tool_gateway_issuer=_bounded("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
+            tool_gateway_audience=_bounded("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
+            openclaw_selector=_bounded("BFF_OPENCLAW_SELECTOR", "supply-chain-dev"),
+            openclaw_tenant_id=_bounded("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
+            openclaw_principal_id=_bounded("BFF_OPENCLAW_PRINCIPAL_ID", "openclaw-supply-chain"),
+            openclaw_offer_id=_bounded("BFF_OPENCLAW_OFFER_ID", "supply-chain-on-demand"),
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
             tenant_bulk_concurrency=_integer(
@@ -216,4 +250,11 @@ def _fixed(name: str, expected: str) -> str:
     value = os.environ.get(name, expected).strip()
     if value != expected:
         raise ValueError(f"{name} must be {expected}")
+    return value
+
+
+def _bounded(name: str, default: str) -> str:
+    value = os.environ.get(name, default).strip()
+    if not value or len(value) > 256 or any(ord(character) < 32 for character in value):
+        raise ValueError(f"{name} must be bounded text")
     return value

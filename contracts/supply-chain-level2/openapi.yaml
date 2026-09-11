@@ -257,6 +257,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScheduleRunAccepted'
+  /api/supply-chain/v2/schedules/dispatch-due:
+    post:
+      operationId: dispatchDueSchedules
+      responses:
+        '202':
+          description: Tenant due schedules were claimed idempotently
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleDispatchAccepted'
+  /api/supply-chain/v2/openclaw/credentials:
+    post:
+      operationId: exchangeOpenClawCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenClawCredentialRequest'
+      responses:
+        '200':
+          description: Short-lived Tool Gateway identity bound to the current connector run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenClawCredentialReply'
+  /api/supply-chain/v2/openclaw/runs/end:
+    post:
+      operationId: endOpenClawRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenClawEndRunRequest'
+      responses:
+        '200':
+          description: Connector run binding revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ended]
+                properties:
+                  ended: {type: boolean}
   /api/supply-chain/v2/policies/validate:
     post:
       operationId: validatePolicy
@@ -373,6 +419,36 @@ components:
           schema:
             $ref: '#/components/schemas/SafeError'
   schemas:
+    OpenClawCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [selector, runId]
+      properties:
+        selector: {type: string, minLength: 1, maxLength: 256}
+        runId: {type: string, minLength: 1, maxLength: 512}
+    OpenClawEndRunRequest:
+      type: object
+      additionalProperties: false
+      required: [runId]
+      properties:
+        runId: {type: string, minLength: 1, maxLength: 512}
+    OpenClawCredentialReply:
+      type: object
+      additionalProperties: false
+      required: [identity, jwt, expiresAt]
+      properties:
+        identity:
+          type: object
+          additionalProperties: false
+          required: [tenantId, principalId, sessionId, sessionKey, runId]
+          properties:
+            tenantId: {type: string}
+            principalId: {type: string}
+            sessionId: {type: string}
+            sessionKey: {type: string}
+            runId: {type: string}
+        jwt: {type: string}
+        expiresAt: {type: integer}
     SafeError:
       type: object
       additionalProperties: false
@@ -564,6 +640,19 @@ components:
           format: uuid
         status:
           const: SELECTING
+    ScheduleDispatchAccepted:
+      type: object
+      additionalProperties: false
+      required: [schema_version, accepted, created_report_count]
+      properties:
+        schema_version:
+          const: supply-chain.schedule-dispatch.v1
+        accepted:
+          const: true
+        created_report_count:
+          type: integer
+          minimum: 0
+          maximum: 100
     ReportSnapshot:
       type: object
       additionalProperties: false

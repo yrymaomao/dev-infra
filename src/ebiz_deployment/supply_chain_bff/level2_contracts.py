@@ -133,6 +133,36 @@ class ReportCancelAccepted(StrictModel):
     runtime_completion: Literal["NOT_CONFIRMED"] = "NOT_CONFIRMED"
 
 
+class OnDemandContextRequest(StrictModel):
+    """Trusted Runtime provider request; never exposed as an OpenClaw tool schema."""
+
+    skus: tuple[CanonicalSku, ...] = Field(min_length=1, max_length=200)
+    invocation_key: str = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def unique_skus(self) -> OnDemandContextRequest:
+        if len(set(self.skus)) != len(self.skus):
+            raise ValueError("skus must be unique")
+        return self
+
+
+class OpenClawCredentialRequest(StrictModel):
+    selector: str = Field(min_length=1, max_length=256)
+    run_id: str = Field(alias="runId", min_length=1, max_length=512)
+
+
+class OpenClawEndRunRequest(StrictModel):
+    run_id: str = Field(alias="runId", min_length=1, max_length=512)
+
+
+class OpenClawPolicyCheckRequest(StrictModel):
+    tenant_id: str = Field(min_length=1, max_length=256)
+    principal_id: str = Field(min_length=1, max_length=256)
+    session_key: str = Field(min_length=1, max_length=256)
+    action: Literal["discover", "describe", "invoke", "status", "result", "cancel"]
+    candidate_offer_ids: list[str] = Field(max_length=256)
+
+
 class ScheduleCreate(StrictModel):
     name: str = Field(min_length=1, max_length=128)
     timezone: TenantTimezone

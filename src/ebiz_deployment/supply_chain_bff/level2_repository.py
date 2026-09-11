@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_runtime.payloads.contracts import PayloadAuthorizationError, PayloadStore
@@ -32,6 +32,7 @@ from .level2_contracts import (
     SchedulePatch,
 )
 from .level2_models import (
+    OpenClawRunBinding,
     PolicyVersion,
     ReportActivity,
     ReportBatch,
@@ -1778,16 +1779,21 @@ class Level2Repository:
             session.add(report)
         return report.id
 
-    async def enqueue_due_schedules(self, *, now: datetime, limit: int = 100) -> int:
+    async def enqueue_due_schedules(
+        self, *, now: datetime, tenant_id: str | None = None, limit: int = 100
+    ) -> int:
         created = 0
         async with self._factory() as session, session.begin():
+            predicates = [
+                ReportSchedule.active.is_(True),
+                ReportSchedule.next_fire_at_utc <= now,
+            ]
+            if tenant_id is not None:
+                predicates.append(ReportSchedule.tenant_id == tenant_id)
             schedules = (
                 await session.scalars(
                     select(ReportSchedule)
-                    .where(
-                        ReportSchedule.active.is_(True),
-                        ReportSchedule.next_fire_at_utc <= now,
-                    )
+                    .where(*predicates)
                     .order_by(ReportSchedule.next_fire_at_utc, ReportSchedule.id)
                     .limit(limit)
                     .with_for_update(skip_locked=True)
@@ -2319,6 +2325,138 @@ class Level2Repository:
             document_hash=staged.payload_hash,
             risk_flags=("POLICY_DEFAULTED", "CAPITAL_COST_DEFAULTED_1_PERCENT"),
         )
+
+    async def prepare_on_demand_context(
+        self,
+        *,
+        tenant_id: str,
+        skus: tuple[str, ...],
+        invocation_key: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        """Resolve trusted execution metadata while keeping the public tool input SKU-only."""
+
+        policy = await self._resolve_policy_snapshot(
+            tenant_id=tenant_id,
+            policy_mode="ACTIVE_AT_RUN",
+            policy_version=None,
+        )
+        if policy is None:
+            raise ResourceNotReady("active policy is unavailable")
+        document = await self._load(tenant_id, policy.document_ref, policy.document_hash)
+        if not isinstance(document, dict):
+            raise ValueError("active policy payload is invalid")
+        cutoff = now.astimezone(UTC)
+        cutoff_date = cutoff.date()
+        week_to = cutoff_date - timedelta(days=cutoff_date.weekday() + 7)
+        week_from = week_to - timedelta(weeks=259)
+        stable = f"{tenant_id}\x1f{invocation_key}"
+        report_run_id = uuid5(NAMESPACE_URL, f"ebizhub:supply-chain:on-demand:report:{stable}")
+        batch_id = uuid5(NAMESPACE_URL, f"ebizhub:supply-chain:on-demand:batch:{stable}")
+        return {
+            "schema_version": "supply-chain.on-demand-context.v1",
+            "report_run_id": str(report_run_id),
+            "batch_id": str(batch_id),
+            "item_offset": 0,
+            "data_cutoff": cutoff.isoformat().replace("+00:00", "Z"),
+            "week_from": week_from.isoformat(),
+            "week_to": week_to.isoformat(),
+            "selection_snapshot_ref": f"urn:ebizhub:supply-chain:on-demand:{report_run_id}",
+            "selection_rows": [
+                {"sku": sku, "csv_mode": None, "csv_mixed_ratio": None} for sku in skus
+            ],
+            "policy_rules": document,
+            "policy_version": policy.version,
+            "policy_snapshot_hash": policy.document_hash,
+        }
+
+    async def exchange_openclaw_run(
+        self,
+        *,
+        selector: str,
+        run_id: str,
+        tenant_id: str,
+        principal_id: str,
+        now: datetime,
+    ) -> dict[str, str]:
+        session_id = str(uuid5(NAMESPACE_URL, f"ebizhub:openclaw:session:{tenant_id}:{run_id}"))
+        session_digest = hashlib.sha256(
+            f"{tenant_id}\x1f{principal_id}\x1f{run_id}".encode()
+        ).hexdigest()
+        session_key = f"openclaw:{session_digest[:48]}"
+        expires_at = now.astimezone(UTC) + timedelta(minutes=10)
+        async with self._factory() as session, session.begin():
+            binding = await session.scalar(
+                select(OpenClawRunBinding)
+                .where(OpenClawRunBinding.run_id == run_id)
+                .with_for_update()
+            )
+            if binding is None:
+                binding = OpenClawRunBinding(
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    principal_id=principal_id,
+                    session_id=session_id,
+                    session_key=session_key,
+                    selector=selector,
+                    active=True,
+                    expires_at=expires_at,
+                )
+                session.add(binding)
+            elif (
+                not binding.active
+                or binding.tenant_id != tenant_id
+                or binding.principal_id != principal_id
+                or binding.selector != selector
+                or binding.session_id != session_id
+                or binding.session_key != session_key
+            ):
+                raise ResourceConflict("OpenClaw run binding is not reusable")
+            else:
+                binding.expires_at = expires_at
+            await session.flush()
+            return {
+                "tenantId": binding.tenant_id,
+                "principalId": binding.principal_id,
+                "sessionId": binding.session_id,
+                "sessionKey": binding.session_key,
+                "runId": binding.run_id,
+            }
+
+    async def end_openclaw_run(self, *, run_id: str, now: datetime) -> bool:
+        async with self._factory() as session, session.begin():
+            binding = await session.scalar(
+                select(OpenClawRunBinding)
+                .where(OpenClawRunBinding.run_id == run_id)
+                .with_for_update()
+            )
+            if binding is None or not binding.active:
+                return False
+            binding.active = False
+            binding.expires_at = now.astimezone(UTC)
+            binding.row_version += 1
+            return True
+
+    async def authorize_openclaw_run(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        session_key: str,
+        now: datetime,
+    ) -> tuple[bool, str]:
+        async with self._factory() as session:
+            binding = await session.scalar(
+                select(OpenClawRunBinding).where(
+                    OpenClawRunBinding.tenant_id == tenant_id,
+                    OpenClawRunBinding.principal_id == principal_id,
+                    OpenClawRunBinding.session_key == session_key,
+                )
+            )
+        if binding is None:
+            return False, "0"
+        active = binding.active and binding.expires_at > now.astimezone(UTC)
+        return active, str(binding.row_version)
 
     async def _public_policy(self, policy: PolicyVersion, document: object) -> dict[str, Any]:
         return {

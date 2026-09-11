@@ -47,6 +47,63 @@ class _ScheduleRepository:
         assert request.fixed_skus == ()
         return {"schedule_id": "00000000-0000-4000-8000-000000000001"}
 
+    async def enqueue_due_schedules(self, *, tenant_id: str, now: datetime) -> int:
+        assert tenant_id == "tenant-a"
+        assert now.tzinfo is not None
+        return 2
+
+
+class _ScheduleWorker:
+    async def run_forever(self, *, stop: object) -> None:
+        return None
+
+
+class _OpenClawRepository:
+    def __init__(self) -> None:
+        self.ended = False
+
+    async def exchange_openclaw_run(
+        self,
+        *,
+        selector: str,
+        run_id: str,
+        tenant_id: str,
+        principal_id: str,
+        now: datetime,
+    ) -> dict[str, str]:
+        assert selector == "supply-chain-dev"
+        assert run_id == "run-a"
+        assert now.tzinfo is not None
+        return {
+            "tenantId": tenant_id,
+            "principalId": principal_id,
+            "sessionId": "00000000-0000-4000-8000-000000000009",
+            "sessionKey": "session-a",
+            "runId": run_id,
+        }
+
+    async def authorize_openclaw_run(
+        self,
+        *,
+        tenant_id: str,
+        principal_id: str,
+        session_key: str,
+        now: datetime,
+    ) -> tuple[bool, str]:
+        assert (tenant_id, principal_id, session_key) == (
+            "tenant-local-dev",
+            "openclaw-supply-chain",
+            "session-a",
+        )
+        assert now.tzinfo is not None
+        return True, "3"
+
+    async def end_openclaw_run(self, *, run_id: str, now: datetime) -> bool:
+        assert run_id == "run-a"
+        assert now.tzinfo is not None
+        self.ended = True
+        return True
+
 
 def test_selection_request_requires_exactly_one_source() -> None:
     with pytest.raises(ValidationError):
@@ -195,6 +252,56 @@ async def test_schedule_create_accepts_the_frozen_openapi_json_shape() -> None:
     assert response.status_code == 201, response.text
 
 
+@pytest.mark.anyio
+async def test_dispatch_due_is_tenant_scoped_and_returns_created_count() -> None:
+    secret = "j" * 32
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"c" * 32,
+        jwt_secret=secret,
+        runtime_url="http://127.0.0.1:8000",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:runtime-service",
+        level2_enabled=True,
+        level2_mq_enabled=True,
+        autonomous_schedule_dispatch_enabled=False,
+    )
+    token = jwt.encode(
+        {
+            "aud": "agent-runtime",
+            "sub": "scheduler",
+            "tenant_id": "tenant-a",
+            "exp": int(clock_time.time()) + 60,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    app = create_app(
+        BffContainer(
+            settings=settings,
+            repository=object(),  # type: ignore[arg-type]
+            runtime=object(),  # type: ignore[arg-type]
+            coordinator=_IdleCoordinator(),  # type: ignore[arg-type]
+            cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
+            level2_repository=_ScheduleRepository(),  # type: ignore[arg-type]
+            level2_worker=_ScheduleWorker(),  # type: ignore[arg-type]
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://bff.test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as client:
+        response = await client.post("/api/supply-chain/v2/schedules/dispatch-due")
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "schema_version": "supply-chain.schedule-dispatch.v1",
+        "accepted": True,
+        "created_report_count": 2,
+    }
+
+
 def test_schedule_patch_can_atomically_change_selection_mode() -> None:
     patch = SchedulePatch.model_validate(
         {
@@ -250,3 +357,69 @@ def test_policy_digest_is_canonical_and_cross_fields_are_checked() -> None:
     fixture["defaults"]["mixed_ratio"] = {"fba": 0.8, "fbm": 0.8}
     with pytest.raises(PolicyInvalid, match="sum to 1"):
         validate_policy(fixture)
+
+
+@pytest.mark.anyio
+async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding() -> None:
+    connector = "c" * 32
+    gateway_key = "g" * 32
+    repository = _OpenClawRepository()
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"h" * 32,
+        jwt_secret="j" * 32,
+        runtime_url="http://127.0.0.1:8013",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:runtime-service",
+        level2_enabled=True,
+        openclaw_enabled=True,
+        openclaw_connector_credential=connector,
+        tool_gateway_jwt_key=gateway_key,
+    )
+    app = create_app(
+        BffContainer(
+            settings=settings,
+            repository=object(),  # type: ignore[arg-type]
+            runtime=object(),  # type: ignore[arg-type]
+            coordinator=_IdleCoordinator(),  # type: ignore[arg-type]
+            cursor=CursorSigner(b"h" * 32, ttl=timedelta(days=7)),
+            level2_repository=repository,  # type: ignore[arg-type]
+            level2_worker=_ScheduleWorker(),  # type: ignore[arg-type]
+        )
+    )
+    headers = {"Authorization": f"Bearer {connector}"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://bff.test", headers=headers
+    ) as client:
+        credential = await client.post(
+            "/api/supply-chain/v2/openclaw/credentials",
+            json={"selector": "supply-chain-dev", "runId": "run-a"},
+        )
+        policy = await client.post(
+            "/internal/supply-chain/v2/openclaw/authorize",
+            json={
+                "tenant_id": "tenant-local-dev",
+                "principal_id": "openclaw-supply-chain",
+                "session_key": "session-a",
+                "action": "invoke",
+                "candidate_offer_ids": ["supply-chain-on-demand", "other"],
+            },
+        )
+        ended = await client.post("/api/supply-chain/v2/openclaw/runs/end", json={"runId": "run-a"})
+
+    assert credential.status_code == 200
+    payload = credential.json()
+    claims = jwt.decode(
+        payload["jwt"], gateway_key, algorithms=["HS256"], audience="ebizhub-tool-gateway"
+    )
+    assert claims["tenant_id"] == "tenant-local-dev"
+    assert claims["session_key"] == "session-a"
+    assert payload["identity"]["runId"] == "run-a"
+    assert policy.status_code == 200, policy.text
+    assert policy.json() == {
+        "binding_active": True,
+        "policy_revision": "3",
+        "allowed_offer_ids": ["supply-chain-on-demand"],
+    }
+    assert ended.json() == {"ended": True}
+    assert repository.ended is True

@@ -10,7 +10,9 @@
       "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
       "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
       "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
-      "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL"
+      "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
+      "supply_chain_openclaw_connector_credential": "BFF_OPENCLAW_CONNECTOR_CREDENTIAL",
+      "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY"
     }
   },
   "credential_broker": {
@@ -133,7 +135,7 @@
   ],
   "supply_chain_release": {
     "agent_id": "inventory-supply-chain",
-    "agent_version": 6,
+    "agent_version": 7,
     "agent_distribution": "ebiz-agent-inventory-supply-chain",
     "agent_distribution_version": "4.1.0",
     "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
@@ -150,8 +152,8 @@
     "streaming_bff": {
       "version": "0.1.4",
       "schema": "supply_chain_bff",
-      "migration_head": "0005_schedule_idempotency",
-      "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key", "supply_chain_bff_rabbitmq_url"],
+      "migration_head": "0007_openclaw_run_binding",
+      "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key", "supply_chain_bff_rabbitmq_url", "supply_chain_openclaw_connector_credential", "supply_chain_tool_gateway_jwt_key"],
       "features": {"async_start": false, "runtime_stream": false, "activity_ui": false, "model_error_polish": false, "level2": false, "level2_mq": false},
       "limits": {"max_batch_size": 200, "tenant_dispatch_concurrency": 4, "runtime_subscription_limit": 200, "max_selected_skus": 10000, "bulk_batch_size": 200, "tenant_bulk_concurrency": 2, "global_bulk_concurrency": 8},
       "etl_wait": {"max_seconds": 1800, "poll_seconds": 60, "timeout_risk_flag": "DATA_SNAPSHOT_LAGGED"},
@@ -163,6 +165,7 @@
     },
     "provider_versions": {
       "yeaher.erp": "0.2.0",
+      "deployment.supply-chain-on-demand-context": "0.1.4",
       "supply-chain-planning.fulfillment-resolver": "3.0.0",
       "supply-chain-planning.forecast-engine": "3.0.0",
       "supply-chain-planning.classification-engine": "3.0.0",

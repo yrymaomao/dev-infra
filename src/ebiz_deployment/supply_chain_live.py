@@ -60,7 +60,7 @@ class LiveSmokeSettings:
     run_id: str
     market_scope: str = _MARKET_SCOPE
     agent_id: str = "inventory-supply-chain"
-    agent_version: int = 6
+    agent_version: int = 7
     workflow_code: str = "inventory-supply-chain-daily"
     workflow_version: int = 6
 
