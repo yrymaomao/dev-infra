@@ -15,6 +15,7 @@ from ebiz_deployment.supply_chain_bff.config import BffSettings
 from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
 from ebiz_deployment.supply_chain_bff.level2_contracts import (
     InventorySelector,
+    OnDemandContextRequest,
     ReportRunRequest,
     ScheduleCreate,
     SchedulePatch,
@@ -69,10 +70,12 @@ class _OpenClawRepository:
         run_id: str,
         tenant_id: str,
         principal_id: str,
+        agent_id: str,
         now: datetime,
     ) -> dict[str, str]:
         assert selector == "supply-chain-dev"
         assert run_id == "run-a"
+        assert agent_id == "main"
         assert now.tzinfo is not None
         return {
             "tenantId": tenant_id,
@@ -113,6 +116,13 @@ def test_selection_request_requires_exactly_one_source() -> None:
     structured = SelectionPreviewRequest(selector=InventorySelector())
     assert structured.selector is not None
     assert structured.selector.threshold == 20
+
+
+def test_on_demand_context_accepts_json_array_as_ordered_immutable_skus() -> None:
+    request = OnDemandContextRequest.model_validate_json(
+        '{"skus":["SKU-1","SKU-2"],"invocation_key":"openclaw-call-1"}'
+    )
+    assert request.skus == ("SKU-1", "SKU-2")
 
 
 def test_csv_accepts_valid_rows_deduplicates_and_isolates_conflicts() -> None:

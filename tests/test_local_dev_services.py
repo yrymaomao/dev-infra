@@ -181,6 +181,14 @@ def test_erp_connector_allowlist_covers_level2_read_only_operations() -> None:
     ]
 
 
+def test_on_demand_context_connector_allows_only_public_skus() -> None:
+    operations = local_assets_module._CONNECTOR_FIELD_ALLOWLISTS[
+        "deployment.supply-chain-on-demand-context@0.1.4"
+    ]
+
+    assert operations == {"supply_chain.prepare_on_demand_context": ["skus"]}
+
+
 def test_openai_responses_endpoint_returns_schema_valid_json_text() -> None:
     schema = {
         "$schema": "https://schemas.ebizhub.com/meta/runtime-contract/v1.2",
@@ -859,6 +867,7 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     assert environment["SUPPLY_CHAIN_SNAPSHOT_TIME"] == "2026-08-31T06:00:00Z"
     targets = set(environment["APP_CONNECTOR_TARGETS"].split(","))
     assert targets == {
+        "deployment.supply-chain-on-demand-context@0.1.4",
         "yeaher.erp@0.2.0",
         "supply-chain-planning.fulfillment-resolver@3.0.0",
         "supply-chain-planning.forecast-engine@3.0.0",

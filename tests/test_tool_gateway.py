@@ -61,6 +61,72 @@ async def test_policy_port_preserves_current_binding_and_exact_offer() -> None:
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["status", "result", "cancel"])
+async def test_policy_port_preserves_owned_operation_target_for_active_run(action: str) -> None:
+    target = PolicyTarget(kind="operation", target_id="8b3dd260-613b-4a76-abee-c66c544e49c0")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read().decode("utf-8")
+        assert '"candidate_offer_ids":[]' in body
+        return httpx.Response(
+            200,
+            json={
+                "binding_active": True,
+                "policy_revision": "7",
+                "allowed_offer_ids": [],
+            },
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://127.0.0.1:8100",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        reply = await BffToolGatewayPolicyPort(
+            client=client,
+            connector_credential="c" * 32,
+        ).authorize(
+            ToolGatewayPolicyRequest(
+                identity=_identity(),
+                action=action,
+                candidates=(target,),
+            )
+        )
+
+    assert reply.allowed_targets == (target,)
+
+
+@pytest.mark.asyncio
+async def test_policy_port_denies_operation_target_for_inactive_run() -> None:
+    target = PolicyTarget(kind="operation", target_id="8b3dd260-613b-4a76-abee-c66c544e49c0")
+
+    async with httpx.AsyncClient(
+        base_url="http://127.0.0.1:8100",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "binding_active": False,
+                    "policy_revision": "8",
+                    "allowed_offer_ids": [],
+                },
+            )
+        ),
+    ) as client:
+        reply = await BffToolGatewayPolicyPort(
+            client=client,
+            connector_credential="c" * 32,
+        ).authorize(
+            ToolGatewayPolicyRequest(
+                identity=_identity(),
+                action="status",
+                candidates=(target,),
+            )
+        )
+
+    assert reply.allowed_targets == ()
+
+
 def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
     reference = ToolOfferReference(
         generation_id="generation-a",
@@ -70,7 +136,11 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
         input_schema_digest="b" * 64,
         output_schema_digest="c" * 64,
     )
-    context = DynamicGatewayContext(connector_id="openclaw", cid="supply-chain-dev").resolve(
+    context = DynamicGatewayContext(
+        connector_id="openclaw",
+        cid="supply-chain-dev",
+        credential_ref="opaque:dev-erp-mcp",
+    ).resolve(
         ToolGatewayPolicyReply(
             tenant_id="tenant-a",
             principal_id="principal-a",
@@ -84,7 +154,14 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
     )
     assert context.auth.tenant_id == "tenant-a"
     assert context.auth.cid == "supply-chain-dev"
+    assert context.auth.credential_ref == "opaque:dev-erp-mcp"
     assert context.session_key == "session-a"
     assert context.auth.scopes == frozenset(
-        {"workflow:start", "runtime:admission", "supply_chain.preview"}
+        {
+            "workflow:start",
+            "runtime:admission",
+            "inventory.read",
+            "sales_profit.read",
+            "supply_chain.preview",
+        }
     )

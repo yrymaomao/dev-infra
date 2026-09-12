@@ -136,7 +136,7 @@ class ReportCancelAccepted(StrictModel):
 class OnDemandContextRequest(StrictModel):
     """Trusted Runtime provider request; never exposed as an OpenClaw tool schema."""
 
-    skus: tuple[CanonicalSku, ...] = Field(min_length=1, max_length=200)
+    skus: FrozenSkus = Field(min_length=1, max_length=200)
     invocation_key: str = Field(min_length=1, max_length=256)
 
     @model_validator(mode="after")

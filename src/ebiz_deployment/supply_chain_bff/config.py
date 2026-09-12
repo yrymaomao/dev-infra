@@ -14,6 +14,7 @@ from .eta import EtaProfile
 
 _CREDENTIAL_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _RABBIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
+_OPENCLAW_AGENT_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class BffSettings:
     openclaw_selector: str = "supply-chain-dev"
     openclaw_tenant_id: str = "tenant-local-dev"
     openclaw_principal_id: str = "openclaw-supply-chain"
+    openclaw_agent_id: str = "main"
     openclaw_offer_id: str = "supply-chain-on-demand"
     max_selected_skus: int = 10_000
     bulk_batch_size: int = 200
@@ -161,6 +163,7 @@ class BffSettings:
             openclaw_selector=_bounded("BFF_OPENCLAW_SELECTOR", "supply-chain-dev"),
             openclaw_tenant_id=_bounded("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
             openclaw_principal_id=_bounded("BFF_OPENCLAW_PRINCIPAL_ID", "openclaw-supply-chain"),
+            openclaw_agent_id=_openclaw_agent_id("BFF_OPENCLAW_AGENT_ID", "main"),
             openclaw_offer_id=_bounded("BFF_OPENCLAW_OFFER_ID", "supply-chain-on-demand"),
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
@@ -197,6 +200,13 @@ def _rabbit_name(name: str, default: str) -> str:
     value = os.environ.get(name, default).strip()
     if _RABBIT_NAME.fullmatch(value) is None:
         raise ValueError(f"{name} must be a bounded RabbitMQ name")
+    return value
+
+
+def _openclaw_agent_id(name: str, default: str) -> str:
+    value = os.environ.get(name, default).strip()
+    if _OPENCLAW_AGENT_ID.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a normalized OpenClaw agent ID")
     return value
 
 

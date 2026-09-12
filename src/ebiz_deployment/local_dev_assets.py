@@ -32,6 +32,9 @@ from .release import write_base_ai_provider_attestation
 
 MODEL_SCHEMA_REF = "schemas/seasonality-analysis.schema.yaml"
 _CONNECTOR_FIELD_ALLOWLISTS = {
+    "deployment.supply-chain-on-demand-context@0.1.4": {
+        "supply_chain.prepare_on_demand_context": ["skus"]
+    },
     "yeaher.erp@0.2.0": {
         "catalog.resolve_sku_identity": ["market_scope", "sku", "snapshot_time"],
         "inventory.get_total_snapshot": [

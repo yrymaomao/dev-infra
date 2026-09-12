@@ -93,6 +93,12 @@ class BffToolGatewayPolicyPort:
             or not all(isinstance(item, str) for item in allowed)
         ):
             raise ToolGatewayPolicyRejected()
+        if request.action in {"status", "result", "cancel"}:
+            if any(target.kind != "operation" for target in request.candidates):
+                raise ToolGatewayPolicyRejected()
+            allowed_targets = request.candidates if value["binding_active"] else ()
+        else:
+            allowed_targets = tuple(PolicyTarget(kind="offer", target_id=item) for item in allowed)
         return ToolGatewayPolicyReply(
             tenant_id=request.identity.tenant_id,
             principal_id=request.identity.principal_id,
@@ -100,16 +106,19 @@ class BffToolGatewayPolicyPort:
             binding_active=value["binding_active"],
             action=request.action,
             policy_revision=value["policy_revision"],
-            allowed_targets=tuple(PolicyTarget(kind="offer", target_id=item) for item in allowed),
+            allowed_targets=allowed_targets,
         )
 
 
 class DynamicGatewayContext:
     """Create Runtime auth only from a currently authorized signed Gateway identity."""
 
-    def __init__(self, *, connector_id: str, cid: str) -> None:
+    def __init__(self, *, connector_id: str, cid: str, credential_ref: str) -> None:
+        if not credential_ref or len(credential_ref) > 256:
+            raise ValueError("Tool Gateway credential reference is invalid")
         self.connector_id = connector_id
         self._cid = cid
+        self._credential_ref = credential_ref
 
     def resolve(
         self, decision: ToolGatewayPolicyReply, reference: ToolOfferReference
@@ -133,7 +142,16 @@ class DynamicGatewayContext:
                 tenant_id=decision.tenant_id,
                 cid=self._cid,
                 actor=ActorRef(actor_id=actor_id, actor_type="service"),
-                scopes=frozenset({"workflow:start", "runtime:admission", "supply_chain.preview"}),
+                scopes=frozenset(
+                    {
+                        "workflow:start",
+                        "runtime:admission",
+                        "inventory.read",
+                        "sales_profit.read",
+                        "supply_chain.preview",
+                    }
+                ),
+                credential_ref=self._credential_ref,
             ),
             revision=decision.policy_revision,
         )
@@ -178,6 +196,7 @@ class SupplyChainToolGatewayComposition:
         jwt_issuer: str,
         jwt_audience: str,
         cid: str,
+        credential_ref: str,
         generation_id: str = "supply-chain-v2-dev-1",
         catalog_revision: str = "supply-chain-v2-dev-1",
         offer_id: str = "supply-chain-on-demand",
@@ -197,6 +216,7 @@ class SupplyChainToolGatewayComposition:
         self._jwt_issuer = jwt_issuer
         self._jwt_audience = jwt_audience
         self._cid = cid
+        self._credential_ref = credential_ref
         self._generation_id = generation_id
         self._catalog_revision = catalog_revision
         self._offer_id = offer_id
@@ -279,7 +299,11 @@ class SupplyChainToolGatewayComposition:
                     ),
                 )
             )
-            context = DynamicGatewayContext(connector_id="openclaw", cid=self._cid)
+            context = DynamicGatewayContext(
+                connector_id="openclaw",
+                cid=self._cid,
+                credential_ref=self._credential_ref,
+            )
             repository = GatewayOperationRepository(container.unit_of_work_factory)
             operations = GatewayOperationService(
                 repository=repository,

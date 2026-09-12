@@ -2377,13 +2377,14 @@ class Level2Repository:
         run_id: str,
         tenant_id: str,
         principal_id: str,
+        agent_id: str,
         now: datetime,
     ) -> dict[str, str]:
         session_id = str(uuid5(NAMESPACE_URL, f"ebizhub:openclaw:session:{tenant_id}:{run_id}"))
         session_digest = hashlib.sha256(
             f"{tenant_id}\x1f{principal_id}\x1f{run_id}".encode()
         ).hexdigest()
-        session_key = f"openclaw:{session_digest[:48]}"
+        session_key = f"agent:{agent_id}:openclaw:{session_digest[:48]}"
         expires_at = now.astimezone(UTC) + timedelta(minutes=10)
         async with self._factory() as session, session.begin():
             binding = await session.scalar(

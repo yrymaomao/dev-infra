@@ -67,6 +67,7 @@ def launch(
             jwt_issuer=environment.get("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
             jwt_audience=environment.get("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
             cid=environment.get("TOOL_GATEWAY_CID", "supply-chain-dev"),
+            credential_ref=environment.get("SUPPLY_CHAIN_CREDENTIAL_REF", ""),
             generation_id=environment.get("TOOL_GATEWAY_GENERATION_ID", "supply-chain-v2-dev-1"),
             catalog_revision=environment.get(
                 "TOOL_GATEWAY_CATALOG_REVISION", "supply-chain-v2-dev-1"

@@ -200,6 +200,7 @@ def create_app(container: BffContainer) -> FastAPI:
             run_id=body.run_id,
             tenant_id=settings.openclaw_tenant_id,
             principal_id=settings.openclaw_principal_id,
+            agent_id=settings.openclaw_agent_id,
             now=now,
         )
         issued = int(now.timestamp())
