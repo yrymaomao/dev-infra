@@ -197,3 +197,26 @@ uv build --wheel --no-sources --out-dir C:\ebizhub\.local\deployment-v4-wheel
   fresh PostgreSQL, Redis, and versioned MinIO containers. Repeat this gate for
   every promoted wheel set. It remains `LOCAL_DEV_E2E`, not UAT or production
   E2E, and never treats a raw path or direct database row as evidence.
+
+## CRM profile
+
+The OpenClaw reception (conversations, turns, Adapter event ingestion, run
+bindings, connector credentials / runs-end / authorize, result projection)
+lives once in `ebiz_deployment.openclaw_reception`; each business agent
+contributes a `ReceptionProfile`. Supply Chain (`supply_chain_bff/reception.py`)
+keeps its routes, permission and report projection unchanged. The CRM profile
+(`ebiz_deployment.crm_reception`) adds the read-only Phase 1 of the OpenClaw x
+CRM integration: `POST /api/crm/v2/openclaw/session` exchanges the workbench
+`_token_` for the BFF JWT through crm-service's `session-principal` route, the
+`crm-case-advice` offer projects `crm-case-advise-on-demand@1` with exactly
+eight scopes beside the Supply Chain pin, and `ebiz-crm-advise-publish`
+(`tools/publish_crm_advise.py`) publishes `crm@2`, `crm-advise@1` and the
+workflow from the installed CRM wheel, failing unless the checksum equals the
+reviewed digest. Both profiles share the `supply_chain_bff` schema and one
+Alembic chain (head `0009_conversation_profile_index`).
+
+See `docs/crm-profile.md` for the chain, the `BFF_CRM_*` / `CRM_*` variables,
+the enablement order and the note that CRM call segments answer 401 until the
+crm-service JWT change and `session-principal` route are deployed. Start from
+`config/deployment.crm.example.json` and
+`config/runtime-plugin-policy.crm.example.json` for a two-profile deployment.

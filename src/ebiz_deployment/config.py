@@ -437,7 +437,8 @@ class DeploymentCompositionConfig(StrictModel):
         expected_tools = set(_READ_TOOLS)
         if "yeaher.crm" in ids:
             expected_tools.update(CRM_READ_TOOL_BY_OPERATION.values())
-        if set(mcp.config["allowed_tools"]) != expected_tools:
+        allowed_tools = mcp.config["allowed_tools"]
+        if not isinstance(allowed_tools, list) or set(allowed_tools) != expected_tools:
             raise ValueError("MCP tools must exactly match enabled read-only providers")
         configured = set(self.secrets.allowed_env)
         required = {self.credential_broker.auth_secret_name}

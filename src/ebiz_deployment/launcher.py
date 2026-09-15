@@ -6,7 +6,7 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from agent_runtime.application.provider_composition import ProviderCompositionRoot
 from agent_runtime.application.tool_gateway_projection import GatewayPublicationPin
@@ -63,7 +63,7 @@ class RuntimeMain(Protocol):
         argv: list[str] | None = None,
         *,
         provider_composition: ProviderCompositionRoot | None = None,
-        gateway_composition: object | None = None,
+        gateway_composition: Any = None,
     ) -> int: ...
 
 
