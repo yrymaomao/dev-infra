@@ -1,4 +1,11 @@
-"""A durable consumer of Adapter events, independent of browser connections."""
+"""A durable consumer of Adapter events, independent of browser connections.
+
+One worker per reception profile: it only claims turns of its profile's
+conversations and talks to that profile's own OpenClaw host instance (each
+business agent runs its own Adapter process with its own ingress credential).
+"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -6,7 +13,6 @@ from uuid import uuid4
 
 import httpx
 
-from .config import BffSettings
 from .conversation_repository import ConversationRepository
 
 logger = logging.getLogger(__name__)
@@ -16,17 +22,22 @@ class ConversationWorker:
     def __init__(
         self,
         repository: ConversationRepository,
-        settings: BffSettings,
+        *,
+        ingress_url: str,
+        ingress_credential: str | None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self.repository, self.settings, self.transport = repository, settings, transport
+        self.repository = repository
+        self.ingress_url = ingress_url
+        self._ingress_credential = ingress_credential
+        self.transport = transport
         self.owner = uuid4().hex
 
     async def step(self, client: httpx.AsyncClient) -> bool:
         row = await self.repository.claim(self.owner)
         if not row:
             return False
-        endpoint = self.settings.openclaw_ingress_url.rsplit("/", 1)[0] + "/turns"
+        endpoint = self.ingress_url.rsplit("/", 1)[0] + "/turns"
         response = await client.get(
             endpoint, params={"occurrence": str(row["id"]), "after": row["sequence"]}
         )
@@ -109,7 +120,7 @@ class ConversationWorker:
             transport=self.transport,
             trust_env=False,
             timeout=5,
-            headers={"Authorization": f"Bearer {self.settings.openclaw_ingress_credential}"},
+            headers={"Authorization": f"Bearer {self._ingress_credential}"},
         ) as client:
             while not stop.is_set():
                 try:
@@ -123,3 +134,6 @@ class ConversationWorker:
                     await asyncio.wait_for(stop.wait(), timeout=0.1)
                 except TimeoutError:
                     pass
+
+
+__all__ = ["ConversationWorker"]

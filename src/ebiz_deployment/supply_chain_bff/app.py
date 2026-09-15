@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import re
-import secrets
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -21,6 +20,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from ebiz_deployment.openclaw_reception.connector_api import (
+    RunTokenIssuer,
+    StaticRunIdentity,
+    connector_router,
+)
+from ebiz_deployment.openclaw_reception.conversation_api import OwnerPolicy, conversation_router
+from ebiz_deployment.openclaw_reception.conversation_repository import ConversationRepository
+from ebiz_deployment.openclaw_reception.conversation_worker import ConversationWorker
+from ebiz_deployment.openclaw_reception.profile import ReceptionProfile
+
 from .config import BffSettings
 from .contracts import (
     BatchCreateRequest,
@@ -33,9 +42,6 @@ from .dispatcher import BatchCoordinator
 from .eta import EtaEstimator
 from .level2_contracts import (
     OnDemandContextRequest,
-    OpenClawCredentialRequest,
-    OpenClawEndRunRequest,
-    OpenClawPolicyCheckRequest,
     OpenClawTurnRequest,
     ReportCancelAccepted,
     ReportRunRequest,
@@ -46,6 +52,8 @@ from .level2_contracts import (
 from .level2_repository import Level2Repository, ResourceConflict, ResourceNotReady
 from .level2_worker import Level2Worker
 from .policy import PolicyInvalid, validate_policy
+from .reception import PROFILE_VERSION as SUPPLY_CHAIN_PROFILE_VERSION
+from .reception import supply_chain_owner, supply_chain_profile
 from .report_export import report_export_header, report_export_row
 from .repository import BatchRepository
 from .runtime_client import RuntimeClient, RuntimeRequestError
@@ -78,33 +86,80 @@ class BffContainer:
     level2_repository: Level2Repository | None = None
     level2_worker: Level2Worker | None = None
     openclaw_http_transport: httpx.AsyncBaseTransport | None = None
+    # Explicit reception backing (session factory + Runtime PayloadStore). When
+    # absent, the Level 2 repository's own backing is reused, as before.
+    session_factory: Any | None = None
+    payload_store: Any | None = None
+
+
+@dataclass(slots=True)
+class MountedReception:
+    """One reception profile mounted on this BFF: its repository, worker and owner rule."""
+
+    profile: ReceptionProfile
+    repository: ConversationRepository
+    worker: ConversationWorker
+    owner_policy: OwnerPolicy
+
+
+def _reception_backing(container: BffContainer) -> tuple[Any, Any] | None:
+    if container.session_factory is not None and container.payload_store is not None:
+        return container.session_factory, container.payload_store
+    if container.level2_repository is not None:
+        return container.level2_repository._factory, container.level2_repository._payload_store
+    return None
+
+
+def mount_receptions(container: BffContainer) -> list[MountedReception]:
+    """Build every enabled reception profile against the shared tables."""
+
+    settings = container.settings
+    receptions: list[MountedReception] = []
+    if not settings.openclaw_reception_enabled:
+        return receptions
+    backing = _reception_backing(container)
+    if backing is None:
+        return receptions
+    factory, payload_store = backing
+    if settings.openclaw_reception_enabled:
+        profile = supply_chain_profile(settings)
+        repository = ConversationRepository(factory, payload_store=payload_store, profile=profile)
+        receptions.append(
+            MountedReception(
+                profile=profile,
+                repository=repository,
+                worker=ConversationWorker(
+                    repository,
+                    ingress_url=settings.openclaw_ingress_url,
+                    ingress_credential=settings.openclaw_ingress_credential,
+                    transport=container.openclaw_http_transport,
+                ),
+                owner_policy=supply_chain_owner(settings),
+            )
+        )
+    return receptions
 
 
 def create_app(container: BffContainer) -> FastAPI:
-    from .conversation_api import conversation_router
-    from .conversation_repository import ConversationRepository
-    from .conversation_worker import ConversationWorker
+    receptions = mount_receptions(container)
+    supply_chain_conversations = next(
+        (
+            item.repository
+            for item in receptions
+            if item.profile.profile_version == SUPPLY_CHAIN_PROFILE_VERSION
+        ),
+        None,
+    )
 
-    conversations = None
-    if container.settings.openclaw_reception_enabled and container.level2_repository is not None:
-        conversations = ConversationRepository(
-            container.level2_repository._factory,
-            payload_store=container.level2_repository._payload_store,
-        )
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         stop = asyncio.Event()
-        chat_task = (
+        chat_tasks = [
             asyncio.create_task(
-                ConversationWorker(
-                    conversations,
-                    container.settings,
-                    container.openclaw_http_transport,
-                ).run(stop)
+                item.worker.run(stop), name=f"openclaw-reception-{item.profile.agent_id}"
             )
-            if conversations
-            else None
-        )
+            for item in receptions
+        ]
         legacy_task = (
             asyncio.create_task(
                 container.coordinator.run_forever(stop=stop),
@@ -125,7 +180,7 @@ def create_app(container: BffContainer) -> FastAPI:
             yield
         finally:
             stop.set()
-            if chat_task:
+            for chat_task in chat_tasks:
                 chat_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await chat_task
@@ -185,13 +240,14 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=401, detail="authentication failed")
         return Principal(tenant_id=tenant_id, principal_id=user)
 
-    if conversations:
+    for item in receptions:
         app.include_router(
             conversation_router(
-                conversations,
-                container.settings,
+                item.repository,
+                item.profile,
                 container.cursor,
                 principal,
+                item.owner_policy,
             )
         )
 
@@ -234,59 +290,30 @@ def create_app(container: BffContainer) -> FastAPI:
             global_bulk_concurrency=container.settings.global_bulk_concurrency,
         ).model_dump(mode="json")
 
-    @app.post("/api/supply-chain/v2/openclaw/credentials")
-    async def exchange_openclaw_credential(
-        body: OpenClawCredentialRequest,
-        _connector: None = Depends(openclaw_connector),
-        repository: Level2Repository = Depends(level2),
-    ) -> dict[str, object]:
-        settings = container.settings
-        if settings.tool_gateway_jwt_key is None:
-            raise HTTPException(status_code=403, detail="connector binding denied")
-        tenant, user, model_session, turn_id = (
-            settings.openclaw_tenant_id,
-            settings.openclaw_principal_id,
-            None,
-            None,
+    gateway_key = container.settings.tool_gateway_jwt_key
+    tokens = (
+        RunTokenIssuer(
+            key=gateway_key,
+            issuer=container.settings.tool_gateway_issuer,
+            audience=container.settings.tool_gateway_audience,
         )
-        if body.selector.startswith(("turn:", "reconcile:")) and conversations:
-            try:
-                tenant, user, model_session, turn_id = await conversations.credential_context(
-                    body.selector,
-                    body.run_id,
-                )
-            except (LookupError, ValueError):
-                raise HTTPException(403, "connector binding denied") from None
-        elif body.selector != settings.openclaw_selector:
-            raise HTTPException(403, "connector binding denied")
-        now = datetime.now(UTC)
-        identity = await repository.exchange_openclaw_run(
-            selector=body.selector,
-            run_id=body.run_id,
-            tenant_id=tenant,
-            principal_id=user,
-            agent_id=settings.openclaw_agent_id,
-            now=now,
-            model_session_id=model_session,
-            turn_id=turn_id,
+        if gateway_key is not None and len(gateway_key) >= 32
+        else None
+    )
+    app.include_router(
+        connector_router(
+            profile=supply_chain_profile(container.settings),
+            bindings=level2,
+            conversations=supply_chain_conversations,
+            connector=openclaw_connector,
+            tokens=tokens,
+            static_identity=StaticRunIdentity(
+                selector=container.settings.openclaw_selector,
+                tenant_id=container.settings.openclaw_tenant_id,
+                principal_id=container.settings.openclaw_principal_id,
+            ),
         )
-        issued = int(now.timestamp())
-        expires = issued + 120
-        token = jwt.encode(
-            {
-                "iss": settings.tool_gateway_issuer,
-                "aud": settings.tool_gateway_audience,
-                "sub": identity["principalId"],
-                "tenant_id": identity["tenantId"],
-                "session_key": identity["sessionKey"],
-                "iat": issued,
-                "exp": expires,
-                "jti": secrets.token_hex(16),
-            },
-            settings.tool_gateway_jwt_key,
-            algorithm="HS256",
-        )
-        return {"identity": identity, "jwt": token, "expiresAt": expires * 1000}
+    )
 
     @app.post("/api/supply-chain/v2/openclaw/turn")
     async def openclaw_turn(
@@ -300,8 +327,12 @@ def create_app(container: BffContainer) -> FastAPI:
         credential = settings.openclaw_ingress_credential
         if credential is None or len(credential) < 32:
             return _safe_error(
-                503, "OPENCLAW_NOT_CONFIGURED", "The assistant is not available yet.",
-                request_id=_request_id(request), category="configuration", retryable=True,
+                503,
+                "OPENCLAW_NOT_CONFIGURED",
+                "The assistant is not available yet.",
+                request_id=_request_id(request),
+                category="configuration",
+                retryable=True,
             )
         occurrence = hashlib.sha256(
             f"{current.tenant_id}:{body.client_request_id}".encode()
@@ -325,10 +356,13 @@ def create_app(container: BffContainer) -> FastAPI:
             upstream = None
         if upstream is None or upstream.status_code != 200:
             return _safe_error(
-                503, "OPENCLAW_TURN_UNAVAILABLE",
+                503,
+                "OPENCLAW_TURN_UNAVAILABLE",
                 "The assistant could not finish this turn. Its outcome is uncertain; "
                 "do not resubmit automatically.",
-                request_id=_request_id(request), category="upstream", retryable=False,
+                request_id=_request_id(request),
+                category="upstream",
+                retryable=False,
             )
         try:
             result = upstream.json()
@@ -343,50 +377,14 @@ def create_app(container: BffContainer) -> FastAPI:
             or len(result["reply"]) > 32768
         ):
             return _safe_error(
-                502, "OPENCLAW_REPLY_INVALID", "The assistant did not return a usable reply.",
-                request_id=_request_id(request), category="protocol", retryable=False,
+                502,
+                "OPENCLAW_REPLY_INVALID",
+                "The assistant did not return a usable reply.",
+                request_id=_request_id(request),
+                category="protocol",
+                retryable=False,
             )
         return JSONResponse({"run_id": result["runId"], "reply": result["reply"]})
-
-    @app.post("/api/supply-chain/v2/openclaw/runs/end")
-    async def end_openclaw_run(
-        body: OpenClawEndRunRequest,
-        _connector: None = Depends(openclaw_connector),
-        repository: Level2Repository = Depends(level2),
-    ) -> dict[str, bool]:
-        ended = await repository.end_openclaw_run(
-            run_id=body.run_id,
-            now=datetime.now(UTC),
-        )
-        return {"ended": ended}
-
-    @app.post("/internal/supply-chain/v2/openclaw/authorize", include_in_schema=False)
-    async def authorize_openclaw_run(
-        body: OpenClawPolicyCheckRequest,
-        _connector: None = Depends(openclaw_connector),
-        repository: Level2Repository = Depends(level2),
-    ) -> dict[str, object]:
-        active, revision = await repository.authorize_openclaw_run(
-            tenant_id=body.tenant_id,
-            principal_id=body.principal_id,
-            session_key=body.session_key,
-            now=datetime.now(UTC),
-        )
-        allowed = (
-            [
-                offer_id
-                for offer_id in body.candidate_offer_ids
-                if offer_id == container.settings.openclaw_offer_id
-                or (container.settings.crm_openclaw_enabled and offer_id == "crm-case-advice")
-            ]
-            if active
-            else []
-        )
-        return {
-            "binding_active": active,
-            "policy_revision": revision,
-            "allowed_offer_ids": allowed,
-        }
 
     @app.post("/api/supply-chain/v2/analysis-batches", status_code=202)
     async def create_batch(

@@ -8,8 +8,12 @@ import httpx
 import pytest
 from fastapi import FastAPI, Header
 from jsonschema import Draft202012Validator
+from reception_fixtures import owner_for, supply_chain
 
-from ebiz_deployment.supply_chain_bff.conversation_api import conversation_router
+from ebiz_deployment.openclaw_reception.conversation_api import conversation_router
+from ebiz_deployment.openclaw_reception.conversation_repository import (
+    ConversationConflict,
+)
 from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
 
 
@@ -28,7 +32,6 @@ async def test_conversation_conflicts_survive_application_error_handler(
     from ebiz_deployment.supply_chain_bff.app import BffContainer, create_app
     from ebiz_deployment.supply_chain_bff.config import BffSettings
     from ebiz_deployment.supply_chain_bff.eta import EtaProfile
-    from ebiz_deployment.supply_chain_bff.level2_repository import ResourceConflict
 
     settings = BffSettings(
         database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
@@ -47,14 +50,14 @@ async def test_conversation_conflicts_survive_application_error_handler(
     )
     signer = CursorSigner(b"x" * 32, ttl=timedelta(seconds=60))
     app = create_app(BffContainer(settings, object(), object(), object(), signer))
+    profile = supply_chain(settings)
     app.include_router(
         conversation_router(
-            SimpleNamespace(submit=AsyncMock(side_effect=ResourceConflict(conflict))),
-            SimpleNamespace(
-                openclaw_enabled=True, openclaw_tenant_id="tenant-a", openclaw_principal_id="alice"
-            ),
+            SimpleNamespace(submit=AsyncMock(side_effect=ConversationConflict(conflict))),
+            profile,
             signer,
             lambda: SimpleNamespace(tenant_id="tenant-a", principal_id="alice"),
+            owner_for(profile),
         )
     )
     async with httpx.AsyncClient(
@@ -137,16 +140,8 @@ async def test_async_contract_sse_and_identity_cursor_boundaries():
 
     app = FastAPI()
     signer = CursorSigner(b"x" * 32, ttl=timedelta(seconds=60), clock=lambda: now[0])
-    app.include_router(
-        conversation_router(
-            repo,
-            SimpleNamespace(
-                openclaw_enabled=True, openclaw_tenant_id="tenant-a", openclaw_principal_id="alice"
-            ),
-            signer,
-            authenticate,
-        )
-    )
+    profile = supply_chain()
+    app.include_router(conversation_router(repo, profile, signer, authenticate, owner_for(profile)))
     base = "/api/supply-chain/v2/openclaw"
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

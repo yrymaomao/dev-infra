@@ -11,12 +11,18 @@ from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_runtime.payloads.contracts import PayloadAuthorizationError, PayloadStore
+from agent_runtime.payloads.contracts import PayloadStore
 from agent_runtime.payloads.redaction import canonical_json_bytes
 from pydantic import JsonValue
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from ebiz_deployment.openclaw_reception.payloads import RestrictedPayloadAccess
+from ebiz_deployment.openclaw_reception.run_binding import (
+    RunBindingConflict,
+    RunBindingRepository,
+)
 
 from .activity import ActivityProjection
 from .batch_result_contract import (
@@ -32,7 +38,6 @@ from .level2_contracts import (
     SchedulePatch,
 )
 from .level2_models import (
-    OpenClawRunBinding,
     PolicyVersion,
     ReportActivity,
     ReportBatch,
@@ -141,7 +146,7 @@ class ReportArtifactDocuments:
     policy: dict[str, Any]
 
 
-class Level2Repository:
+class Level2Repository(RestrictedPayloadAccess):
     def __init__(
         self,
         factory: async_sessionmaker[AsyncSession],
@@ -152,8 +157,9 @@ class Level2Repository:
     ) -> None:
         if report_schema_version != "supply-chain.report.v2":
             raise ValueError("new reports must use supply-chain.report.v2")
+        super().__init__(payload_store, permission=_PAYLOAD_PERMISSION)
         self._factory = factory
-        self._payload_store = payload_store
+        self._run_bindings = RunBindingRepository(factory)
         self._preview_ttl = preview_ttl
         self._report_schema_version = report_schema_version
 
@@ -2374,6 +2380,9 @@ class Level2Repository:
             "policy_snapshot_hash": policy.document_hash,
         }
 
+    # OpenClaw run bindings live in ``ebiz_deployment.openclaw_reception.run_binding``
+    # (one table, every reception profile); these wrappers keep the Level 2
+    # repository's existing callers and test doubles working unchanged.
     async def exchange_openclaw_run(
         self,
         *,
@@ -2386,64 +2395,22 @@ class Level2Repository:
         model_session_id: str | None = None,
         turn_id: UUID | None = None,
     ) -> dict[str, str]:
-        session_id = model_session_id or str(uuid5(NAMESPACE_URL, f"ebizhub:openclaw:session:{tenant_id}:{run_id}"))
-        session_digest = hashlib.sha256(
-            f"{tenant_id}\x1f{principal_id}\x1f{run_id}".encode()
-        ).hexdigest()
-        session_key = f"agent:{agent_id}:openclaw:{session_digest[:48]}"
-        expires_at = now.astimezone(UTC) + timedelta(minutes=10)
-        async with self._factory() as session, session.begin():
-            binding = await session.scalar(
-                select(OpenClawRunBinding)
-                .where(OpenClawRunBinding.run_id == run_id)
-                .with_for_update()
+        try:
+            return await self._run_bindings.exchange_openclaw_run(
+                selector=selector,
+                run_id=run_id,
+                tenant_id=tenant_id,
+                principal_id=principal_id,
+                agent_id=agent_id,
+                now=now,
+                model_session_id=model_session_id,
+                turn_id=turn_id,
             )
-            if binding is None:
-                binding = OpenClawRunBinding(
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    tenant_id=tenant_id,
-                    principal_id=principal_id,
-                    session_id=session_id,
-                    session_key=session_key,
-                    selector=selector,
-                    active=True,
-                    expires_at=expires_at,
-                )
-                session.add(binding)
-            elif (
-                not binding.active
-                or binding.tenant_id != tenant_id
-                or binding.principal_id != principal_id
-                or binding.selector != selector
-                or binding.session_id != session_id
-                or binding.session_key != session_key
-            ):
-                raise ResourceConflict("OpenClaw run binding is not reusable")
-            else:
-                binding.expires_at = expires_at
-            await session.flush()
-            return {
-                "tenantId": binding.tenant_id,
-                "principalId": binding.principal_id,
-                "sessionId": binding.session_id,
-                "sessionKey": binding.session_key,
-                "runId": binding.run_id,
-            }
+        except RunBindingConflict as error:
+            raise ResourceConflict(str(error)) from None
 
     async def end_openclaw_run(self, *, run_id: str, now: datetime) -> bool:
-        async with self._factory() as session, session.begin():
-            binding = await session.scalar(
-                select(OpenClawRunBinding)
-                .where(OpenClawRunBinding.run_id == run_id)
-                .with_for_update()
-            )
-            if binding is None or not binding.active:
-                return False
-            binding.active = False
-            binding.expires_at = now.astimezone(UTC)
-            binding.row_version += 1
-            return True
+        return await self._run_bindings.end_openclaw_run(run_id=run_id, now=now)
 
     async def authorize_openclaw_run(
         self,
@@ -2453,18 +2420,12 @@ class Level2Repository:
         session_key: str,
         now: datetime,
     ) -> tuple[bool, str]:
-        async with self._factory() as session:
-            binding = await session.scalar(
-                select(OpenClawRunBinding).where(
-                    OpenClawRunBinding.tenant_id == tenant_id,
-                    OpenClawRunBinding.principal_id == principal_id,
-                    OpenClawRunBinding.session_key == session_key,
-                )
-            )
-        if binding is None:
-            return False, "0"
-        active = binding.active and binding.expires_at > now.astimezone(UTC)
-        return active, str(binding.row_version)
+        return await self._run_bindings.authorize_openclaw_run(
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            session_key=session_key,
+            now=now,
+        )
 
     async def _public_policy(self, policy: PolicyVersion, document: object) -> dict[str, Any]:
         return {
@@ -2529,62 +2490,6 @@ class Level2Repository:
             policy_version=schedule.policy_version,
             active=schedule.active,
         )
-
-    async def _stage(self, tenant_id: str, payload: Mapping[str, object]) -> Any:
-        staged = await self._payload_store.put_exact_restricted(
-            tenant_id=tenant_id,
-            payload=cast(JsonValue, dict(payload)),
-            required_permission=_PAYLOAD_PERMISSION,
-        )
-        if staged.payload_ref is None:
-            raise RuntimeError("Level 2 payload must use controlled external storage")
-        return staged
-
-    async def _commit_staged(self, tenant_id: str, staged: Any) -> None:
-        await self._payload_store.ensure_committed(
-            tenant_id=tenant_id,
-            payload_ref=staged.payload_ref,
-            payload_hash=staged.payload_hash,
-            size_bytes=staged.size_bytes,
-            content_type=staged.content_type,
-            classification=staged.classification,
-            required_permission=staged.required_permission,
-        )
-
-    async def _load(
-        self,
-        tenant_id: str,
-        payload_ref: str | None,
-        expected_hash: str | None,
-    ) -> dict[str, Any]:
-        if payload_ref is None:
-            return {}
-        try:
-            data = await self._payload_store.get_authorized(
-                tenant_id=tenant_id,
-                payload_ref=payload_ref,
-                permission_scope=_PAYLOAD_PERMISSION,
-            )
-        except PayloadAuthorizationError:
-            staged = await self._payload_store.inspect_for_finalization(
-                tenant_id=tenant_id,
-                payload_ref=payload_ref,
-                permission_scope=_PAYLOAD_PERMISSION,
-            )
-            if expected_hash is not None and staged.payload_hash != expected_hash:
-                raise ValueError("payload identity mismatch")
-            await self._commit_staged(tenant_id, staged)
-            data = await self._payload_store.get_authorized(
-                tenant_id=tenant_id,
-                payload_ref=payload_ref,
-                permission_scope=_PAYLOAD_PERMISSION,
-            )
-        if expected_hash is not None and hashlib.sha256(data).hexdigest() != expected_hash:
-            raise ValueError("payload hash mismatch")
-        value = json.loads(data)
-        if not isinstance(value, dict):
-            raise ValueError("payload contract is invalid")
-        return value
 
 
 def _normalized_batch_selection_rows(document: Mapping[str, object]) -> list[dict[str, object]]:

@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ebiz_deployment.supply_chain_bff import conversation_contracts as models
+from ebiz_deployment.openclaw_reception import conversation_contracts as models
 
 NAMES = ["ConversationCreated", "TurnAccepted", "TurnSnapshot", "ConversationSnapshot", "TurnEvent"]
 

@@ -117,9 +117,7 @@ async def test_turn_never_treats_missing_reply_as_success() -> None:
         transport=httpx.ASGITransport(
             app=_app(
                 httpx.MockTransport(
-                    lambda _request: httpx.Response(
-                        200, json={"completed": True, "runId": "run-1"}
-                    )
+                    lambda _request: httpx.Response(200, json={"completed": True, "runId": "run-1"})
                 )
             )
         ),

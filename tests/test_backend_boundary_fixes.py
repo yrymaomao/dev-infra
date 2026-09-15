@@ -7,10 +7,11 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from reception_fixtures import owner_for, supply_chain
 
+from ebiz_deployment.openclaw_reception.conversation_api import conversation_router
 from ebiz_deployment.supply_chain_bff.app import BffContainer, create_app
 from ebiz_deployment.supply_chain_bff.config import BffSettings
-from ebiz_deployment.supply_chain_bff.conversation_api import conversation_router
 from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
 from ebiz_deployment.supply_chain_bff.eta import EtaProfile
 from ebiz_deployment.supply_chain_bff.level2_contracts import OpenClawTurnRequest
@@ -69,8 +70,11 @@ async def submit_prompt(prompt, request_id=None):
         skill_input_ref="payload://skill/current",
         runtime_credential_ref="opaque:runtime-service",
         eta_profile=EtaProfile(
-            version="test", fixed_seconds=1, per_item_seconds=1,
-            concurrency=4, uncertainty_ratio=0.25,
+            version="test",
+            fixed_seconds=1,
+            per_item_seconds=1,
+            concurrency=4,
+            uncertainty_ratio=0.25,
         ),
     )
     signer = CursorSigner(b"x" * 32, ttl=timedelta(seconds=60))
@@ -81,16 +85,14 @@ async def submit_prompt(prompt, request_id=None):
         request.state.request_id = request_id
         return await call_next(request)
 
+    profile = supply_chain(settings)
     app.include_router(
         conversation_router(
             repository,
-            SimpleNamespace(
-                openclaw_enabled=True,
-                openclaw_tenant_id="tenant-a",
-                openclaw_principal_id="alice",
-            ),
+            profile,
             signer,
             lambda: SimpleNamespace(tenant_id="tenant-a", principal_id="alice"),
+            owner_for(profile),
         )
     )
     async with httpx.AsyncClient(
@@ -108,8 +110,14 @@ async def submit_prompt(prompt, request_id=None):
     [
         (["SKU001,FBM,,", "SKU002,FBM,,", "SKU001,FBA,,"], [2, 4]),
         (
-            ["SKU001,FBM,,", "SKU001,FBM,,", "SKU002,FBM,,", "SKU001,FBA,,",
-             "SKU001,FBM,,", "SKU001,FBA,,"],
+            [
+                "SKU001,FBM,,",
+                "SKU001,FBM,,",
+                "SKU002,FBM,,",
+                "SKU001,FBA,,",
+                "SKU001,FBM,,",
+                "SKU001,FBA,,",
+            ],
             [2, 3, 5, 6, 7],
         ),
         (["SKU001,MIXED,0.6,0.4", "SKU002,FBM,,", "SKU001,MIXED,0.7,0.3"], [2, 4]),
@@ -129,8 +137,7 @@ def test_every_row_of_conflicting_group_is_excluded_once(rows, excluded):
 @pytest.mark.asyncio
 async def test_preview_warning_counts_both_excluded_conflict_rows():
     parsed = parse_selection_csv(
-        b"sku,fulfillment_mode,fba_ratio,fbm_ratio\n"
-        b"SKU001,FBM,,\nSKU002,FBM,,\nSKU001,FBA,,\n"
+        b"sku,fulfillment_mode,fba_ratio,fbm_ratio\nSKU001,FBM,,\nSKU002,FBM,,\nSKU001,FBA,,\n"
     )
     # Exercise the real preview construction; replace storage/transaction I/O only.
     session = MagicMock()
@@ -144,7 +151,9 @@ async def test_preview_warning_counts_both_excluded_conflict_rows():
     )
     repository._commit_staged = AsyncMock()
     await repository.create_csv_preview(
-        tenant_id="tenant-a", client_request_id="csv-test", parsed=parsed,
+        tenant_id="tenant-a",
+        client_request_id="csv-test",
+        parsed=parsed,
         now=datetime(2026, 9, 14, tzinfo=UTC),
     )
     preview = session.add.call_args.args[0]

@@ -1,4 +1,13 @@
-"""Authenticated conversational API, separate from legacy synchronous ingress."""
+"""Authenticated conversational API of one reception profile.
+
+The router is generic; the profile supplies the prefix and the owner policy
+decides who may hold a conversation once the bearer JWT has been verified by
+the BFF's ``principal`` dependency: Supply Chain keeps its deployment-constant
+tenant and principal, CRM takes both from the JWT the session exchange minted
+and only fences the tenant (design decision D-1).
+"""
+
+from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -10,7 +19,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from .config import BffSettings
+from ebiz_deployment.supply_chain_bff.cursor import CursorExpired, CursorInvalid, CursorSigner
+
+from .connector_contracts import OpenClawTurnRequest
 from .conversation_contracts import (
     ConversationCreated,
     ConversationSnapshot,
@@ -18,37 +29,56 @@ from .conversation_contracts import (
     TurnEvent,
     TurnSnapshot,
 )
-from .conversation_repository import TERMINAL, ConversationRepository
-from .cursor import CursorExpired, CursorInvalid, CursorSigner
-from .level2_contracts import OpenClawTurnRequest
-from .level2_repository import ResourceConflict
+from .conversation_repository import TERMINAL, ConversationConflict, ConversationRepository
+from .profile import ReceptionProfile
 
 T = TypeVar("T")
+#: Receives the authenticated principal (``tenant_id``/``principal_id``) and
+#: returns it, or raises ``HTTPException(403)``.
+OwnerPolicy = Callable[[Any], Any]
+_DENIED = "Conversation identity is not authorized"
+
+
+def constant_owner(*, enabled: bool, tenant_id: str, principal_id: str) -> OwnerPolicy:
+    """The Supply Chain rule: one deployment-constant tenant and principal."""
+
+    def policy(current: Any) -> Any:
+        if not enabled or current.tenant_id != tenant_id or current.principal_id != principal_id:
+            raise HTTPException(403, _DENIED)
+        return current
+
+    return policy
+
+
+def tenant_owner(*, enabled: bool, tenant_id: str) -> OwnerPolicy:
+    """The CRM rule: the principal is whoever the verified JWT names, in this tenant."""
+
+    def policy(current: Any) -> Any:
+        if not enabled or current.tenant_id != tenant_id or not current.principal_id:
+            raise HTTPException(403, _DENIED)
+        return current
+
+    return policy
 
 
 def conversation_router(
     repository: ConversationRepository,
-    settings: BffSettings,
+    profile: ReceptionProfile,
     signer: CursorSigner,
     authenticate: Callable[..., Any],
+    owner_policy: OwnerPolicy,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/supply-chain/v2/openclaw")
+    router = APIRouter(prefix=profile.api_prefix)
 
     def owner(current: Any = Depends(authenticate)) -> Any:
-        if (
-            not settings.openclaw_enabled
-            or current.tenant_id != settings.openclaw_tenant_id
-            or current.principal_id != settings.openclaw_principal_id
-        ):
-            raise HTTPException(403, "Conversation identity is not authorized")
-        return current
+        return owner_policy(current)
 
     async def checked(awaitable: Awaitable[T]) -> T:
         try:
             return await awaitable
         except LookupError:
             raise HTTPException(404, "Conversation resource unavailable") from None
-        except ResourceConflict as error:
+        except ConversationConflict as error:
             raise HTTPException(409, str(error)) from None
 
     @router.post("/conversations", status_code=201, response_model=ConversationCreated)
@@ -78,7 +108,7 @@ def conversation_router(
 
     def binding(current: Any) -> str:
         return hashlib.sha256(
-            json.dumps([current.tenant_id, current.principal_id]).encode()
+            json.dumps([profile.profile_version, current.tenant_id, current.principal_id]).encode()
         ).hexdigest()
 
     @router.get("/turns/{tid}", response_model=TurnSnapshot)
@@ -167,3 +197,6 @@ def conversation_router(
         )
 
     return router
+
+
+__all__ = ["OwnerPolicy", "constant_owner", "conversation_router", "tenant_owner"]

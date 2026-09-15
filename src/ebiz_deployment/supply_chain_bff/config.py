@@ -187,7 +187,7 @@ class BffSettings:
             openclaw_selector=_bounded("BFF_OPENCLAW_SELECTOR", "supply-chain-dev"),
             openclaw_tenant_id=_bounded("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
             openclaw_principal_id=_bounded("BFF_OPENCLAW_PRINCIPAL_ID", "openclaw-supply-chain"),
-            openclaw_reception_enabled=os.environ.get("BFF_OPENCLAW_RECEPTION_ENABLED", "false").lower() == "true",
+            openclaw_reception_enabled=_boolean("BFF_OPENCLAW_RECEPTION_ENABLED", False),
             openclaw_agent_id=_openclaw_agent_id("BFF_OPENCLAW_AGENT_ID", "main"),
             openclaw_offer_id=_bounded("BFF_OPENCLAW_OFFER_ID", "supply-chain-on-demand"),
             crm_openclaw_enabled=_boolean("BFF_CRM_OPENCLAW_ENABLED", False),

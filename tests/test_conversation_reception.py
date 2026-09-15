@@ -8,22 +8,23 @@ from uuid import UUID, uuid4
 
 import pytest
 from agent_runtime.payloads.memory import MemoryPayloadStore
+from reception_fixtures import supply_chain
 from sqlalchemy import delete, select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from ebiz_deployment.supply_chain_bff.conversation_contracts import OperationView
-from ebiz_deployment.supply_chain_bff.conversation_models import (
-    Conversation,
-    ConversationEvent,
-    ConversationTurn,
-)
-from ebiz_deployment.supply_chain_bff.conversation_repository import (
+from ebiz_deployment.openclaw_reception.conversation_contracts import OperationView
+from ebiz_deployment.openclaw_reception.conversation_repository import (
+    ConversationConflict,
     ConversationRepository,
     project_event,
     project_operation_update,
 )
-from ebiz_deployment.supply_chain_bff.level2_repository import ResourceConflict
+from ebiz_deployment.openclaw_reception.models import (
+    Conversation,
+    ConversationEvent,
+    ConversationTurn,
+)
 from ebiz_deployment.supply_chain_bff.migration import upgrade
 
 
@@ -88,9 +89,9 @@ def test_operation_event_preserves_bounded_runtime_safe_error():
         "operation.updated",
         {"operation_id": "operation-1", "state": "error", "error": error},
     )
-    assert payload["error"] == {
-        key: value for key, value in error.items() if key != "trace_id"
-    } | {"request_id": error["trace_id"]}
+    assert payload["error"] == {key: value for key, value in error.items() if key != "trace_id"} | {
+        "request_id": error["trace_id"]
+    }
     operation = OperationView(**project_operation_update(None, payload))
     assert operation.error is not None
     assert operation.error.safe_message == error["safe_message"]
@@ -174,8 +175,8 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
     await asyncio.to_thread(upgrade, url)
     engine = create_async_engine(url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    # Only this isolated fixture database: fence abandoned in-memory-store runs.
-    assert make_url(url).database == "supply_chain_reception_test"
+    # Only an isolated *_test fixture database: fence abandoned in-memory-store runs.
+    assert str(make_url(url).database).endswith("_test")
     async with factory() as session, session.begin():
         await session.execute(
             update(ConversationTurn)
@@ -190,7 +191,8 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
             .values(state="interrupted")
         )
     store = MemoryPayloadStore(redacted_fields=frozenset(), inline_classifications=frozenset())
-    repository = ConversationRepository(factory, payload_store=store)
+    profile = supply_chain()
+    repository = ConversationRepository(factory, payload_store=store, profile=profile)
     tenant = "test-" + uuid4().hex
     cid = UUID((await repository.create_conversation(tenant, "alice"))["conversation_id"])
     request = str(uuid4())
@@ -199,9 +201,9 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
         assert (
             await repository.submit(cid, tenant, "alice", request, "What is supply chain?") == tid
         )
-        with pytest.raises(ResourceConflict, match="REQUEST_CONTENT_CONFLICT"):
+        with pytest.raises(ConversationConflict, match="REQUEST_CONTENT_CONFLICT"):
             await repository.submit(cid, tenant, "alice", request, "different")
-        with pytest.raises(ResourceConflict, match="CONVERSATION_BUSY"):
+        with pytest.raises(ConversationConflict, match="CONVERSATION_BUSY"):
             await repository.submit(cid, tenant, "alice", str(uuid4()), "follow up")
         for other_tenant, other_user in [(tenant, "bob"), ("other", "alice")]:
             with pytest.raises(LookupError):
@@ -253,7 +255,7 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
             {"sequence": 6, "kind": "turn.completed", "payload": {"run_id": str(tid)}},
         ]
         await repository.ingest(tid, "worker", tenant, events, "completed", 6)
-        restarted = ConversationRepository(factory, payload_store=store)
+        restarted = ConversationRepository(factory, payload_store=store, profile=profile)
         snapshot = await restarted.snapshot(tid, tenant, "alice")
         assert snapshot["reply"] == "Hello world"
         assert snapshot["state"] == "completed"

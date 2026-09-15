@@ -54,9 +54,7 @@ async def test_on_demand_required_numeric_facts(field, variant):
 def test_final_reply_removes_model_inferred_currency_symbols_when_result_has_no_currency():
     analyses = [{"items": [{"forecast": {"weeks": [{"revenue_mean": 14.76}]}}]}]
 
-    assert qualify_unowned_currency_symbols(
-        "Revenue is $14.76 and NPV is €3.20.", analyses
-    ) == (
+    assert qualify_unowned_currency_symbols("Revenue is $14.76 and NPV is €3.20.", analyses) == (
         "Revenue is 14.76 (currency unspecified) and NPV is 3.20 (currency unspecified)."
     )
 

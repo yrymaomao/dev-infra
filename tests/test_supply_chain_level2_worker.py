@@ -206,9 +206,7 @@ def test_selection_result_is_fail_closed() -> None:
                 "scope": {"preview_id": "00000000-0000-4000-8000-000000000001"},
                 "payload": {
                     "schema_version": "supply-chain.inventory-threshold.v1",
-                    "evidence_ref": {
-                        "evidence_id": "00000000-0000-4000-8000-000000000002"
-                    },
+                    "evidence_ref": {"evidence_id": "00000000-0000-4000-8000-000000000002"},
                     "source_snapshot_id": "snapshot-1",
                     "snapshot_time": "2026-09-04T12:00:00Z",
                     "items": [{"sku": "SKU-1", "available_quantity": 21}],

@@ -10,6 +10,21 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BeforeValidator, Field, model_validator
 
+# The OpenClaw request models are generic reception contracts, re-exported here for
+# the frozen Level 2 OpenAPI and its existing importers.
+from ebiz_deployment.openclaw_reception.connector_contracts import (
+    OpenClawCredentialRequest as OpenClawCredentialRequest,
+)
+from ebiz_deployment.openclaw_reception.connector_contracts import (
+    OpenClawEndRunRequest as OpenClawEndRunRequest,
+)
+from ebiz_deployment.openclaw_reception.connector_contracts import (
+    OpenClawPolicyCheckRequest as OpenClawPolicyCheckRequest,
+)
+from ebiz_deployment.openclaw_reception.connector_contracts import (
+    OpenClawTurnRequest as OpenClawTurnRequest,
+)
+
 from .contracts import StrictModel
 
 _SKU = re.compile(r"^[^,\s]{1,128}$")
@@ -62,11 +77,6 @@ class InventorySelector(StrictModel):
     quantity_metric: Literal["AVAILABLE_QUANTITY"] = "AVAILABLE_QUANTITY"
     operator: Literal["GT"] = "GT"
     threshold: int = Field(default=20, ge=0)
-
-
-class OpenClawTurnRequest(StrictModel):
-    prompt: str = Field(min_length=1, max_length=8192)
-    client_request_id: UUID = Field(strict=False)
 
 
 class SelectionPreviewRequest(StrictModel):
@@ -151,23 +161,6 @@ class OnDemandContextRequest(StrictModel):
         if len(set(self.skus)) != len(self.skus):
             raise ValueError("skus must be unique")
         return self
-
-
-class OpenClawCredentialRequest(StrictModel):
-    selector: str = Field(min_length=1, max_length=256)
-    run_id: str = Field(alias="runId", min_length=1, max_length=512)
-
-
-class OpenClawEndRunRequest(StrictModel):
-    run_id: str = Field(alias="runId", min_length=1, max_length=512)
-
-
-class OpenClawPolicyCheckRequest(StrictModel):
-    tenant_id: str = Field(min_length=1, max_length=256)
-    principal_id: str = Field(min_length=1, max_length=256)
-    session_key: str = Field(min_length=1, max_length=256)
-    action: Literal["discover", "describe", "invoke", "status", "result", "cancel"]
-    candidate_offer_ids: list[str] = Field(max_length=256)
 
 
 class ScheduleCreate(StrictModel):

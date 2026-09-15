@@ -32,16 +32,20 @@ def test_reception_requires_original_cutoff_in_followups(required):
         "replenishment premise, begin the reply with a standalone first line",
         "Data as of: <original timestamp with timezone>",
         "数据截止时间：<原始时间戳及其时区>",
-        "Copy the complete original timestamp and timezone exactly; "
-        "do not shorten it to a date",
+        "Copy the complete original timestamp and timezone exactly; do not shorten it to a date",
         "Data as of: Unavailable",
         "数据截止时间：不可用",
         "Keep this first line even when the cutoff fact is unavailable; "
         "do not run a new analysis to fill it",
     ],
     ids=[
-        "first-line-scope", "english", "chinese", "exact-timezone",
-        "missing-en", "missing-zh", "no-rerun",
+        "first-line-scope",
+        "english",
+        "chinese",
+        "exact-timezone",
+        "missing-en",
+        "missing-zh",
+        "no-rerun",
     ],
 )
 def test_reception_existing_report_first_line_format_static_guard(required):

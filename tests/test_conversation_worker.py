@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from ebiz_deployment.supply_chain_bff.conversation_worker import ConversationWorker
+from ebiz_deployment.openclaw_reception.conversation_worker import ConversationWorker
 
 
 @pytest.mark.asyncio
@@ -15,14 +15,15 @@ async def test_adapter_denial_terminates_turn_without_retry_or_business_claim(st
         claim=AsyncMock(return_value={"id": uuid4(), "sequence": 2, "tenant": "a"}),
         ingest=AsyncMock(),
     )
-    settings = SimpleNamespace(openclaw_ingress_url="http://127.0.0.1/ingress")
     requests = []
 
     def handle(request):
         requests.append(request)
         return httpx.Response(status)
 
-    worker = ConversationWorker(repository, settings)
+    worker = ConversationWorker(
+        repository, ingress_url="http://127.0.0.1/ingress", ingress_credential="s" * 32
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         await worker.step(client)
     assert len(requests) == 1 and requests[0].method == "GET"

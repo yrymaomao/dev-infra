@@ -64,6 +64,10 @@ class _ScheduleWorker:
         return None
 
 
+#: The Supply Chain profile only answers for session keys its own agent instance minted.
+SESSION_KEY = "agent:main:openclaw:" + "0" * 48
+
+
 class _OpenClawRepository:
     def __init__(self) -> None:
         self.ended = False
@@ -90,7 +94,7 @@ class _OpenClawRepository:
             "tenantId": tenant_id,
             "principalId": principal_id,
             "sessionId": "00000000-0000-4000-8000-000000000009",
-            "sessionKey": "session-a",
+            "sessionKey": SESSION_KEY,
             "runId": run_id,
         }
 
@@ -105,7 +109,7 @@ class _OpenClawRepository:
         assert (tenant_id, principal_id, session_key) == (
             "tenant-local-dev",
             "openclaw-supply-chain",
-            "session-a",
+            SESSION_KEY,
         )
         assert now.tzinfo is not None
         return True, "3"
@@ -448,7 +452,9 @@ def test_policy_digest_is_canonical_and_cross_fields_are_checked() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("crm_enabled", [False, True])
-async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding(crm_enabled: bool) -> None:
+async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding(
+    crm_enabled: bool,
+) -> None:
     connector = "c" * 32
     gateway_key = "g" * 32
     repository = _OpenClawRepository()
@@ -489,9 +495,14 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
             json={
                 "tenant_id": "tenant-local-dev",
                 "principal_id": "openclaw-supply-chain",
-                "session_key": "session-a",
+                "session_key": SESSION_KEY,
                 "action": "invoke",
-                "candidate_offer_ids": ["supply-chain-on-demand", "crm-case-advice", "crm-send", "other"],
+                "candidate_offer_ids": [
+                    "supply-chain-on-demand",
+                    "crm-case-advice",
+                    "crm-send",
+                    "other",
+                ],
             },
         )
         ended = await client.post("/api/supply-chain/v2/openclaw/runs/end", json={"runId": "run-a"})
@@ -502,13 +513,15 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
         payload["jwt"], gateway_key, algorithms=["HS256"], audience="ebizhub-tool-gateway"
     )
     assert claims["tenant_id"] == "tenant-local-dev"
-    assert claims["session_key"] == "session-a"
+    assert claims["session_key"] == SESSION_KEY
     assert payload["identity"]["runId"] == "run-a"
     assert policy.status_code == 200, policy.text
     assert policy.json() == {
         "binding_active": True,
         "policy_revision": "3",
-        "allowed_offer_ids": ["supply-chain-on-demand", "crm-case-advice"] if crm_enabled else ["supply-chain-on-demand"],
+        # R1-06: the Supply Chain profile never authorizes another profile's offer,
+        # whether or not the CRM profile is enabled on the same BFF.
+        "allowed_offer_ids": ["supply-chain-on-demand"],
     }
     assert ended.json() == {"ended": True}
     assert repository.ended is True

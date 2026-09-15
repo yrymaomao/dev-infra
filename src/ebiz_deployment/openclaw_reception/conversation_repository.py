@@ -1,4 +1,10 @@
-"""Durable turn admission and event projection, using existing restricted payload storage."""
+"""Durable turn admission and event projection for one reception profile.
+
+Rows of every profile live in the same tables; this repository only ever sees
+the conversations whose ``profile_version`` is its profile's, so a CRM
+conversation can never be read, claimed or bound through the Supply Chain
+routes and vice versa.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +13,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from agent_runtime.payloads.contracts import PayloadStore
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .conversation_models import Conversation, ConversationEvent, ConversationTurn
-from .level2_repository import Level2Repository, ResourceConflict
+from .models import Conversation, ConversationEvent, ConversationTurn
+from .payloads import RestrictedPayloadAccess
+from .profile import ReceptionProfile
 
 TERMINAL = frozenset({"completed", "failed", "interrupted"})
 KINDS = frozenset(
@@ -29,6 +37,10 @@ KINDS = frozenset(
 )
 
 
+class ConversationConflict(RuntimeError):
+    """A durable admission rule refused the request (busy, content or lease)."""
+
+
 def project_event(kind: str, payload: object) -> dict[str, Any]:
     if kind not in KINDS or not isinstance(payload, dict):
         raise ValueError("Invalid conversation event")
@@ -37,19 +49,11 @@ def project_event(kind: str, payload: object) -> dict[str, Any]:
         if (
             not {"operation_id", "state"}.issubset(payload)
             or not set(payload).issubset(allowed)
-            or any(
-                not isinstance(payload.get(key), str)
-                for key in ("operation_id", "state")
-            )
-            or (
-                "execution_id" in payload
-                and not isinstance(payload.get("execution_id"), str)
-            )
+            or any(not isinstance(payload.get(key), str) for key in ("operation_id", "state"))
+            or ("execution_id" in payload and not isinstance(payload.get("execution_id"), str))
         ):
             raise ValueError("Invalid conversation payload")
-        projected = {
-            key: value for key, value in payload.items() if key != "error"
-        }
+        projected = {key: value for key, value in payload.items() if key != "error"}
         if "error" in payload:
             projected["error"] = _project_runtime_error(payload["error"])
         return projected
@@ -63,9 +67,8 @@ def project_event(kind: str, payload: object) -> dict[str, Any]:
         "tool.started": {"tool"},
         "turn.failed": {"code", "safe_message"},
     }[kind]
-    required = allowed - ({"execution_id"} if kind == "operation.updated" else set())
     if (
-        not required.issubset(payload)
+        not allowed.issubset(payload)
         or not set(payload).issubset(allowed)
         or any(not isinstance(v, str) for v in payload.values())
     ):
@@ -78,14 +81,7 @@ def project_event(kind: str, payload: object) -> dict[str, Any]:
 def _project_runtime_error(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Invalid Runtime error")
-    required = {
-        "error_code",
-        "category",
-        "phase",
-        "retryable",
-        "safe_message",
-        "trace_id",
-    }
+    required = {"error_code", "category", "phase", "retryable", "safe_message", "trace_id"}
     allowed = required | {"workflow_code", "node_id", "provider_code", "details_ref"}
     if not required.issubset(value) or not set(value).issubset(allowed):
         raise ValueError("Invalid Runtime error")
@@ -144,7 +140,22 @@ def project_operation_update(
     return result
 
 
-class ConversationRepository(Level2Repository):
+class ConversationRepository(RestrictedPayloadAccess):
+    def __init__(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        *,
+        payload_store: PayloadStore,
+        profile: ReceptionProfile,
+    ) -> None:
+        super().__init__(payload_store, permission=profile.payload_permission)
+        self._factory = factory
+        self._profile = profile
+
+    @property
+    def profile(self) -> ReceptionProfile:
+        return self._profile
+
     async def position(self, tid: UUID, tenant: str, user: str) -> tuple[str, int]:
         """Read stream completion without reloading every historical message payload."""
         async with self._factory() as session:
@@ -159,7 +170,7 @@ class ConversationRepository(Level2Repository):
             id=uuid4(),
             tenant_id=tenant,
             principal_id=user,
-            profile_version="supply-chain-reception.v1",
+            profile_version=self._profile.profile_version,
             session_id=str(uuid4()),
         )
         async with self._factory() as session, session.begin():
@@ -173,6 +184,7 @@ class ConversationRepository(Level2Repository):
             Conversation.id == cid,
             Conversation.tenant_id == tenant,
             Conversation.principal_id == user,
+            Conversation.profile_version == self._profile.profile_version,
         )
         row = await session.scalar(query.with_for_update() if lock else query)
         if row is None:
@@ -193,7 +205,7 @@ class ConversationRepository(Level2Repository):
             )
             if old:
                 if old.prompt_hash != digest:
-                    raise ResourceConflict("REQUEST_CONTENT_CONFLICT")
+                    raise ConversationConflict("REQUEST_CONTENT_CONFLICT")
                 return old.id
             active = await session.scalar(
                 select(ConversationTurn.id)
@@ -203,7 +215,7 @@ class ConversationRepository(Level2Repository):
                 .limit(1)
             )
             if active:
-                raise ResourceConflict("CONVERSATION_BUSY")
+                raise ConversationConflict("CONVERSATION_BUSY")
             payload = await self._stage(tenant, {"prompt": prompt})
             await self._commit_staged(tenant, payload)
             row = ConversationTurn(
@@ -229,7 +241,10 @@ class ConversationRepository(Level2Repository):
                 await session.execute(
                     select(ConversationTurn, Conversation)
                     .join(Conversation, Conversation.id == ConversationTurn.conversation_id)
-                    .where(ConversationTurn.id == tid)
+                    .where(
+                        ConversationTurn.id == tid,
+                        Conversation.profile_version == self._profile.profile_version,
+                    )
                 )
             ).one_or_none()
         if pair is None or pair[0].state in TERMINAL:
@@ -272,9 +287,7 @@ class ConversationRepository(Level2Repository):
             elif row.kind == "turn.failed":
                 error = p
         if analyses:
-            from .conversation_result import qualify_unowned_currency_symbols
-
-            message = qualify_unowned_currency_symbols(message, list(analyses.values()))
+            message = self._profile.finalize_reply(message, list(analyses.values()))
         return {
             "turn_id": str(tid),
             "client_request_id": turn.request_id,
@@ -339,12 +352,14 @@ class ConversationRepository(Level2Repository):
         async with self._factory() as session, session.begin():
             row = await session.scalar(
                 select(ConversationTurn)
+                .join(Conversation, Conversation.id == ConversationTurn.conversation_id)
                 .where(
+                    Conversation.profile_version == self._profile.profile_version,
                     ConversationTurn.state.not_in(TERMINAL),
                     or_(ConversationTurn.lease_until.is_(None), ConversationTurn.lease_until < now),
                 )
                 .order_by(ConversationTurn.created_at)
-                .with_for_update(skip_locked=True)
+                .with_for_update(skip_locked=True, of=ConversationTurn)
                 .limit(1)
             )
             if row is None:
@@ -377,9 +392,7 @@ class ConversationRepository(Level2Repository):
             result = raw.pop("result", None) if event["kind"] == "operation.updated" else None
             public = project_event(event["kind"], raw)
             if result is not None:
-                from .conversation_result import project_analysis
-
-                public["analysis"] = await project_analysis(self, tenant, result)
+                public["analysis"] = await self._profile.project_result(self, tenant, result)
             payload = await self._stage(tenant, public)
             await self._commit_staged(tenant, payload)
             staged.append((event, payload))
@@ -388,7 +401,7 @@ class ConversationRepository(Level2Repository):
                 select(ConversationTurn).where(ConversationTurn.id == tid).with_for_update()
             )
             if row is None or row.lease_owner != owner:
-                raise ResourceConflict("TURN_LEASE_LOST")
+                raise ConversationConflict("TURN_LEASE_LOST")
             for event, payload in staged:
                 if event["sequence"] <= row.sequence:
                     continue
@@ -412,3 +425,13 @@ class ConversationRepository(Level2Repository):
                 row.state = "running"
             row.lease_owner = None
             row.lease_until = datetime.now(UTC) + timedelta(milliseconds=500)
+
+
+__all__ = [
+    "KINDS",
+    "TERMINAL",
+    "ConversationConflict",
+    "ConversationRepository",
+    "project_event",
+    "project_operation_update",
+]
