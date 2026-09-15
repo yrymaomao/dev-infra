@@ -1,20 +1,28 @@
 """One deployment-owned Gateway composition with independently scoped workflow offers.
 
-One Runtime process receives one composition with one catalog generation and
-one pin per business agent offer. Every offer carries its own authority profile
-(scopes and credential reference - never unioned) and names the BFF reception
-profile that answers the Gateway's current-policy question for it: the policy
-port routes each query by the agent prefix of the signed identity's
-``session_key`` to that profile's ``/internal/<agent>/v2/openclaw/authorize``.
+One Runtime process receives one composition with one pin per business agent
+offer. Every offer carries its own authority profile (scopes and credential
+reference - never unioned) and names the BFF reception profile that answers the
+Gateway's current-policy question for it: the policy port routes each query by
+the agent prefix of the signed identity's ``session_key`` to that profile's
+``/internal/<agent>/v2/openclaw/authorize``.
+
+The offers of one agent id form one *instance* (design 2026-09-16 §12.2): the
+OpenClaw host process that serves that agent loads one signed catalog generation
+containing only that instance's offers, under that instance's own generation id.
+The composition therefore owns one ``GatewayCatalogGeneration`` per instance and
+answers each instance's catalog and invocation requests from that generation
+alone; a single-instance deployment keeps exactly the one generation it had.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
@@ -51,7 +59,15 @@ from agent_runtime.outbox.worker import PostgresOutboxWorker
 from agent_runtime.registry.capabilities import PostgresCapabilityRegistry
 from agent_runtime.registry.workflows import PostgresWorkflowRegistry
 from ebiz_runtime_contracts import ActorRef
-from ebiz_runtime_contracts.tool_gateway_catalog import ToolOfferReference
+from ebiz_runtime_contracts.tool_gateway_catalog import (
+    CatalogSearchReply,
+    CatalogSearchRequest,
+    CatalogVisibilityReply,
+    CatalogVisibilityRequest,
+    InvocationRequest,
+    ToolOffer,
+    ToolOfferReference,
+)
 from ebiz_runtime_contracts.tool_gateway_policy import (
     PolicyTarget,
     ToolGatewayPolicyReply,
@@ -60,6 +76,7 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 _SESSION_KEY_PREFIX = re.compile(r"^agent:[a-z0-9][a-z0-9._-]{0,63}:openclaw:$")
+_AGENT_OF_PREFIX = re.compile(r"^agent:(?P<agent>[a-z0-9][a-z0-9._-]{0,63}):openclaw:$")
 _AUTHORIZE_PATH = re.compile(r"^/internal/[a-z0-9][a-z0-9-]*/v2/openclaw/authorize$")
 
 
@@ -211,6 +228,125 @@ def policy_routes(offers: tuple[GatewayWorkflowOffer, ...]) -> tuple[GatewayPoli
     return tuple(by_prefix[prefix] for prefix in sorted(by_prefix))
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayInstance:
+    """The offers one OpenClaw host instance serves and the generation it loads.
+
+    One instance is one agent id, one BFF reception profile and one host OS
+    process (design §12.2). Its signed generation carries only these offers.
+    """
+
+    agent_id: str
+    session_key_prefix: str
+    generation: GatewayCatalogGeneration
+    offers: tuple[GatewayWorkflowOffer, ...]
+
+    @property
+    def tool_names(self) -> tuple[str, ...]:
+        return tuple(offer.pin.name for offer in self.offers)
+
+
+def gateway_instances(
+    *,
+    tenant_id: str,
+    offers: tuple[GatewayWorkflowOffer, ...],
+    generation_id: str,
+    catalog_revision: str,
+    instance_generation_ids: Mapping[str, str] | None = None,
+) -> tuple[GatewayInstance, ...]:
+    """Group offers by agent instance, each under its own generation id.
+
+    ``generation_id`` is the id of every instance that ``instance_generation_ids``
+    does not name; with one instance that is today's single generation, unchanged.
+    Every instance must end up with a distinct id, because the Runtime catalog
+    answers requests by generation id and an OpenClaw instance pins exactly one.
+    """
+
+    overrides = dict(instance_generation_ids or {})
+    grouped: dict[str, list[GatewayWorkflowOffer]] = {}
+    for offer in offers:
+        grouped.setdefault(offer.authority.session_key_prefix, []).append(offer)
+    instances: list[GatewayInstance] = []
+    for prefix, group in grouped.items():
+        matched = _AGENT_OF_PREFIX.fullmatch(prefix)
+        if matched is None:  # pragma: no cover - GatewayPolicyRoute already refused it
+            raise ValueError("Tool Gateway policy route needs an agent session-key prefix")
+        agent_id = matched.group("agent")
+        instances.append(
+            GatewayInstance(
+                agent_id=agent_id,
+                session_key_prefix=prefix,
+                generation=GatewayCatalogGeneration(
+                    tenant_id=tenant_id,
+                    generation_id=overrides.pop(agent_id, generation_id),
+                    catalog_revision=catalog_revision,
+                    pins=tuple(offer.pin for offer in group),
+                ),
+                offers=tuple(group),
+            )
+        )
+    if overrides:
+        raise ValueError("instance generation ids name agents that serve no offer")
+    ids = [instance.generation.generation_id for instance in instances]
+    if len(set(ids)) != len(ids):
+        raise ValueError("each OpenClaw host instance needs its own generation id")
+    return tuple(instances)
+
+
+#: The public catalog reads the Runtime API routes to the container's catalog
+#: service. ``InstanceRoutedCatalog`` forwards exactly these; a Runtime that adds
+#: one must be re-reviewed here (guarded by tests).
+ROUTED_CATALOG_METHODS = ("visibility", "search", "describe", "prepare_invocation")
+
+
+class InstanceRoutedCatalog:
+    """Answer each OpenClaw instance from that instance's own catalog generation.
+
+    Runtime's ``ToolGatewayCatalogService`` owns exactly one generation and
+    refuses any other generation id. One Runtime process serving several host
+    instances therefore keeps one service per instance generation and selects it
+    by the ``generation_id`` the caller pins. An unknown id is handed to the
+    default service, which authorizes first and then raises the same publication
+    conflict Runtime raises, so nobody can enumerate generation ids without a
+    current authorization.
+    """
+
+    def __init__(self, services: Mapping[str, ToolGatewayCatalogService], *, default: str) -> None:
+        if not services or default not in services:
+            raise ValueError("instance catalogs require a default generation")
+        self._services = dict(services)
+        self._default = default
+
+    @property
+    def generation_ids(self) -> tuple[str, ...]:
+        return tuple(self._services)
+
+    def _for(self, generation_id: str) -> ToolGatewayCatalogService:
+        return self._services.get(generation_id, self._services[self._default])
+
+    async def visibility(
+        self, authorization: str | None, request: CatalogVisibilityRequest
+    ) -> CatalogVisibilityReply:
+        return await self._for(request.generation_id).visibility(authorization, request)
+
+    async def search(
+        self, authorization: str | None, request: CatalogSearchRequest
+    ) -> CatalogSearchReply:
+        return await self._for(request.generation_id).search(authorization, request)
+
+    async def describe(
+        self, authorization: str | None, *, reference: ToolOfferReference
+    ) -> ToolOffer:
+        return await self._for(reference.generation_id).describe(authorization, reference=reference)
+
+    async def prepare_invocation(
+        self, authorization: str | None, request: InvocationRequest
+    ) -> ToolOffer:
+        return await self._for(request.reference.generation_id).prepare_invocation(
+            authorization, request
+        )
+
+
 class DynamicGatewayContext:
     """Create Runtime auth only from a currently authorized signed Gateway identity."""
 
@@ -303,6 +439,7 @@ class SharedToolGatewayComposition:
         jwt_audience: str,
         generation_id: str = "supply-chain-v2-dev-1",
         catalog_revision: str = "supply-chain-v2-dev-1",
+        instance_generation_ids: Mapping[str, str] | None = None,
     ) -> None:
         parsed = urlsplit(bff_url)
         if (
@@ -320,11 +457,14 @@ class SharedToolGatewayComposition:
             raise ValueError("Tool Gateway requires at least one workflow offer")
         if len({offer.pin.offer_id for offer in offers}) != len(offers):
             raise ValueError("Tool Gateway offer ids must be unique")
-        self.generation = GatewayCatalogGeneration(
+        if len({offer.pin.name.casefold() for offer in offers}) != len(offers):
+            raise ValueError("Tool Gateway native tool names must be unique")
+        self.instances = gateway_instances(
             tenant_id=tenant_id,
+            offers=offers,
             generation_id=generation_id,
             catalog_revision=catalog_revision,
-            pins=tuple(offer.pin for offer in offers),
+            instance_generation_ids=instance_generation_ids,
         )
         self._tenant_id = tenant_id
         self.offers = offers
@@ -335,19 +475,36 @@ class SharedToolGatewayComposition:
         self._jwt_issuer = jwt_issuer
         self._jwt_audience = jwt_audience
 
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
+
+    @property
+    def generations(self) -> tuple[GatewayCatalogGeneration, ...]:
+        return tuple(instance.generation for instance in self.instances)
+
+    @property
+    def generation(self) -> GatewayCatalogGeneration:
+        """The one generation of a single-instance deployment (the pre-§12.2 export path)."""
+
+        if len(self.instances) != 1:
+            raise ValueError(
+                "this composition serves several OpenClaw instances; export per instance"
+            )
+        return self.instances[0].generation
+
     async def compose(
         self, container: Any, authority: ExecutionAdmissionAuthority
     ) -> GatewayServices:
         workflows = PostgresWorkflowRegistry(container.unit_of_work_factory)
         capabilities = PostgresCapabilityRegistry(container.unit_of_work_factory)
-        generation = self.generation
-        publications = []
+        publications = {}
         for offer in self.offers:
             pin = offer.pin
             publication = await workflows.get_published(self._tenant_id, pin.code, pin.version)
             if publication.checksum != pin.publication_digest:
                 raise ValueError("published Workflow differs from the deployment pin")
-            publications.append(publication)
+            publications[pin.offer_id] = publication
         client = httpx.AsyncClient(
             base_url=self._bff_url,
             timeout=httpx.Timeout(5.0),
@@ -368,11 +525,27 @@ class SharedToolGatewayComposition:
                 ),
             )
             projector = RegistryToolOfferProjector(capabilities, workflows)
-            catalog = await ToolGatewayCatalogService.create(
-                generation=generation,
-                projector=projector,
-                authorizer=authorizer,
-            )
+            catalogs: dict[str, ToolGatewayCatalogService] = {}
+            for instance in self.instances:
+                catalogs[
+                    instance.generation.generation_id
+                ] = await ToolGatewayCatalogService.create(
+                    generation=instance.generation,
+                    projector=projector,
+                    authorizer=authorizer,
+                )
+            catalog: ToolGatewayCatalogService
+            if len(catalogs) == 1:
+                (catalog,) = catalogs.values()
+            else:
+                # Runtime types the container's catalog as its own service; the
+                # router forwards exactly the public reads the API routes use.
+                catalog = cast(
+                    ToolGatewayCatalogService,
+                    InstanceRoutedCatalog(
+                        catalogs, default=self.instances[0].generation.generation_id
+                    ),
+                )
             if container.governed_artifact_service is None:
                 raise ValueError("governed artifact service is unavailable")
             snapshots = ToolGatewaySnapshotService(
@@ -384,26 +557,28 @@ class SharedToolGatewayComposition:
             )
             preparations = []
             profiles = []
-            for offer, publication in zip(self.offers, publications, strict=True):
-                pin = offer.pin
-                projection = await projector.project_exact(generation, pin)
-                profiles.append((projection.offer.reference, offer.authority))
-                preparations.append(
-                    (
-                        projection.offer.reference,
-                        GatewaySnapshotPreparation(
-                            snapshot_service=snapshots,
-                            selector=None,  # type: ignore[arg-type]
-                            generation=generation,
-                            pin=pin,
-                            projection=projection,
-                            carrier_receipt=None,
-                            bindings=(),
-                            pinned_workflow=publication,
-                            source_system="ebizhub-openclaw-adapter",
-                        ),
+            for instance in self.instances:
+                generation = instance.generation
+                for offer in instance.offers:
+                    pin = offer.pin
+                    projection = await projector.project_exact(generation, pin)
+                    profiles.append((projection.offer.reference, offer.authority))
+                    preparations.append(
+                        (
+                            projection.offer.reference,
+                            GatewaySnapshotPreparation(
+                                snapshot_service=snapshots,
+                                selector=None,  # type: ignore[arg-type]
+                                generation=generation,
+                                pin=pin,
+                                projection=projection,
+                                carrier_receipt=None,
+                                bindings=(),
+                                pinned_workflow=publications[pin.offer_id],
+                                source_system="ebizhub-openclaw-adapter",
+                            ),
+                        )
                     )
-                )
             preparation = ConfiguredGatewayPreparations(preparations=tuple(preparations))
             context = DynamicGatewayContext(
                 connector_id="openclaw",
@@ -498,13 +673,17 @@ class SupplyChainToolGatewayComposition(SharedToolGatewayComposition):
 
 
 __all__ = [
+    "ROUTED_CATALOG_METHODS",
     "SUPPLY_CHAIN_ROUTE",
     "BffToolGatewayPolicyPort",
     "DynamicGatewayContext",
     "GatewayAuthorityProfile",
+    "GatewayInstance",
     "GatewayPolicyRoute",
     "GatewayWorkflowOffer",
+    "InstanceRoutedCatalog",
     "SharedToolGatewayComposition",
     "SupplyChainToolGatewayComposition",
+    "gateway_instances",
     "policy_routes",
 ]

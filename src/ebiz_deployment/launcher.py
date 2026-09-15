@@ -130,6 +130,54 @@ def crm_offer(
     )
 
 
+def load_launch_config(environment: Mapping[str, str]) -> DeploymentCompositionConfig:
+    """The reviewed deployment document named by ``EBIZ_DEPLOYMENT_CONFIG``."""
+
+    config_path = environment.get("EBIZ_DEPLOYMENT_CONFIG", "").strip()
+    if not config_path:
+        raise ValueError("EBIZ_DEPLOYMENT_CONFIG is required")
+    return load_deployment_config(Path(config_path), environment)
+
+
+def build_gateway_composition(
+    environment: Mapping[str, str], config: DeploymentCompositionConfig
+) -> SharedToolGatewayComposition | None:
+    """The one Gateway composition of this deployment, or ``None`` with no offer enabled.
+
+    The Supply Chain instance (agent ``BFF_OPENCLAW_AGENT_ID``) keeps
+    ``TOOL_GATEWAY_GENERATION_ID`` - the id every single-instance deployment
+    already signs. The CRM instance loads its own generation under
+    ``CRM_TOOL_GATEWAY_GENERATION_ID`` (default ``<TOOL_GATEWAY_GENERATION_ID>-crm``);
+    both share ``TOOL_GATEWAY_CATALOG_REVISION``, tenant and audience.
+    """
+
+    offers = []
+    instance_generation_ids: dict[str, str] = {}
+    generation_id = environment.get("TOOL_GATEWAY_GENERATION_ID", "supply-chain-v2-dev-1")
+    if environment.get("SUPPLY_CHAIN_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
+        offers.append(supply_chain_offer(environment))
+    if environment.get("CRM_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
+        offers.append(crm_offer(environment, config))
+        crm_agent_id = environment.get("BFF_CRM_OPENCLAW_AGENT_ID", "crm").strip() or "crm"
+        instance_generation_ids[crm_agent_id] = (
+            environment.get("CRM_TOOL_GATEWAY_GENERATION_ID", "").strip() or f"{generation_id}-crm"
+        )
+    if not offers:
+        return None
+    return SharedToolGatewayComposition(
+        tenant_id=environment.get("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
+        offers=tuple(offers),
+        bff_url=environment.get("SUPPLY_CHAIN_BFF_INTERNAL_URL", ""),
+        connector_credential=environment.get("BFF_OPENCLAW_CONNECTOR_CREDENTIAL", ""),
+        jwt_key=environment.get("TOOL_GATEWAY_JWT_KEY", ""),
+        jwt_issuer=environment.get("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
+        jwt_audience=environment.get("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
+        generation_id=generation_id,
+        catalog_revision=environment.get("TOOL_GATEWAY_CATALOG_REVISION", "supply-chain-v2-dev-1"),
+        instance_generation_ids=instance_generation_ids,
+    )
+
+
 def launch(
     argv: Sequence[str] | None = None,
     *,
@@ -141,10 +189,7 @@ def launch(
     if sys.dont_write_bytecode is not True:
         raise ValueError("Python bytecode writes must be disabled before deployment startup")
     environment = os.environ if environ is None else environ
-    config_path = environment.get("EBIZ_DEPLOYMENT_CONFIG", "").strip()
-    if not config_path:
-        raise ValueError("EBIZ_DEPLOYMENT_CONFIG is required")
-    config = load_deployment_config(Path(config_path), environment)
+    config = load_launch_config(environment)
     runtime_policy_path = environment.get("APP_PLUGIN_POLICY_PATH", "").strip()
     if not runtime_policy_path or Path(runtime_policy_path).resolve() != (
         config.runtime.plugin_policy_path.resolve()
@@ -159,26 +204,7 @@ def launch(
             jwt_secret=environment.get("APP_JWT_SECRET", ""),
             package_digest=environment.get("SUPPLY_CHAIN_ON_DEMAND_PROVIDER_DIGEST", ""),
         )
-    gateway_composition = None
-    offers = []
-    if environment.get("SUPPLY_CHAIN_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
-        offers.append(supply_chain_offer(environment))
-    if environment.get("CRM_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
-        offers.append(crm_offer(environment, config))
-    if offers:
-        gateway_composition = SharedToolGatewayComposition(
-            tenant_id=environment.get("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
-            offers=tuple(offers),
-            bff_url=environment.get("SUPPLY_CHAIN_BFF_INTERNAL_URL", ""),
-            connector_credential=environment.get("BFF_OPENCLAW_CONNECTOR_CREDENTIAL", ""),
-            jwt_key=environment.get("TOOL_GATEWAY_JWT_KEY", ""),
-            jwt_issuer=environment.get("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
-            jwt_audience=environment.get("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
-            generation_id=environment.get("TOOL_GATEWAY_GENERATION_ID", "supply-chain-v2-dev-1"),
-            catalog_revision=environment.get(
-                "TOOL_GATEWAY_CATALOG_REVISION", "supply-chain-v2-dev-1"
-            ),
-        )
+    gateway_composition = build_gateway_composition(environment, config)
     runtime_argv = list(argv) if argv is not None else None
     if gateway_composition is None:
         return runtime_main(runtime_argv, provider_composition=provider_composition)
@@ -208,8 +234,10 @@ __all__ = [
     "CRM_TOOL_LABELS",
     "CRM_TOOL_NAME",
     "SUPPLY_CHAIN_SCOPES",
+    "build_gateway_composition",
     "crm_offer",
     "launch",
+    "load_launch_config",
     "main",
     "supply_chain_offer",
 ]

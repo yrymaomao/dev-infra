@@ -1,0 +1,13 @@
+{
+  "version": "openclaw-host-instance.v1",
+  "agentId": "main",
+  "hostRoot": "C:\\openclaw\\host",
+  "port": 18789,
+  "stateDir": "C:\\openclaw\\supply-chain\\state",
+  "configPath": "C:\\openclaw\\supply-chain\\openclaw.json",
+  "gatewayTokenEnv": "EBIZ_SUPPLY_CHAIN_GATEWAY_TOKEN",
+  "pluginInstallDir": "C:\\openclaw\\supply-chain\\plugin\\package",
+  "deploymentPath": "C:\\openclaw\\supply-chain\\deployment.json",
+  "receptionPath": "config/supply-chain-reception.v1.json",
+  "ingressUrl": "http://127.0.0.1:18789/ebiz/tool-gateway/ingress"
+}
