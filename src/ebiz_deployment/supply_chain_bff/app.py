@@ -20,6 +20,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from ebiz_deployment.crm_reception.operation_api import operation_router
+from ebiz_deployment.crm_reception.operation_runtime import HttpOperationRuntime, OperationRuntime
 from ebiz_deployment.crm_reception.profile import PROFILE_VERSION as CRM_PROFILE_VERSION
 from ebiz_deployment.crm_reception.profile import crm_owner, crm_profile
 from ebiz_deployment.crm_reception.session_api import (
@@ -104,6 +106,9 @@ class BffContainer:
     # Injectable run-binding repository for the CRM profile (default: the shared
     # openclaw_run_binding table through the reception session factory).
     run_bindings: RunBindings | None = None
+    # Injectable Runtime-owner seam of the workbench operation routes (tests use a
+    # fake; default: HttpOperationRuntime against BFF_RUNTIME_URL / APP_JWT_SECRET).
+    crm_operation_runtime: OperationRuntime | None = None
 
 
 @dataclass(slots=True)
@@ -221,6 +226,20 @@ def _mount_crm(
             tokens=WorkbenchTokenIssuer(secret=settings.jwt_secret),
         )
     )
+    if settings.crm_workbench_operations_enabled:
+        runtime = container.crm_operation_runtime
+        if runtime is None:
+            runtime = HttpOperationRuntime(
+                base_url=settings.runtime_url, secret=settings.jwt_secret
+            )
+        app.include_router(
+            operation_router(
+                profile=profile,
+                tenant_id=settings.crm_openclaw_tenant_id,
+                session_client=client,
+                runtime=runtime,
+            )
+        )
 
 
 def create_app(container: BffContainer) -> FastAPI:

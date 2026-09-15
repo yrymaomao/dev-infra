@@ -68,6 +68,9 @@ class BffSettings:
     crm_openclaw_ingress_url: str = "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
     crm_openclaw_ingress_credential: str | None = field(default=None, repr=False)
     crm_service_url: str | None = None
+    # Phase 2 workbench operation routes (P2-G). Off by default: they need the
+    # Runtime owner reads listed in docs/crm-profile.md "Workbench operation routes".
+    crm_workbench_operations_enabled: bool = False
     max_selected_skus: int = 10_000
     bulk_batch_size: int = 200
     tenant_bulk_concurrency: int = 2
@@ -138,6 +141,12 @@ class BffSettings:
             os.environ.get("BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
         )
         crm_service_url = os.environ.get("BFF_CRM_SERVICE_URL", "").strip() or None
+        crm_workbench_operations_enabled = _boolean("BFF_CRM_WORKBENCH_OPERATIONS_ENABLED", False)
+        if crm_workbench_operations_enabled and not crm_openclaw_enabled:
+            raise ValueError(
+                "BFF_CRM_WORKBENCH_OPERATIONS_ENABLED requires BFF_CRM_OPENCLAW_ENABLED "
+                "(session exchange, tenant fence and profile)"
+            )
         if crm_openclaw_enabled:
             if not openclaw_enabled:
                 raise ValueError(
@@ -224,6 +233,7 @@ class BffSettings:
             crm_openclaw_ingress_url=crm_openclaw_ingress_url,
             crm_openclaw_ingress_credential=crm_openclaw_ingress_credential,
             crm_service_url=crm_service_url,
+            crm_workbench_operations_enabled=crm_workbench_operations_enabled,
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
             tenant_bulk_concurrency=_integer(
