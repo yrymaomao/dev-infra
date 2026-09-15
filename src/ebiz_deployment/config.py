@@ -263,7 +263,7 @@ class StreamingBffEtaProfile(StrictModel):
 class StreamingBffReleaseConfig(StrictModel):
     version: Literal["0.1.4"]
     schema_name: Literal["supply_chain_bff"] = Field(alias="schema")
-    migration_head: Literal["0007_openclaw_run_binding"]
+    migration_head: Literal["0009_conversation_profile_index"]
     secret_references: tuple[str, ...] = Field(min_length=5, max_length=5)
     features: StreamingBffFeatures
     limits: StreamingBffLimits
