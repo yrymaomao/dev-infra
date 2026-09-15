@@ -1,4 +1,4 @@
-"""Supply Chain Registry v7 release inputs for Runtime publication surfaces."""
+"""Supply Chain Registry v8 release inputs for Runtime publication surfaces."""
 
 from __future__ import annotations
 
@@ -63,6 +63,7 @@ _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _EXPECTED_CAPABILITY_PINS = frozenset(
     {
         ("inventory.get_batch_snapshot", 1),
+        ("inventory.get_batch_snapshot", 2),
         ("inventory.list_skus_by_threshold", 1),
         ("catalog.resolve_sku_identity_batch", 1),
         ("inventory.get_fba_snapshot", 1),
@@ -80,7 +81,7 @@ _EXPECTED_WORKFLOW_PINS = frozenset(
         ("inventory-selection-discovery-continuation", 6),
         ("inventory-selection-request-planner", 6),
         ("inventory-supply-chain-batch-weekly", 6),
-        ("inventory-supply-chain-on-demand", 1),
+        ("inventory-supply-chain-on-demand", 2),
     }
 )
 
@@ -88,7 +89,7 @@ _EXPECTED_WORKFLOW_PINS = frozenset(
 def resolve_registry_import_release(
     release: SupplyChainReleaseConfig,
 ) -> tuple[Path, Path]:
-    """Resolve and attest the installed v7 compilation and generated output root."""
+    """Resolve and attest the installed v8 compilation and generated output root."""
 
     distribution = metadata.distribution(release.agent_distribution)
     if distribution.version != release.agent_distribution_version:
@@ -97,7 +98,7 @@ def resolve_registry_import_release(
         strict=True
     )
     compilation = package_root.joinpath("registry-import.yaml").resolve(strict=True)
-    generated = package_root.joinpath("generated-v7").resolve(strict=True)
+    generated = package_root.joinpath("generated-v8").resolve(strict=True)
     plan = RegistryImportPublicationPlan.model_validate_json(
         generated.joinpath("registry-import-publication-plan.json").read_text(encoding="utf-8")
     )
@@ -117,7 +118,7 @@ def resolve_registry_import_release(
         or workflow_pins != _EXPECTED_WORKFLOW_PINS
         or any(item.ir_schema != 4 or item.compiler_version != "1.3.0" for item in plan.workflows)
     ):
-        raise ValueError("installed Registry-import Plan differs from the reviewed v7 release")
+        raise ValueError("installed Registry-import Plan differs from the reviewed v8 release")
     workflow = package_root.joinpath("workflows", f"{release.workflow_code}.yaml")
     if hashlib.sha256(workflow.read_bytes()).hexdigest() != release.workflow_artifact_digest:
         raise ValueError("primary Workflow source differs from the release pin")
@@ -161,7 +162,7 @@ def load_public_capability_catalogs(
 
     expected_ids = {item.set_id for item in release.capability_sets}
     if set(contract_roots) != expected_ids:
-        raise ValueError("contract roots must match the exact Supply Chain v7 capability sets")
+        raise ValueError("contract roots must match the exact Supply Chain v8 capability sets")
     publications: list[CapabilityCatalogPublication] = []
     for pin in release.capability_sets:
         root = contract_roots[pin.set_id].resolve(strict=True)
@@ -171,7 +172,7 @@ def load_public_capability_catalogs(
             provider_versions=release.provider_versions,
         )
         if not isinstance(publication, CapabilityCatalogPublication):
-            raise ValueError("Supply Chain v7 requires Runtime Catalog publications")
+            raise ValueError("Supply Chain v8 requires Runtime Catalog publications")
         if publication.set_id != pin.set_id or publication.version != pin.version:
             raise ValueError("published Catalog identity differs from the release pin")
         publications.append(publication)
@@ -201,7 +202,7 @@ def build_agent_draft_payload(
         len(capability_pins) != len(_EXPECTED_CAPABILITY_PINS)
         or observed_pins != _EXPECTED_CAPABILITY_PINS
     ):
-        raise ValueError("Supply Chain v6 requires seven exact capability pins")
+        raise ValueError("Supply Chain v8 capability pins differ from the reviewed release")
     return {
         "code": release.agent_id,
         "name": "Supply Chain Expert",

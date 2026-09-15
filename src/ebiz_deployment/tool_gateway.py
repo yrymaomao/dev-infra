@@ -1,4 +1,4 @@
-"""Deployment-owned composition for one exact Supply Chain on-demand ToolOffer."""
+"""One deployment-owned Gateway composition with independently scoped workflow offers."""
 
 from __future__ import annotations
 
@@ -110,15 +110,44 @@ class BffToolGatewayPolicyPort:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayAuthorityProfile:
+    cid: str
+    credential_ref: str
+    scopes: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not self.cid or not self.credential_ref or len(self.credential_ref) > 256:
+            raise ValueError("Tool Gateway authority profile is invalid")
+        if not {"workflow:start", "runtime:admission"} <= self.scopes:
+            raise ValueError("Tool Gateway admission scopes are required")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayWorkflowOffer:
+    pin: GatewayPublicationPin
+    authority: GatewayAuthorityProfile
+
+    def __post_init__(self) -> None:
+        if self.pin.kind != "workflow":
+            raise ValueError("this composition requires published workflow offers")
+
+
 class DynamicGatewayContext:
     """Create Runtime auth only from a currently authorized signed Gateway identity."""
 
-    def __init__(self, *, connector_id: str, cid: str, credential_ref: str) -> None:
-        if not credential_ref or len(credential_ref) > 256:
-            raise ValueError("Tool Gateway credential reference is invalid")
+    def __init__(
+        self,
+        *,
+        connector_id: str,
+        tenant_id: str,
+        profiles: tuple[tuple[ToolOfferReference, GatewayAuthorityProfile], ...],
+    ) -> None:
+        if not profiles or len({ref for ref, _ in profiles}) != len(profiles):
+            raise ValueError("Tool Gateway requires unique exact authority profiles")
         self.connector_id = connector_id
-        self._cid = cid
-        self._credential_ref = credential_ref
+        self._tenant_id = tenant_id
+        self._profiles = dict(profiles)
 
     def resolve(
         self, decision: ToolGatewayPolicyReply, reference: ToolOfferReference
@@ -126,10 +155,13 @@ class DynamicGatewayContext:
         target = PolicyTarget(kind="offer", target_id=reference.offer_id)
         if (
             not decision.binding_active
+            or decision.tenant_id != self._tenant_id
             or decision.action != "invoke"
             or target not in (decision.allowed_targets)
+            or reference not in self._profiles
         ):
             raise GatewayOperationConflict()
+        profile = self._profiles[reference]
         actor_id = uuid5(
             NAMESPACE_URL,
             f"ebizhub:openclaw:principal:{decision.tenant_id}:{decision.principal_id}",
@@ -140,18 +172,10 @@ class DynamicGatewayContext:
             session_key=decision.session_key,
             auth=AuthContext(
                 tenant_id=decision.tenant_id,
-                cid=self._cid,
+                cid=profile.cid,
                 actor=ActorRef(actor_id=actor_id, actor_type="service"),
-                scopes=frozenset(
-                    {
-                        "workflow:start",
-                        "runtime:admission",
-                        "inventory.read",
-                        "sales_profit.read",
-                        "supply_chain.preview",
-                    }
-                ),
-                credential_ref=self._credential_ref,
+                scopes=profile.scopes,
+                credential_ref=profile.credential_ref,
             ),
             revision=decision.policy_revision,
         )
@@ -166,7 +190,7 @@ class _GatewayLifecycle:
     @classmethod
     def start(cls, *, client: httpx.AsyncClient, worker: PostgresOutboxWorker) -> _GatewayLifecycle:
         owner = cls(client=client, worker=worker, task=None)  # type: ignore[arg-type]
-        owner.task = asyncio.create_task(owner._run(), name="supply-chain-tool-gateway-relay")
+        owner.task = asyncio.create_task(owner._run(), name="deployment-tool-gateway-relay")
         return owner
 
     async def _run(self) -> None:
@@ -184,69 +208,61 @@ class _GatewayLifecycle:
         await self.client.aclose()
 
 
-class SupplyChainToolGatewayComposition:
+class SharedToolGatewayComposition:
     def __init__(
         self,
         *,
         tenant_id: str,
-        workflow_digest: str,
+        offers: tuple[GatewayWorkflowOffer, ...],
         bff_url: str,
         connector_credential: str,
         jwt_key: str,
         jwt_issuer: str,
         jwt_audience: str,
-        cid: str,
-        credential_ref: str,
         generation_id: str = "supply-chain-v2-dev-1",
         catalog_revision: str = "supply-chain-v2-dev-1",
-        offer_id: str = "supply-chain-on-demand",
     ) -> None:
         parsed = urlsplit(bff_url)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost"}
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("Tool Gateway BFF URL must be loopback HTTP")
         if len(jwt_key) < 32 or len(connector_credential) < 32:
             raise ValueError("Tool Gateway secret material is invalid")
-        if len(workflow_digest) != 64 or any(c not in "0123456789abcdef" for c in workflow_digest):
-            raise ValueError("Tool Gateway Workflow digest is invalid")
+        if not offers:
+            raise ValueError("Tool Gateway requires at least one workflow offer")
+        self.generation = GatewayCatalogGeneration(
+            tenant_id=tenant_id,
+            generation_id=generation_id,
+            catalog_revision=catalog_revision,
+            pins=tuple(offer.pin for offer in offers),
+        )
         self._tenant_id = tenant_id
-        self._workflow_digest = workflow_digest
+        self.offers = offers
         self._bff_url = bff_url.rstrip("/")
         self._connector_credential = connector_credential
         self._jwt_key = jwt_key
         self._jwt_issuer = jwt_issuer
         self._jwt_audience = jwt_audience
-        self._cid = cid
-        self._credential_ref = credential_ref
-        self._generation_id = generation_id
-        self._catalog_revision = catalog_revision
-        self._offer_id = offer_id
 
     async def compose(
         self, container: Any, authority: ExecutionAdmissionAuthority
     ) -> GatewayServices:
         workflows = PostgresWorkflowRegistry(container.unit_of_work_factory)
         capabilities = PostgresCapabilityRegistry(container.unit_of_work_factory)
-        publication = await workflows.get_published(
-            self._tenant_id, "inventory-supply-chain-on-demand", 1
-        )
-        if publication.checksum != self._workflow_digest:
-            raise ValueError("published on-demand Workflow differs from the deployment pin")
-        pin = GatewayPublicationPin(
-            offer_id=self._offer_id,
-            kind="workflow",
-            code=publication.code,
-            version=publication.version,
-            publication_digest=publication.checksum,
-            name="inventory_supply_chain_on_demand",
-            aliases=("supply_chain_analysis",),
-            labels=("inventory", "forecast", "replenishment"),
-        )
-        generation = GatewayCatalogGeneration(
-            tenant_id=self._tenant_id,
-            generation_id=self._generation_id,
-            catalog_revision=self._catalog_revision,
-            pins=(pin,),
-        )
+        generation = self.generation
+        publications = []
+        for offer in self.offers:
+            pin = offer.pin
+            publication = await workflows.get_published(self._tenant_id, pin.code, pin.version)
+            if publication.checksum != pin.publication_digest:
+                raise ValueError("published Workflow differs from the deployment pin")
+            publications.append(publication)
         client = httpx.AsyncClient(
             base_url=self._bff_url,
             timeout=httpx.Timeout(5.0),
@@ -271,7 +287,6 @@ class SupplyChainToolGatewayComposition:
                 projector=projector,
                 authorizer=authorizer,
             )
-            projection = await projector.project_exact(generation, pin)
             if container.governed_artifact_service is None:
                 raise ValueError("governed artifact service is unavailable")
             snapshots = ToolGatewaySnapshotService(
@@ -281,8 +296,13 @@ class SupplyChainToolGatewayComposition:
                 registration=container.governed_artifact_service,
                 resolver=None,  # type: ignore[arg-type]
             )
-            preparation = ConfiguredGatewayPreparations(
-                preparations=(
+            preparations = []
+            profiles = []
+            for offer, publication in zip(self.offers, publications, strict=True):
+                pin = offer.pin
+                projection = await projector.project_exact(generation, pin)
+                profiles.append((projection.offer.reference, offer.authority))
+                preparations.append(
                     (
                         projection.offer.reference,
                         GatewaySnapshotPreparation(
@@ -296,13 +316,13 @@ class SupplyChainToolGatewayComposition:
                             pinned_workflow=publication,
                             source_system="ebizhub-openclaw-adapter",
                         ),
-                    ),
+                    )
                 )
-            )
+            preparation = ConfiguredGatewayPreparations(preparations=tuple(preparations))
             context = DynamicGatewayContext(
                 connector_id="openclaw",
-                cid=self._cid,
-                credential_ref=self._credential_ref,
+                tenant_id=self._tenant_id,
+                profiles=tuple(profiles),
             )
             repository = GatewayOperationRepository(container.unit_of_work_factory)
             operations = GatewayOperationService(
@@ -328,7 +348,7 @@ class SupplyChainToolGatewayComposition:
                     poll_interval=timedelta(seconds=1),
                 ),
                 tenant_id=self._tenant_id,
-                lease_owner="supply-chain-tool-gateway",
+                lease_owner="deployment-tool-gateway",
                 event_types=frozenset({OPERATION_RECONCILE_REQUESTED}),
             )
             lifecycle = _GatewayLifecycle.start(client=client, worker=relay)
@@ -347,8 +367,55 @@ class SupplyChainToolGatewayComposition:
             raise
 
 
+class SupplyChainToolGatewayComposition(SharedToolGatewayComposition):
+    """Compatibility entry point for existing single-offer deployment scripts."""
+
+    def __init__(
+        self,
+        *,
+        workflow_digest: str,
+        cid: str,
+        credential_ref: str,
+        offer_id: str = "supply-chain-on-demand",
+        **settings: Any,
+    ) -> None:
+        super().__init__(
+            offers=(
+                GatewayWorkflowOffer(
+                    pin=GatewayPublicationPin(
+                        offer_id=offer_id,
+                        kind="workflow",
+                        code="inventory-supply-chain-on-demand",
+                        version=2,
+                        publication_digest=workflow_digest,
+                        name="inventory_supply_chain_on_demand",
+                        aliases=("supply_chain_analysis",),
+                        labels=("inventory", "forecast", "replenishment"),
+                    ),
+                    authority=GatewayAuthorityProfile(
+                        cid=cid,
+                        credential_ref=credential_ref,
+                        scopes=frozenset(
+                            {
+                                "workflow:start",
+                                "runtime:admission",
+                                "inventory.read",
+                                "sales_profit.read",
+                                "supply_chain.preview",
+                            }
+                        ),
+                    ),
+                ),
+            ),
+            **settings,
+        )
+
+
 __all__ = [
     "BffToolGatewayPolicyPort",
     "DynamicGatewayContext",
+    "GatewayAuthorityProfile",
+    "GatewayWorkflowOffer",
+    "SharedToolGatewayComposition",
     "SupplyChainToolGatewayComposition",
 ]

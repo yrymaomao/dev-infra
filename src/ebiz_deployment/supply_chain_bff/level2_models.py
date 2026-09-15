@@ -121,6 +121,7 @@ class OpenClawRunBinding(Base):
     )
 
     run_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    turn_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
     tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
     principal_id: Mapped[str] = mapped_column(String(256), nullable=False)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False)

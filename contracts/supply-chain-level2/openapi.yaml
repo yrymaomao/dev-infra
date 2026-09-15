@@ -39,9 +39,35 @@ paths:
                 $ref: '#/components/schemas/SelectionPreview'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/supply-chain/v2/selection-imports/template.csv:
+    get:
+      operationId: downloadSelectionCsvTemplate
+      description: >-
+        Downloads the versioned UTF-8 CSV template. The v1 dialect uses an optional UTF-8 BOM,
+        comma delimiters, RFC 4180/Excel double-quote escaping (including quoted newlines), and
+        exactly these ordered columns: sku, fulfillment_mode, fba_ratio, fbm_ratio. Extra or
+        missing columns, alternate delimiters, malformed quoting, files over 5 MiB, and more than
+        10,000 data rows are rejected as file errors. Invalid data rows are reported separately.
+      responses:
+        '200':
+          description: Versioned Supply Chain selection CSV template
+          headers:
+            X-Supply-Chain-Template-Version:
+              schema:
+                const: supply-chain.selection-import-template.v1
+          content:
+            text/csv:
+              schema:
+                type: string
+                const: "sku,fulfillment_mode,fba_ratio,fbm_ratio\n"
   /api/supply-chain/v2/selection-imports:
     post:
       operationId: importSelectionCsv
+      description: >-
+        Parses the published v1 template without guessing columns or delimiters. Identical duplicate
+        SKU rows are deduplicated. When duplicate rows disagree on fulfillment configuration, every
+        row in that SKU conflict group is excluded and reported as CSV_DUPLICATE_CONFLICT while other
+        valid SKU rows continue to preview.
       requestBody:
         required: true
         content:
@@ -303,6 +329,117 @@ paths:
                 required: [ended]
                 properties:
                   ended: {type: boolean}
+  /api/supply-chain/v2/openclaw/conversations:
+    post:
+      operationId: createOpenClawConversation
+      responses:
+        '201':
+          description: Tenant- and principal-owned conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationCreated'
+  /api/supply-chain/v2/openclaw/conversations/{cid}:
+    parameters:
+      - in: path
+        name: cid
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOpenClawConversation
+      responses:
+        '200':
+          description: Durable conversation snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSnapshot'
+  /api/supply-chain/v2/openclaw/conversations/{cid}/turns:
+    parameters:
+      - in: path
+        name: cid
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: submitOpenClawTurn
+      description: >-
+        The prompt is admitted unchanged and is never truncated. Length is measured in Unicode
+        code points before any OpenClaw tool routing. A prompt over 8,192 characters is rejected;
+        when admitted, any Supply Chain tool invocation independently validates its deduplicated
+        SKU array and rejects more than 200 unique SKU values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenClawTurnRequest'
+      responses:
+        '202':
+          description: Durable turn accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnAccepted'
+        '409':
+          description: Conversation is busy or the request key conflicts with different content
+  /api/supply-chain/v2/openclaw/turns/{tid}:
+    parameters:
+      - in: path
+        name: tid
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOpenClawTurn
+      responses:
+        '200':
+          description: Authoritative durable turn snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnSnapshot'
+  /api/supply-chain/v2/openclaw/turns/{tid}/events:
+    parameters:
+      - in: path
+        name: tid
+        required: true
+        schema: {type: string, format: uuid}
+      - in: header
+        name: Last-Event-ID
+        required: false
+        schema: {type: string, maxLength: 8192}
+    get:
+      operationId: streamOpenClawTurnEvents
+      responses:
+        '200':
+          description: Durable visible-message and operation event stream; heartbeat comments carry no business event
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '410':
+          description: Cursor expired; recover from the turn snapshot before reconnecting
+  /api/supply-chain/v2/openclaw/turn:
+    post:
+      operationId: submitLegacySynchronousOpenClawTurn
+      deprecated: true
+      description: Compatibility-only synchronous turn ingress; new clients use conversations and asynchronous turns.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenClawTurnRequest'
+      responses:
+        '200':
+          description: Completed legacy reply
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [run_id, reply]
+                properties:
+                  run_id: {type: string}
+                  reply: {type: string, minLength: 1, maxLength: 32768}
   /api/supply-chain/v2/policies/validate:
     post:
       operationId: validatePolicy
@@ -419,6 +556,63 @@ components:
           schema:
             $ref: '#/components/schemas/SafeError'
   schemas:
+    OpenClawTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [prompt, client_request_id]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: Unicode code-point limit; the server never truncates admitted content.
+        client_request_id:
+          type: string
+          format: uuid
+    ConversationCreated:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, profile_version]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        profile_version: {type: string}
+    TurnAccepted:
+      type: object
+      additionalProperties: false
+      required: [turn_id, conversation_id]
+      properties:
+        turn_id: {type: string, format: uuid}
+        conversation_id: {type: string, format: uuid}
+    ConversationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, turns]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        turns:
+          type: array
+          items: {$ref: '#/components/schemas/TurnSnapshot'}
+    TurnSnapshot:
+      type: object
+      additionalProperties: false
+      required: [turn_id, conversation_id, client_request_id, message_id, state, sequence, prompt, reply, operations, analyses, error, cursor]
+      properties:
+        turn_id: {type: string, format: uuid}
+        conversation_id: {type: string, format: uuid}
+        client_request_id: {type: string, format: uuid}
+        message_id: {type: string}
+        state: {enum: [accepted, running, completed, failed, interrupted]}
+        sequence: {type: integer, minimum: 0}
+        prompt: {type: string, maxLength: 8192}
+        reply: {type: string}
+        operations:
+          type: array
+          items: {type: object}
+        analyses:
+          type: array
+          items: {type: object}
+        error: {type: [object, 'null']}
+        cursor: {type: string}
     OpenClawCredentialRequest:
       type: object
       additionalProperties: false

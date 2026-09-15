@@ -12,7 +12,11 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
     ToolGatewayPolicyRequest,
 )
 
-from ebiz_deployment.tool_gateway import BffToolGatewayPolicyPort, DynamicGatewayContext
+from ebiz_deployment.tool_gateway import (
+    BffToolGatewayPolicyPort,
+    DynamicGatewayContext,
+    GatewayAuthorityProfile,
+)
 
 
 def _identity() -> ToolGatewayIdentity:
@@ -138,8 +142,25 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
     )
     context = DynamicGatewayContext(
         connector_id="openclaw",
-        cid="supply-chain-dev",
-        credential_ref="opaque:dev-erp-mcp",
+        tenant_id="tenant-a",
+        profiles=(
+            (
+                reference,
+                GatewayAuthorityProfile(
+                    cid="supply-chain-dev",
+                    credential_ref="opaque:dev-erp-mcp",
+                    scopes=frozenset(
+                        {
+                            "workflow:start",
+                            "runtime:admission",
+                            "inventory.read",
+                            "sales_profit.read",
+                            "supply_chain.preview",
+                        }
+                    ),
+                ),
+            ),
+        ),
     ).resolve(
         ToolGatewayPolicyReply(
             tenant_id="tenant-a",

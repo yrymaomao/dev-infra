@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
 import time
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID
 
 import httpx
@@ -75,24 +78,44 @@ def test_report_export_neutralizes_spreadsheet_formula_prefixes() -> None:
 @pytest.mark.asyncio
 async def test_report_export_streams_all_terminal_pages_and_is_tenant_scoped() -> None:
     report_id = UUID("41eec3b4-e49e-4268-b8cb-4ccce48d2d8f")
+    requested_offsets: list[int] = []
+    items = [
+        {
+            "ordinal": index,
+            "sku": f"FX-EXPORT-{index:03d}",
+            "result_status": ("COMPLETE", "BLOCKED", "FAILED")[index % 3],
+            "fulfillment_mode": "FBM",
+            "fulfillment_source": "DEFAULT_FBM",
+            "decision": {"selected_action": "KEEP", "selected_discount_rate": 0}
+            if index % 3 == 0
+            else None,
+            "business_issues": [
+                {"code": "SKU_NOT_FOUND", "message": "No identity", "blocking": True}
+            ]
+            if index % 3 == 1
+            else [],
+            "runtime_error": {
+                "error_code": "PROVIDER_UNAVAILABLE",
+                "safe_message": "Provider unavailable",
+            }
+            if index % 3 == 2
+            else None,
+            "risk_flags": [],
+            "raw_payload": "FX-MUST-NOT-BE-EXPORTED",
+        }
+        for index in range(201)
+    ]
 
     class Repository:
         async def get_report(self, **kwargs: object) -> dict[str, object] | None:
             assert kwargs["tenant_id"] == "tenant-a"
             assert kwargs["report_run_id"] == report_id
             offset = int(kwargs["item_offset"])  # type: ignore[arg-type]
+            assert kwargs["item_limit"] == 200
+            requested_offsets.append(offset)
             return {
-                "status": "SUCCEEDED",
-                "items": [
-                    {
-                        "ordinal": offset,
-                        "sku": f"SKU-{offset}",
-                        "result_status": "COMPLETE",
-                        "business_issues": [],
-                        "runtime_error": None,
-                        "risk_flags": [],
-                    }
-                ],
+                "status": "PARTIAL",
+                "items": items[offset : offset + 200],
                 "next_item_offset": 200 if offset == 0 else None,
             }
 
@@ -145,4 +168,27 @@ async def test_report_export_streams_all_terminal_pages_and_is_tenant_scoped() -
     assert response.headers["content-disposition"].endswith(f'supply-chain-{report_id}.csv"')
     rows = list(csv.reader(io.StringIO(response.text)))
     assert rows[0] == list(REPORT_EXPORT_COLUMNS)
-    assert [row[1] for row in rows[1:]] == ["SKU-0", "SKU-200"]
+    assert requested_offsets == [0, 200]
+    assert len(rows) == 202
+    assert [row[0] for row in rows[1:]] == [str(index) for index in range(201)]
+    assert [row[1] for row in rows[1:]] == [item["sku"] for item in items]
+    assert [row[2] for row in rows[1:]] == [item["result_status"] for item in items]
+    for index, row in enumerate(rows[1:]):
+        assert row[7] == ("SKU_NOT_FOUND" if index % 3 == 1 else "")
+        assert row[8] == ("PROVIDER_UNAVAILABLE" if index % 3 == 2 else "")
+    assert "FX-MUST-NOT-BE-EXPORTED" not in response.text
+    assert token not in response.text
+    if destination := os.environ.get("SUPPLY_CHAIN_EXPORT_EVIDENCE_DIR"):
+        evidence = Path(destination)
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "export.csv").write_bytes(response.content)
+        (evidence / "fixture.json").write_text(
+            json.dumps(
+                {
+                    "kind": "SYNTHETIC_REPOSITORY_ROWS_NOT_FULL_REPORT_SCHEMA",
+                    "report_id": str(report_id),
+                    "items": items,
+                }
+            ),
+            encoding="utf-8",
+        )

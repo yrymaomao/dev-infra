@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import jsonschema
 import yaml
@@ -138,6 +139,8 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
         skill_input_ref="payload://skill/current",
         runtime_credential_ref="opaque:runtime-service",
         level2_enabled=True,
+        openclaw_enabled=True,
+        openclaw_reception_enabled=True,
     )
     app = create_app(
         BffContainer(
@@ -146,7 +149,10 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
             runtime=object(),  # type: ignore[arg-type]
             coordinator=object(),  # type: ignore[arg-type]
             cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
-            level2_repository=object(),  # type: ignore[arg-type]
+            level2_repository=SimpleNamespace(
+                _factory=object(),
+                _payload_store=object(),
+            ),  # type: ignore[arg-type]
         )
     )
     generated_document = app.openapi()
@@ -163,6 +169,10 @@ def test_runtime_app_and_frozen_openapi_have_the_same_level2_paths() -> None:
     }
     frozen = set(yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))["paths"])
     assert generated == frozen
+    turn_request = yaml.safe_load((ROOT / "openapi.yaml").read_text(encoding="utf-8"))[
+        "components"
+    ]["schemas"]["OpenClawTurnRequest"]
+    assert turn_request["properties"]["prompt"]["maxLength"] == 8192
     cancel_schema = generated_document["components"]["schemas"]["ReportCancelAccepted"]
     assert cancel_schema["properties"]["semantics"]["const"] == "BEST_EFFORT"
     assert cancel_schema["properties"]["runtime_completion"]["const"] == "NOT_CONFIRMED"

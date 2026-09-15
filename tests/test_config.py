@@ -214,7 +214,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         ],
         "supply_chain_release": {
             "agent_id": "inventory-supply-chain",
-            "agent_version": 7,
+            "agent_version": 8,
             "agent_distribution": "ebiz-agent-inventory-supply-chain",
             "agent_distribution_version": "4.1.0",
             "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
@@ -304,7 +304,7 @@ def test_loads_strict_complete_read_only_deployment(tmp_path: Path) -> None:
     ]
     assert config.runtime_plugin_policy.plugins[0].plugin_id == "supply-chain-planning"
     assert "cockpit" not in json.dumps(config.model_dump(mode="json")).lower()
-    assert config.supply_chain_release.agent_version == 7
+    assert config.supply_chain_release.agent_version == 8
     assert [item.set_id for item in config.supply_chain_release.capability_sets] == [
         "commerce-sales.analytics",
         "inventory.core",

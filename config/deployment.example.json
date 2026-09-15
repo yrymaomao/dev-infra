@@ -135,7 +135,7 @@
   ],
   "supply_chain_release": {
     "agent_id": "inventory-supply-chain",
-    "agent_version": 7,
+    "agent_version": 8,
     "agent_distribution": "ebiz-agent-inventory-supply-chain",
     "agent_distribution_version": "4.1.0",
     "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",

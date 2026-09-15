@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import re
@@ -14,10 +15,11 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import httpx
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .config import BffSettings
 from .contracts import (
@@ -34,6 +36,7 @@ from .level2_contracts import (
     OpenClawCredentialRequest,
     OpenClawEndRunRequest,
     OpenClawPolicyCheckRequest,
+    OpenClawTurnRequest,
     ReportCancelAccepted,
     ReportRunRequest,
     ScheduleCreate,
@@ -46,7 +49,13 @@ from .policy import PolicyInvalid, validate_policy
 from .report_export import report_export_header, report_export_row
 from .repository import BatchRepository
 from .runtime_client import RuntimeClient, RuntimeRequestError
-from .selection_csv import MAX_CSV_BYTES, CsvFileError, parse_selection_csv
+from .selection_csv import (
+    CSV_TEMPLATE_BYTES,
+    CSV_TEMPLATE_VERSION,
+    MAX_CSV_BYTES,
+    CsvFileError,
+    parse_selection_csv,
+)
 
 _TERMINAL_BATCH = frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "PARTIAL", "CANCELLED"})
 _TERMINAL_REPORT = frozenset({"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"})
@@ -56,6 +65,7 @@ _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 @dataclass(frozen=True, slots=True)
 class Principal:
     tenant_id: str
+    principal_id: str = ""
 
 
 @dataclass(slots=True)
@@ -67,12 +77,34 @@ class BffContainer:
     cursor: CursorSigner
     level2_repository: Level2Repository | None = None
     level2_worker: Level2Worker | None = None
+    openclaw_http_transport: httpx.AsyncBaseTransport | None = None
 
 
 def create_app(container: BffContainer) -> FastAPI:
+    from .conversation_api import conversation_router
+    from .conversation_repository import ConversationRepository
+    from .conversation_worker import ConversationWorker
+
+    conversations = None
+    if container.settings.openclaw_reception_enabled and container.level2_repository is not None:
+        conversations = ConversationRepository(
+            container.level2_repository._factory,
+            payload_store=container.level2_repository._payload_store,
+        )
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         stop = asyncio.Event()
+        chat_task = (
+            asyncio.create_task(
+                ConversationWorker(
+                    conversations,
+                    container.settings,
+                    container.openclaw_http_transport,
+                ).run(stop)
+            )
+            if conversations
+            else None
+        )
         legacy_task = (
             asyncio.create_task(
                 container.coordinator.run_forever(stop=stop),
@@ -93,6 +125,10 @@ def create_app(container: BffContainer) -> FastAPI:
             yield
         finally:
             stop.set()
+            if chat_task:
+                chat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await chat_task
             if legacy_task is not None:
                 legacy_task.cancel()
             if level2_task is not None:
@@ -144,7 +180,20 @@ def create_app(container: BffContainer) -> FastAPI:
         tenant_id = claims.get("tenant_id")
         if not isinstance(tenant_id, str) or not tenant_id or len(tenant_id) > 256:
             raise HTTPException(status_code=401, detail="authentication failed")
-        return Principal(tenant_id=tenant_id)
+        user = claims.get("sub")
+        if not isinstance(user, str) or not user or len(user) > 256:
+            raise HTTPException(status_code=401, detail="authentication failed")
+        return Principal(tenant_id=tenant_id, principal_id=user)
+
+    if conversations:
+        app.include_router(
+            conversation_router(
+                conversations,
+                container.settings,
+                container.cursor,
+                principal,
+            )
+        )
 
     def openclaw_connector(
         authorization: Annotated[str | None, Header()] = None,
@@ -192,16 +241,34 @@ def create_app(container: BffContainer) -> FastAPI:
         repository: Level2Repository = Depends(level2),
     ) -> dict[str, object]:
         settings = container.settings
-        if body.selector != settings.openclaw_selector or settings.tool_gateway_jwt_key is None:
+        if settings.tool_gateway_jwt_key is None:
             raise HTTPException(status_code=403, detail="connector binding denied")
+        tenant, user, model_session, turn_id = (
+            settings.openclaw_tenant_id,
+            settings.openclaw_principal_id,
+            None,
+            None,
+        )
+        if body.selector.startswith(("turn:", "reconcile:")) and conversations:
+            try:
+                tenant, user, model_session, turn_id = await conversations.credential_context(
+                    body.selector,
+                    body.run_id,
+                )
+            except (LookupError, ValueError):
+                raise HTTPException(403, "connector binding denied") from None
+        elif body.selector != settings.openclaw_selector:
+            raise HTTPException(403, "connector binding denied")
         now = datetime.now(UTC)
         identity = await repository.exchange_openclaw_run(
             selector=body.selector,
             run_id=body.run_id,
-            tenant_id=settings.openclaw_tenant_id,
-            principal_id=settings.openclaw_principal_id,
+            tenant_id=tenant,
+            principal_id=user,
             agent_id=settings.openclaw_agent_id,
             now=now,
+            model_session_id=model_session,
+            turn_id=turn_id,
         )
         issued = int(now.timestamp())
         expires = issued + 120
@@ -220,6 +287,66 @@ def create_app(container: BffContainer) -> FastAPI:
             algorithm="HS256",
         )
         return {"identity": identity, "jwt": token, "expiresAt": expires * 1000}
+
+    @app.post("/api/supply-chain/v2/openclaw/turn")
+    async def openclaw_turn(
+        body: OpenClawTurnRequest,
+        request: Request,
+        current: Principal = Depends(principal),
+    ) -> JSONResponse:
+        settings = container.settings
+        if not settings.openclaw_enabled or current.tenant_id != settings.openclaw_tenant_id:
+            raise HTTPException(status_code=403, detail="connector binding denied")
+        credential = settings.openclaw_ingress_credential
+        if credential is None or len(credential) < 32:
+            return _safe_error(
+                503, "OPENCLAW_NOT_CONFIGURED", "The assistant is not available yet.",
+                request_id=_request_id(request), category="configuration", retryable=True,
+            )
+        occurrence = hashlib.sha256(
+            f"{current.tenant_id}:{body.client_request_id}".encode()
+        ).hexdigest()
+        try:
+            async with httpx.AsyncClient(
+                transport=container.openclaw_http_transport,
+                trust_env=False,
+                timeout=httpx.Timeout(180.0, connect=5.0),
+            ) as client:
+                upstream = await client.post(
+                    settings.openclaw_ingress_url,
+                    headers={"Authorization": f"Bearer {credential}"},
+                    json={
+                        "selector": settings.openclaw_selector,
+                        "occurrence": occurrence,
+                        "prompt": body.prompt,
+                    },
+                )
+        except httpx.RequestError:
+            upstream = None
+        if upstream is None or upstream.status_code != 200:
+            return _safe_error(
+                503, "OPENCLAW_TURN_UNAVAILABLE",
+                "The assistant could not finish this turn. Its outcome is uncertain; "
+                "do not resubmit automatically.",
+                request_id=_request_id(request), category="upstream", retryable=False,
+            )
+        try:
+            result = upstream.json()
+        except ValueError:
+            result = None
+        if (
+            not isinstance(result, dict)
+            or result.get("completed") is not True
+            or not isinstance(result.get("runId"), str)
+            or not isinstance(result.get("reply"), str)
+            or not result["reply"].strip()
+            or len(result["reply"]) > 32768
+        ):
+            return _safe_error(
+                502, "OPENCLAW_REPLY_INVALID", "The assistant did not return a usable reply.",
+                request_id=_request_id(request), category="protocol", retryable=False,
+            )
+        return JSONResponse({"run_id": result["runId"], "reply": result["reply"]})
 
     @app.post("/api/supply-chain/v2/openclaw/runs/end")
     async def end_openclaw_run(
@@ -250,6 +377,7 @@ def create_app(container: BffContainer) -> FastAPI:
                 offer_id
                 for offer_id in body.candidate_offer_ids
                 if offer_id == container.settings.openclaw_offer_id
+                or (container.settings.crm_openclaw_enabled and offer_id == "crm-case-advice")
             ]
             if active
             else []
@@ -444,6 +572,21 @@ def create_app(container: BffContainer) -> FastAPI:
         if preview is None:
             raise HTTPException(status_code=404, detail="selection preview not found")
         return preview
+
+    @app.get("/api/supply-chain/v2/selection-imports/template.csv")
+    async def selection_csv_template(
+        current: Principal = Depends(principal),
+    ) -> Response:
+        del current
+        return Response(
+            content=CSV_TEMPLATE_BYTES,
+            media_type="text/csv",
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "Content-Disposition": 'attachment; filename="supply-chain-selection-v1.csv"',
+                "X-Supply-Chain-Template-Version": CSV_TEMPLATE_VERSION,
+            },
+        )
 
     @app.post("/api/supply-chain/v2/selection-imports", status_code=202)
     async def import_selection_csv(
@@ -903,6 +1046,30 @@ def create_app(container: BffContainer) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException) -> JSONResponse:
+        conversation_conflicts = {
+            "CONVERSATION_BUSY": (
+                "This conversation is still answering. "
+                "Wait for the current reply before sending another message."
+            ),
+            "REQUEST_CONTENT_CONFLICT": (
+                "This request ID was already used for a different message. "
+                "Submit the new message with a new request ID."
+            ),
+        }
+        if (
+            error.status_code == 409
+            and isinstance(error.detail, str)
+            and error.detail in conversation_conflicts
+        ):
+            return _safe_error(
+                409,
+                error.detail,
+                conversation_conflicts[error.detail],
+                request_id=_request_id(request),
+                phase="submission",
+                category="conflict",
+                retryable=error.detail == "CONVERSATION_BUSY",
+            )
         messages = {
             401: "Authentication is required.",
             403: "You do not have permission to run this analysis.",

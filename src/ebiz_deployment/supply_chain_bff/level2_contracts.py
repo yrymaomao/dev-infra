@@ -17,6 +17,8 @@ _SKU = re.compile(r"^[^,\s]{1,128}$")
 
 def _canonical_sku(value: str) -> str:
     normalized = value.strip()
+    if len(normalized) > 128:
+        raise ValueError("SKU length must not exceed 128 characters")
     if _SKU.fullmatch(normalized) is None:
         raise ValueError("SKU must be non-empty and contain no comma or whitespace")
     return normalized
@@ -60,6 +62,11 @@ class InventorySelector(StrictModel):
     quantity_metric: Literal["AVAILABLE_QUANTITY"] = "AVAILABLE_QUANTITY"
     operator: Literal["GT"] = "GT"
     threshold: int = Field(default=20, ge=0)
+
+
+class OpenClawTurnRequest(StrictModel):
+    prompt: str = Field(min_length=1, max_length=8192)
+    client_request_id: UUID = Field(strict=False)
 
 
 class SelectionPreviewRequest(StrictModel):

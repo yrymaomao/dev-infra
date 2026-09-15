@@ -23,6 +23,12 @@ from pydantic import (
 _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
+CRM_READ_TOOL_BY_OPERATION = {
+    "crm.get_account_capabilities": "query_crm_account_capabilities_v1",
+    "crm.get_case": "query_crm_case_v1",
+    "crm.get_case_context": "query_crm_case_context_v1",
+    "crm.get_case_evidence": "query_crm_case_evidence_v1",
+}
 _READ_TOOLS = (
     "query_inventory_batch_snapshot_v1",
     "query_inventory_skus_by_threshold_v1",
@@ -35,6 +41,13 @@ _READ_TOOLS = (
     "query_sku_upc_mapping",
 )
 _EXPECTED_PROVIDERS: dict[str, dict[str, object]] = {
+    "yeaher.crm": {
+        "package_name": "ebiz-adapter-crm",
+        "package_version": "0.1.0",
+        "entry_point_value": "ebiz_adapter_crm:CrmProviderFactory",
+        "api_version": "v1",
+        "enabled_operations": tuple(CRM_READ_TOOL_BY_OPERATION),
+    },
     "mcp.streamable_http": {
         "package_name": "ebiz-adapter-mcp",
         "package_version": "0.1.0",
@@ -111,7 +124,10 @@ class CredentialBrokerConfig(StrictModel):
     @classmethod
     def validate_provider_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         expected = ("mcp.streamable_http", "yeaher.erp")
-        if tuple(sorted(value)) != expected:
+        if tuple(sorted(value)) not in (
+            expected,
+            ("mcp.streamable_http", "yeaher.crm", "yeaher.erp"),
+        ):
             raise ValueError("allowed_provider_ids must contain only the request-auth providers")
         return tuple(sorted(value))
 
@@ -275,7 +291,7 @@ class StreamingBffReleaseConfig(StrictModel):
 
 class SupplyChainReleaseConfig(StrictModel):
     agent_id: str = Field(pattern=r"^inventory-supply-chain$")
-    agent_version: int = Field(ge=7, le=7)
+    agent_version: int = Field(ge=8, le=8)
     agent_distribution: str = Field(pattern=r"^ebiz-agent-inventory-supply-chain$")
     agent_distribution_version: str = Field(pattern=r"^4\.1\.0$")
     agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -307,7 +323,7 @@ class SupplyChainReleaseConfig(StrictModel):
                 distribution,
                 distribution_version,
             ):
-                raise ValueError("capability set identity differs from the reviewed v7 release")
+                raise ValueError("capability set identity differs from the reviewed v8 release")
         return tuple(sorted(value, key=lambda item: item.set_id))
 
     @field_validator("provider_versions")
@@ -318,13 +334,13 @@ class SupplyChainReleaseConfig(StrictModel):
             "deployment.supply-chain-on-demand-context",
             *_EXPECTED_PLANNING_PROVIDERS,
         }:
-            raise ValueError("provider_versions must contain the exact v7 provider pins")
+            raise ValueError("provider_versions must contain the exact v8 provider pins")
         if (
             value["yeaher.erp"] != "0.2.0"
             or any(value[provider] != "3.0.0" for provider in _EXPECTED_PLANNING_PROVIDERS)
             or value["deployment.supply-chain-on-demand-context"] != "0.1.4"
         ):
-            raise ValueError("provider_versions differ from the reviewed v7 wheels")
+            raise ValueError("provider_versions differ from the reviewed v8 wheels")
         return dict(sorted(value.items()))
 
 
@@ -333,7 +349,7 @@ class DeploymentCompositionConfig(StrictModel):
     runtime: RuntimeConfig
     secrets: SecretEnvironmentConfig
     credential_broker: CredentialBrokerConfig
-    base_ai_providers: tuple[ProviderDeploymentConfig, ...] = Field(min_length=3, max_length=3)
+    base_ai_providers: tuple[ProviderDeploymentConfig, ...] = Field(min_length=3, max_length=4)
     supply_chain_release: SupplyChainReleaseConfig
     runtime_plugin_policy: PluginHostPolicy | None = Field(default=None, exclude=True)
 
@@ -342,12 +358,31 @@ class DeploymentCompositionConfig(StrictModel):
     def validate_provider_set(
         cls, value: tuple[ProviderDeploymentConfig, ...]
     ) -> tuple[ProviderDeploymentConfig, ...]:
-        if {item.provider_id for item in value} != set(_EXPECTED_PROVIDERS):
-            raise ValueError("base_ai_providers must contain the exact three production providers")
+        ids = {item.provider_id for item in value}
+        if len(ids) != len(value) or ids not in (
+            set(_EXPECTED_PROVIDERS),
+            set(_EXPECTED_PROVIDERS) - {"yeaher.crm"},
+        ):
+            raise ValueError(
+                "base_ai_providers must contain Supply Chain and optional read-only CRM"
+            )
         return tuple(sorted(value, key=lambda item: item.provider_id))
 
     @model_validator(mode="after")
     def validate_secret_slots(self) -> DeploymentCompositionConfig:
+        ids = {provider.provider_id for provider in self.base_ai_providers}
+        if set(self.credential_broker.allowed_provider_ids) != ids - {"openai.responses"}:
+            raise ValueError("credential broker must match the enabled request-auth providers")
+        mcp = next(
+            provider
+            for provider in self.base_ai_providers
+            if provider.provider_id == "mcp.streamable_http"
+        )
+        expected_tools = set(_READ_TOOLS)
+        if "yeaher.crm" in ids:
+            expected_tools.update(CRM_READ_TOOL_BY_OPERATION.values())
+        if set(mcp.config["allowed_tools"]) != expected_tools:
+            raise ValueError("MCP tools must exactly match enabled read-only providers")
         configured = set(self.secrets.allowed_env)
         required = {self.credential_broker.auth_secret_name}
         for provider in self.base_ai_providers:
@@ -383,7 +418,13 @@ def load_deployment_config(
         environ.get("APP_ENV", "").strip() == "local_dev"
         and environ.get("LOCAL_DEV_E2E", "").strip().lower() == "true"
     )
-    _validate_supply_chain_policy(policy, allow_local_fixture=allow_local_fixture)
+    _validate_supply_chain_policy(
+        policy,
+        allow_local_fixture=allow_local_fixture,
+        crm_enabled=any(
+            provider.provider_id == "yeaher.crm" for provider in config.base_ai_providers
+        ),
+    )
     return config.model_copy(update={"runtime_plugin_policy": policy})
 
 
@@ -412,10 +453,12 @@ def _expand_environment(value: object, environ: Mapping[str, str]) -> object:
 
 
 def _validate_supply_chain_policy(
-    policy: PluginHostPolicy, *, allow_local_fixture: bool = False
+    policy: PluginHostPolicy, *, allow_local_fixture: bool = False, crm_enabled: bool = False
 ) -> None:
     by_id = {item.plugin_id: item for item in policy.plugins}
     expected_ids = {"supply-chain-planning"}
+    if crm_enabled:
+        expected_ids.update({"ebizhub.crm-agent", "ebizhub.crm-advisor"})
     if allow_local_fixture:
         expected_ids.add("deployment.fixture.governed-artifact")
     if len(by_id) != len(policy.plugins) or set(by_id) != expected_ids:
@@ -445,6 +488,26 @@ def _validate_supply_chain_policy(
             or fixture.config
         ):
             raise ValueError("Runtime local fixture policy is not the exact deterministic pin")
+    if crm_enabled:
+        for plugin_id, entry_point in (
+            ("ebizhub.crm-agent", "crm_agent.plugin:factory"),
+            ("ebizhub.crm-advisor", "crm_advisor.plugin:factory"),
+        ):
+            crm = by_id[plugin_id]
+            if (
+                crm.version != "2.0.0"
+                or crm.package_name != "ebiz-agent-crm"
+                or crm.entry_point != entry_point
+                or crm.permissions != frozenset({"crm.compute", "crm.preview"})
+                or crm.network_targets
+                or crm.secret_names
+                or set(crm.config) != {"policy_version"}
+                or not isinstance(crm.config["policy_version"], str)
+                or not 0 < len(crm.config["policy_version"]) <= 64
+            ):
+                raise ValueError("CRM plugins must be exact network-free advisory pins")
+        if by_id["ebizhub.crm-agent"].config != by_id["ebizhub.crm-advisor"].config:
+            raise ValueError("CRM plugins must use the same policy version")
 
 
 def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
@@ -453,11 +516,22 @@ def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
         if set(config) != {"server_name", "url", "allowed_tools", "auth_profile", "network"}:
             raise ValueError("MCP config fields are incomplete or unknown")
         allowed_tools = config.get("allowed_tools")
-        if not isinstance(allowed_tools, list) or tuple(allowed_tools) != _READ_TOOLS:
-            raise ValueError("allowed_tools must be the exact Supply Chain v6 read tools")
+        if not isinstance(allowed_tools, list) or tuple(allowed_tools) not in (
+            _READ_TOOLS,
+            tuple(sorted((*_READ_TOOLS, *CRM_READ_TOOL_BY_OPERATION.values()))),
+        ):
+            raise ValueError("allowed_tools must be exact Supply Chain and optional CRM read tools")
         if config.get("auth_profile") != "X_MCP_KEY":
             raise ValueError("MCP auth_profile must be X_MCP_KEY")
         _validate_endpoint_host(config.get("url"), provider.egress_hosts, "MCP")
+        return
+    if provider.provider_id == "yeaher.crm":
+        if (
+            config != {"mcp": {"tools": CRM_READ_TOOL_BY_OPERATION}}
+            or provider.egress_hosts
+            or provider.secret_names
+        ):
+            raise ValueError("CRM MCP bindings must be the fixed four advisor reads")
         return
     if provider.provider_id == "yeaher.erp":
         if set(config) != {"mcp"}:

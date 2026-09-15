@@ -1,0 +1,39 @@
+{
+  "description": "Reviewed additions to existing deployment; merge, do not replace existing Supply Chain pins.",
+  "provider": {
+    "provider_id": "yeaher.crm",
+    "package_name": "ebiz-adapter-crm",
+    "package_version": "0.1.0",
+    "record_digest": "${CRM_ADAPTER_RECORD_DIGEST}",
+    "entry_point_group": "base_ai.provider_factories",
+    "entry_point_value": "ebiz_adapter_crm:CrmProviderFactory",
+    "api_version": "v1",
+    "enabled_operations": ["crm.get_account_capabilities", "crm.get_case", "crm.get_case_context", "crm.get_case_evidence"],
+    "egress_hosts": [],
+    "secret_names": [],
+    "config": {"mcp": {"tools": {
+      "crm.get_account_capabilities": "query_crm_account_capabilities_v1",
+      "crm.get_case": "query_crm_case_v1",
+      "crm.get_case_context": "query_crm_case_context_v1",
+      "crm.get_case_evidence": "query_crm_case_evidence_v1"
+    }}}
+  },
+  "runtime_plugins": [
+    {
+      "plugin_id": "ebizhub.crm-agent", "version": "2.0.0",
+      "package_name": "ebiz-agent-crm", "entry_point": "crm_agent.plugin:factory",
+      "package_digest": "${CRM_AGENT_RECORD_DIGEST}",
+      "permissions": ["crm.compute", "crm.preview"], "network_targets": [], "secret_names": [],
+      "config": {"policy_version": "${CRM_POLICY_VERSION}"}
+    },
+    {
+      "plugin_id": "ebizhub.crm-advisor", "version": "2.0.0",
+      "package_name": "ebiz-agent-crm", "entry_point": "crm_advisor.plugin:factory",
+      "package_digest": "${CRM_AGENT_RECORD_DIGEST}",
+      "permissions": ["crm.compute", "crm.preview"], "network_targets": [], "secret_names": [],
+      "config": {"policy_version": "${CRM_POLICY_VERSION}"}
+    }
+  ],
+  "credential_broker_allowed_provider_ids": ["mcp.streamable_http", "yeaher.crm", "yeaher.erp"],
+  "additional_mcp_allowed_tools": ["query_crm_account_capabilities_v1", "query_crm_case_context_v1", "query_crm_case_evidence_v1", "query_crm_case_v1"]
+}

@@ -316,7 +316,7 @@ def _streaming_bff_release() -> dict[str, Any]:
 def _release(digests: dict[str, str]) -> dict[str, Any]:
     return {
         "agent_id": "inventory-supply-chain",
-        "agent_version": 7,
+        "agent_version": 8,
         "agent_distribution": "ebiz-agent-inventory-supply-chain",
         "agent_distribution_version": "4.1.0",
         "agent_record_digest": digests["SUPPLY_CHAIN_AGENT_RECORD_DIGEST"],
@@ -651,12 +651,12 @@ def _installed_digests() -> dict[str, str]:
     digests["SUPPLY_CHAIN_WORKFLOW_DIGEST"] = hashlib.sha256(workflow.read_bytes()).hexdigest()
     package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent")))
     graph = RegistryImportArtifactGraph.model_validate_json(
-        package_root.joinpath("generated-v7/registry-import-artifact-graph.json").read_text(
+        package_root.joinpath("generated-v8/registry-import-artifact-graph.json").read_text(
             encoding="utf-8"
         )
     )
     plan = RegistryImportPublicationPlan.model_validate_json(
-        package_root.joinpath("generated-v7/registry-import-publication-plan.json").read_text(
+        package_root.joinpath("generated-v8/registry-import-publication-plan.json").read_text(
             encoding="utf-8"
         )
     )

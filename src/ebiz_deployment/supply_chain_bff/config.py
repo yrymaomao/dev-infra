@@ -46,7 +46,10 @@ class BffSettings:
     level2_mq_enabled: bool = False
     autonomous_schedule_dispatch_enabled: bool = True
     openclaw_enabled: bool = False
+    openclaw_reception_enabled: bool = False
     openclaw_connector_credential: str | None = field(default=None, repr=False)
+    openclaw_ingress_url: str = "http://127.0.0.1:18789/ebiz/tool-gateway/ingress"
+    openclaw_ingress_credential: str | None = field(default=None, repr=False)
     tool_gateway_jwt_key: str | None = field(default=None, repr=False)
     tool_gateway_issuer: str = "ebizhub-supply-chain-bff"
     tool_gateway_audience: str = "ebizhub-tool-gateway"
@@ -55,6 +58,7 @@ class BffSettings:
     openclaw_principal_id: str = "openclaw-supply-chain"
     openclaw_agent_id: str = "main"
     openclaw_offer_id: str = "supply-chain-on-demand"
+    crm_openclaw_enabled: bool = False
     max_selected_skus: int = 10_000
     bulk_batch_size: int = 200
     tenant_bulk_concurrency: int = 2
@@ -114,6 +118,24 @@ class BffSettings:
             os.environ.get("BFF_OPENCLAW_CONNECTOR_CREDENTIAL", "").strip() or None
         )
         tool_gateway_jwt_key = os.environ.get("TOOL_GATEWAY_JWT_KEY", "").strip() or None
+        openclaw_ingress_url = os.environ.get(
+            "BFF_OPENCLAW_INGRESS_URL",
+            "http://127.0.0.1:18789/ebiz/tool-gateway/ingress",
+        ).strip()
+        ingress_url = urlsplit(openclaw_ingress_url)
+        if (
+            ingress_url.scheme != "http"
+            or ingress_url.hostname not in {"127.0.0.1", "localhost"}
+            or ingress_url.username is not None
+            or ingress_url.password is not None
+            or ingress_url.query
+            or ingress_url.fragment
+            or ingress_url.path != "/ebiz/tool-gateway/ingress"
+        ):
+            raise ValueError("BFF_OPENCLAW_INGRESS_URL must be the loopback ingress path")
+        openclaw_ingress_credential = (
+            os.environ.get("BFF_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
+        )
         if openclaw_enabled and (
             openclaw_connector_credential is None
             or len(openclaw_connector_credential) < 32
@@ -157,14 +179,18 @@ class BffSettings:
             ),
             openclaw_enabled=openclaw_enabled,
             openclaw_connector_credential=openclaw_connector_credential,
+            openclaw_ingress_url=openclaw_ingress_url,
+            openclaw_ingress_credential=openclaw_ingress_credential,
             tool_gateway_jwt_key=tool_gateway_jwt_key,
             tool_gateway_issuer=_bounded("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
             tool_gateway_audience=_bounded("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
             openclaw_selector=_bounded("BFF_OPENCLAW_SELECTOR", "supply-chain-dev"),
             openclaw_tenant_id=_bounded("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
             openclaw_principal_id=_bounded("BFF_OPENCLAW_PRINCIPAL_ID", "openclaw-supply-chain"),
+            openclaw_reception_enabled=os.environ.get("BFF_OPENCLAW_RECEPTION_ENABLED", "false").lower() == "true",
             openclaw_agent_id=_openclaw_agent_id("BFF_OPENCLAW_AGENT_ID", "main"),
             openclaw_offer_id=_bounded("BFF_OPENCLAW_OFFER_ID", "supply-chain-on-demand"),
+            crm_openclaw_enabled=_boolean("BFF_CRM_OPENCLAW_ENABLED", False),
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
             tenant_bulk_concurrency=_integer(

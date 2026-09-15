@@ -1566,6 +1566,10 @@ class Level2Repository:
             batch.completed_at = now
             if runtime_status == "FAILED":
                 batch.safe_error = _safe_runtime_error(snapshot.get("error"))
+            elif runtime_status == "SUCCEEDED":
+                # The validated result supersedes any earlier dispatch retry.
+                # Per-item business issues and technical failures stay in the artifact.
+                batch.safe_error = None
             if result_risks:
                 report = await session.scalar(
                     select(ReportRun)
@@ -2379,8 +2383,10 @@ class Level2Repository:
         principal_id: str,
         agent_id: str,
         now: datetime,
+        model_session_id: str | None = None,
+        turn_id: UUID | None = None,
     ) -> dict[str, str]:
-        session_id = str(uuid5(NAMESPACE_URL, f"ebizhub:openclaw:session:{tenant_id}:{run_id}"))
+        session_id = model_session_id or str(uuid5(NAMESPACE_URL, f"ebizhub:openclaw:session:{tenant_id}:{run_id}"))
         session_digest = hashlib.sha256(
             f"{tenant_id}\x1f{principal_id}\x1f{run_id}".encode()
         ).hexdigest()
@@ -2395,6 +2401,7 @@ class Level2Repository:
             if binding is None:
                 binding = OpenClawRunBinding(
                     run_id=run_id,
+                    turn_id=turn_id,
                     tenant_id=tenant_id,
                     principal_id=principal_id,
                     session_id=session_id,

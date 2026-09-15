@@ -35,7 +35,7 @@ from ebiz_deployment.release import (
     write_base_ai_provider_attestation,
 )
 
-AGENTS = Path("C:/ebizhub/.local/worktrees/openclaw-scv2-agent")
+AGENTS = Path("C:/ebizhub/workspace/ebiz-agents")
 CONTRACT_ROOTS = {
     "inventory.core": AGENTS / "capabilities/inventory/contracts/v4",
     "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts/v4",
@@ -46,6 +46,7 @@ AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
 WORKFLOW_CHECKSUM = "a" * 64
 EXPECTED_PUBLIC_CAPABILITY_PINS = {
     ("inventory.get_batch_snapshot", 1),
+    ("inventory.get_batch_snapshot", 2),
     ("inventory.list_skus_by_threshold", 1),
     ("catalog.resolve_sku_identity_batch", 1),
     ("inventory.get_fba_snapshot", 1),
@@ -88,7 +89,7 @@ def _release_payloads(release: object) -> tuple[dict[str, object], dict[str, obj
     agent = {
         "code": "inventory-supply-chain",
         "name": "Supply Chain Expert",
-        "version": 7,
+        "version": 8,
         "manifest": {
             "distribution": "ebiz-agent-inventory-supply-chain",
             "distribution_version": "4.1.0",
@@ -211,7 +212,7 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     payload = build_agent_draft_payload(config.supply_chain_release, publications)
     AgentDraftRequest.model_validate(payload)
     assert payload["code"] == "inventory-supply-chain"
-    assert payload["version"] == 7
+    assert payload["version"] == 8
     assert payload["workflow_pins"] == [
         {"code": "inventory-supply-chain-batch-weekly", "version": 6}
     ]
@@ -224,13 +225,13 @@ def test_runtime_publisher_loads_three_public_catalogs_and_exact_capability_pins
     )
 
 
-def test_registry_import_publisher_binds_all_v7_workflows_and_generated_digests(
+def test_registry_import_publisher_binds_all_v8_workflows_and_generated_digests(
     tmp_path: Path,
 ) -> None:
     release = release_config(tmp_path).supply_chain_release
     distribution = metadata.distribution("ebiz-agent-inventory-supply-chain")
     package_root = Path(str(distribution.locate_file("inventory_supply_chain_agent")))
-    generated = package_root / "generated-v7"
+    generated = package_root / "generated-v8"
     graph = RegistryImportArtifactGraph.model_validate_json(
         (generated / "registry-import-artifact-graph.json").read_text(encoding="utf-8")
     )
@@ -261,13 +262,13 @@ def test_registry_import_publisher_binds_all_v7_workflows_and_generated_digests(
         "publish",
         "--compilation",
     )
-    assert command[6:8] == ("--out", "generated-v7")
+    assert command[6:8] == ("--out", "generated-v8")
     assert {(item.code, item.version) for item in plan.workflows} == {
         ("inventory-selection-discovery", 6),
         ("inventory-selection-discovery-continuation", 6),
         ("inventory-selection-request-planner", 6),
         ("inventory-supply-chain-batch-weekly", 6),
-        ("inventory-supply-chain-on-demand", 1),
+        ("inventory-supply-chain-on-demand", 2),
     }
 
 
