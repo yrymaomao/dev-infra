@@ -215,6 +215,16 @@ workflow from the installed CRM wheel, failing unless the checksum equals the
 reviewed digest. Both profiles share the `supply_chain_bff` schema and one
 Alembic chain (head `0009_conversation_profile_index`).
 
+Phase 2 adds the workbench operation routes behind
+`BFF_CRM_WORKBENCH_OPERATIONS_ENABLED` (`GET`/`POST
+/api/crm/v2/openclaw/operations/{operationId}[/approval/decision]`,
+`ebiz_deployment.crm_reception.operation_api`): the Runtime's wire v2
+operation status forwarded unchanged plus the whitelisted case, evidence,
+approval and effect facts, and the approval decision forwarded to the Runtime
+as the CRM session's human actor; see "Workbench operation routes" in
+`docs/crm-profile.md` for the sourcing choice and the Runtime routes P2-E
+still owes.
+
 See `docs/crm-profile.md` for the chain, the `BFF_CRM_*` / `CRM_*` variables,
 the enablement order and the note that CRM call segments answer 401 until the
 crm-service JWT change and `session-principal` route are deployed. Start from
