@@ -8,7 +8,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from agent_runtime.payloads.memory import MemoryPayloadStore
-from reception_fixtures import supply_chain
+from crm_fixtures import advised_result
+from reception_fixtures import PROFILE_BUILDERS, PROFILE_IDS
 from sqlalchemy import delete, select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -167,7 +168,8 @@ async def test_report_projection_validates_v2_and_preserves_business_and_technic
 
 
 @pytest.mark.asyncio
-async def test_durable_idempotency_projection_recovery_and_isolation():
+@pytest.mark.parametrize("profile_id", PROFILE_IDS)
+async def test_durable_idempotency_projection_recovery_and_isolation(profile_id):
     url = os.environ.get("SUPPLY_CHAIN_BFF_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Dedicated PostgreSQL test URL not configured")
@@ -191,8 +193,12 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
             .values(state="interrupted")
         )
     store = MemoryPayloadStore(redacted_fields=frozenset(), inline_classifications=frozenset())
-    profile = supply_chain()
+    profile = PROFILE_BUILDERS[profile_id]()
+    other_profile = next(
+        builder() for name, builder in PROFILE_BUILDERS.items() if name != profile_id
+    )
     repository = ConversationRepository(factory, payload_store=store, profile=profile)
+    foreign = ConversationRepository(factory, payload_store=store, profile=other_profile)
     tenant = "test-" + uuid4().hex
     cid = UUID((await repository.create_conversation(tenant, "alice"))["conversation_id"])
     request = str(uuid4())
@@ -208,6 +214,12 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
         for other_tenant, other_user in [(tenant, "bob"), ("other", "alice")]:
             with pytest.raises(LookupError):
                 await repository.snapshot(tid, other_tenant, other_user)
+        # Another profile sharing the tables sees neither the conversation nor the turn.
+        with pytest.raises(LookupError):
+            await foreign.snapshot(tid, tenant, "alice")
+        with pytest.raises(LookupError):
+            await foreign.credential_context(f"turn:{tid}", str(tid))
+        assert await foreign.claim("foreign-worker") is None
         claimed = await repository.claim("worker")
         assert claimed["id"] == tid
         context = await repository.credential_context(f"turn:{tid}", str(tid))
@@ -218,6 +230,26 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
             ).read_text(encoding="utf-8")
         )
         operation_id = "operation-g12"
+        result = (
+            advised_result(tenant=tenant)
+            if profile_id == "crm"
+            else {
+                "tenant_id": tenant,
+                "status": "COMPLETE",
+                "scope": {},
+                "issues": [],
+                "evidence": [],
+                "payload": {
+                    "result_artifact": artifact,
+                    "item_count": 3,
+                    "complete_count": 1,
+                    "blocked_count": 1,
+                    "failed_count": 1,
+                    "summary_artifact_ref": None,
+                    "risk_flags": [],
+                },
+            }
+        )
         events = [
             {"sequence": 1, "kind": "turn.accepted", "payload": {"run_id": str(tid)}},
             {"sequence": 2, "kind": "assistant.text.delta", "payload": {"text": "Hel"}},
@@ -229,22 +261,7 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
                     "operation_id": operation_id,
                     "state": "completed",
                     "execution_id": "execution-g12",
-                    "result": {
-                        "tenant_id": tenant,
-                        "status": "COMPLETE",
-                        "scope": {},
-                        "issues": [],
-                        "evidence": [],
-                        "payload": {
-                            "result_artifact": artifact,
-                            "item_count": 3,
-                            "complete_count": 1,
-                            "blocked_count": 1,
-                            "failed_count": 1,
-                            "summary_artifact_ref": None,
-                            "risk_flags": [],
-                        },
-                    },
+                    "result": result,
                 },
             },
             {
@@ -261,9 +278,14 @@ async def test_durable_idempotency_projection_recovery_and_isolation():
         assert snapshot["state"] == "completed"
         assert snapshot["operations"][0]["operation_id"] == operation_id
         assert snapshot["analyses"][0]["operation_id"] == operation_id
-        assert snapshot["analyses"][0]["report_run_id"] == artifact["report_run_id"]
-        assert snapshot["analyses"][0]["batch_id"] == artifact["batch_id"]
-        assert snapshot["analyses"][0]["item_offset"] == artifact["item_offset"]
+        if profile_id == "crm":
+            assert snapshot["analyses"][0]["outcome"] == "ADVISED"
+            assert snapshot["analyses"][0]["advice"]["draft"]["body"].startswith("Hello")
+            assert "content_ref" not in json.dumps(snapshot["analyses"])
+        else:
+            assert snapshot["analyses"][0]["report_run_id"] == artifact["report_run_id"]
+            assert snapshot["analyses"][0]["batch_id"] == artifact["batch_id"]
+            assert snapshot["analyses"][0]["item_offset"] == artifact["item_offset"]
         assert len(await restarted.events(tid, tenant, "alice", 4)) == 2
         next_id = await restarted.submit(cid, tenant, "alice", str(uuid4()), "Explain more")
         next_context = await restarted.credential_context(f"turn:{next_id}", str(next_id))

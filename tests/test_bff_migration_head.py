@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import get_args
 
+import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
@@ -43,3 +44,46 @@ def test_profile_index_migration_is_expand_only_with_a_real_downgrade() -> None:
     assert 'down_revision = "0008_conversation_reception"' in source
     assert "create_index" in source and "drop_index" in source
     assert "drop_table" not in source and "drop_column" not in source
+
+
+def test_profile_index_migration_round_trips_on_postgresql() -> None:
+    import asyncio
+    import os
+
+    from alembic import command
+    from sqlalchemy import inspect
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    url = os.environ.get("SUPPLY_CHAIN_BFF_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Dedicated PostgreSQL test URL not configured")
+    assert str(make_url(url).database).endswith("_test")
+    config = Config(str(ROOT / "bff-alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "bff_migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+
+    def index_names() -> set[str]:
+        async def read() -> set[str]:
+            engine = create_async_engine(url)
+            try:
+                async with engine.connect() as connection:
+                    return await connection.run_sync(
+                        lambda sync: {
+                            index["name"]
+                            for index in inspect(sync).get_indexes(
+                                "openclaw_conversation", schema="supply_chain_bff"
+                            )
+                        }
+                    )
+            finally:
+                await engine.dispose()
+
+        return asyncio.run(read())
+
+    command.upgrade(config, "head")
+    assert "ix_openclaw_conversation_profile_tenant" in index_names()
+    command.downgrade(config, "0008_conversation_reception")
+    assert "ix_openclaw_conversation_profile_tenant" not in index_names()
+    command.upgrade(config, "head")
+    assert "ix_openclaw_conversation_profile_tenant" in index_names()

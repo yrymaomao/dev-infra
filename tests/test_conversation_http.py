@@ -8,7 +8,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Header
 from jsonschema import Draft202012Validator
-from reception_fixtures import owner_for, supply_chain
+from reception_fixtures import PROFILE_BUILDERS, PROFILE_IDS, owner_for, supply_chain
 
 from ebiz_deployment.openclaw_reception.conversation_api import conversation_router
 from ebiz_deployment.openclaw_reception.conversation_repository import (
@@ -76,7 +76,8 @@ async def test_conversation_conflicts_survive_application_error_handler(
 
 
 @pytest.mark.asyncio
-async def test_async_contract_sse_and_identity_cursor_boundaries():
+@pytest.mark.parametrize("profile_id", PROFILE_IDS)
+async def test_async_contract_sse_and_identity_cursor_boundaries(profile_id):
     cid, tid = uuid4(), uuid4()
     report_id, batch_id = uuid4(), uuid4()
     now = [datetime(2026, 9, 12, tzinfo=UTC)]
@@ -140,9 +141,9 @@ async def test_async_contract_sse_and_identity_cursor_boundaries():
 
     app = FastAPI()
     signer = CursorSigner(b"x" * 32, ttl=timedelta(seconds=60), clock=lambda: now[0])
-    profile = supply_chain()
+    profile = PROFILE_BUILDERS[profile_id]()
     app.include_router(conversation_router(repo, profile, signer, authenticate, owner_for(profile)))
-    base = "/api/supply-chain/v2/openclaw"
+    base = profile.api_prefix
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -162,7 +163,12 @@ async def test_async_contract_sse_and_identity_cursor_boundaries():
         for headers in [{"x_user": "bob"}, {"x_tenant": "tenant-b"}]:
             # HTTP header spelling follows FastAPI's underscore-to-hyphen rule.
             headers = {k.replace("_", "-"): v for k, v in headers.items()}
-            assert (await client.get(f"{base}/turns/{tid}", headers=headers)).status_code == 403
+            # Supply Chain pins tenant and principal; CRM pins the tenant and lets the
+            # verified JWT name the principal (the repository fences it, the fake here
+            # does not), so only the foreign tenant is refused at the route.
+            expected = 200 if profile_id == "crm" and "x-user" in headers else 403
+            response = await client.get(f"{base}/turns/{tid}", headers=headers)
+            assert response.status_code == expected
         restored = (await client.get(f"{base}/turns/{tid}")).json()
         assert restored["error"] is None
         assert restored["operations"][0]["operation_id"] == "operation-g12"

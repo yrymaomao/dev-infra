@@ -20,6 +20,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from ebiz_deployment.crm_reception.profile import PROFILE_VERSION as CRM_PROFILE_VERSION
+from ebiz_deployment.crm_reception.profile import crm_owner, crm_profile
+from ebiz_deployment.crm_reception.session_api import (
+    CrmSessionPrincipalClient,
+    SessionPrincipalClient,
+    WorkbenchTokenIssuer,
+    session_router,
+)
 from ebiz_deployment.openclaw_reception.connector_api import (
     RunTokenIssuer,
     StaticRunIdentity,
@@ -29,6 +37,7 @@ from ebiz_deployment.openclaw_reception.conversation_api import OwnerPolicy, con
 from ebiz_deployment.openclaw_reception.conversation_repository import ConversationRepository
 from ebiz_deployment.openclaw_reception.conversation_worker import ConversationWorker
 from ebiz_deployment.openclaw_reception.profile import ReceptionProfile
+from ebiz_deployment.openclaw_reception.run_binding import RunBindingRepository, RunBindings
 
 from .config import BffSettings
 from .contracts import (
@@ -90,6 +99,11 @@ class BffContainer:
     # absent, the Level 2 repository's own backing is reused, as before.
     session_factory: Any | None = None
     payload_store: Any | None = None
+    # Injectable crm-service session-principal client (tests use a fake).
+    crm_session_client: SessionPrincipalClient | None = None
+    # Injectable run-binding repository for the CRM profile (default: the shared
+    # openclaw_run_binding table through the reception session factory).
+    run_bindings: RunBindings | None = None
 
 
 @dataclass(slots=True)
@@ -105,8 +119,11 @@ class MountedReception:
 def _reception_backing(container: BffContainer) -> tuple[Any, Any] | None:
     if container.session_factory is not None and container.payload_store is not None:
         return container.session_factory, container.payload_store
-    if container.level2_repository is not None:
-        return container.level2_repository._factory, container.level2_repository._payload_store
+    level2 = container.level2_repository
+    factory = getattr(level2, "_factory", None)
+    payload_store = getattr(level2, "_payload_store", None)
+    if factory is not None and payload_store is not None:
+        return factory, payload_store
     return None
 
 
@@ -115,7 +132,7 @@ def mount_receptions(container: BffContainer) -> list[MountedReception]:
 
     settings = container.settings
     receptions: list[MountedReception] = []
-    if not settings.openclaw_reception_enabled:
+    if not (settings.openclaw_reception_enabled or settings.crm_openclaw_enabled):
         return receptions
     backing = _reception_backing(container)
     if backing is None:
@@ -137,7 +154,73 @@ def mount_receptions(container: BffContainer) -> list[MountedReception]:
                 owner_policy=supply_chain_owner(settings),
             )
         )
+    if settings.crm_openclaw_enabled:
+        profile = crm_profile(settings)
+        repository = ConversationRepository(factory, payload_store=payload_store, profile=profile)
+        receptions.append(
+            MountedReception(
+                profile=profile,
+                repository=repository,
+                worker=ConversationWorker(
+                    repository,
+                    ingress_url=settings.crm_openclaw_ingress_url,
+                    ingress_credential=settings.crm_openclaw_ingress_credential,
+                    transport=container.openclaw_http_transport,
+                ),
+                owner_policy=crm_owner(settings),
+            )
+        )
     return receptions
+
+
+def _mount_crm(
+    app: FastAPI,
+    container: BffContainer,
+    receptions: list[MountedReception],
+    connector: Any,
+    tokens: RunTokenIssuer | None,
+) -> None:
+    """CRM connector routes and the workbench session exchange (D-1)."""
+
+    settings = container.settings
+    profile = crm_profile(settings)
+    conversations = next(
+        (r.repository for r in receptions if r.profile.profile_version == CRM_PROFILE_VERSION),
+        None,
+    )
+    backing = _reception_backing(container)
+
+    def bindings() -> RunBindings:
+        if container.run_bindings is not None:
+            return container.run_bindings
+        if backing is None:
+            raise HTTPException(status_code=503, detail="CRM reception is unavailable")
+        return RunBindingRepository(backing[0])
+
+    app.include_router(
+        connector_router(
+            profile=profile,
+            bindings=bindings,
+            conversations=conversations,
+            connector=connector,
+            tokens=tokens,
+            static_identity=None,
+        )
+    )
+    client = container.crm_session_client
+    if client is None:
+        if settings.crm_service_url is None:
+            raise ValueError("CRM reception requires BFF_CRM_SERVICE_URL or an injected client")
+        client = CrmSessionPrincipalClient(settings.crm_service_url)
+    app.include_router(
+        session_router(
+            profile=profile,
+            enabled=True,
+            tenant_id=settings.crm_openclaw_tenant_id,
+            client=client,
+            tokens=WorkbenchTokenIssuer(secret=settings.jwt_secret),
+        )
+    )
 
 
 def create_app(container: BffContainer) -> FastAPI:
@@ -314,6 +397,8 @@ def create_app(container: BffContainer) -> FastAPI:
             ),
         )
     )
+    if container.settings.crm_openclaw_enabled:
+        _mount_crm(app, container, receptions, openclaw_connector, tokens)
 
     @app.post("/api/supply-chain/v2/openclaw/turn")
     async def openclaw_turn(
