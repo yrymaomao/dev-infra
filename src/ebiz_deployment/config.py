@@ -23,6 +23,18 @@ from pydantic import (
 _ENV_REFERENCE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _ENTRY_POINT_GROUP = "base_ai.provider_factories"
+# The single CRM agent plugin. There is no second "advisor" plugin: the advise
+# workflow's four extra capabilities are served by the same ebizhub.crm-agent
+# factory (crm_agent.plugin:factory) and published as the crm-advise@1 Catalog set.
+CRM_PLUGIN_ID = "ebizhub.crm-agent"
+CRM_PLUGIN_ENTRY_POINT = "crm_agent.plugin:factory"
+CRM_AGENT_DISTRIBUTION = "ebiz-agent-crm"
+CRM_AGENT_DISTRIBUTION_VERSION = "2.0.0"
+CRM_ADVISE_WORKFLOW = "crm-case-advise-on-demand"
+CRM_ADVISE_WORKFLOW_VERSION = 1
+#: The two Catalog sets the advise graph binds: crm@2 (published with the agent
+#: contract) and crm-advise@1 (published beside the advise workflow).
+CRM_CAPABILITY_SETS = (("crm", 2), ("crm-advise", 1))
 CRM_READ_TOOL_BY_OPERATION = {
     "crm.get_account_capabilities": "query_crm_account_capabilities_v1",
     "crm.get_case": "query_crm_case_v1",
@@ -344,6 +356,45 @@ class SupplyChainReleaseConfig(StrictModel):
         return dict(sorted(value.items()))
 
 
+class CrmAdviseWorkflowPin(StrictModel):
+    code: str = Field(pattern=r"^crm-case-advise-on-demand$")
+    version: int = Field(ge=1, le=1)
+    #: The Registry publication checksum of the compiled IR4 (what
+    #: tools/publish_crm_advise.py prints and CRM_ADVISOR_WORKFLOW_DIGEST carries).
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class CrmReleaseConfig(StrictModel):
+    agent_id: str = Field(pattern=r"^crm$")
+    agent_distribution: str = Field(pattern=r"^ebiz-agent-crm$")
+    agent_distribution_version: str = Field(pattern=r"^2\.0\.0$")
+    agent_record_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    advise_workflow: CrmAdviseWorkflowPin
+    capability_sets: tuple[CapabilitySetPin, ...] = Field(min_length=2, max_length=2)
+
+    @field_validator("capability_sets")
+    @classmethod
+    def validate_capability_sets(
+        cls, value: tuple[CapabilitySetPin, ...]
+    ) -> tuple[CapabilitySetPin, ...]:
+        identities = tuple(sorted((item.set_id, item.version) for item in value))
+        if identities != tuple(sorted(CRM_CAPABILITY_SETS)):
+            raise ValueError("capability_sets must be exactly crm@2 and crm-advise@1")
+        for item in value:
+            if (item.distribution_name, item.distribution_version) != (
+                CRM_AGENT_DISTRIBUTION,
+                CRM_AGENT_DISTRIBUTION_VERSION,
+            ):
+                raise ValueError("CRM capability sets ship in the ebiz-agent-crm 2.0.0 wheel")
+        return tuple(sorted(value, key=lambda item: item.set_id))
+
+    @model_validator(mode="after")
+    def validate_one_wheel(self) -> CrmReleaseConfig:
+        if any(item.record_digest != self.agent_record_digest for item in self.capability_sets):
+            raise ValueError("CRM capability sets must carry the agent wheel RECORD digest")
+        return self
+
+
 class DeploymentCompositionConfig(StrictModel):
     schema_version: str = Field(pattern=r"^2$")
     runtime: RuntimeConfig
@@ -351,6 +402,7 @@ class DeploymentCompositionConfig(StrictModel):
     credential_broker: CredentialBrokerConfig
     base_ai_providers: tuple[ProviderDeploymentConfig, ...] = Field(min_length=3, max_length=4)
     supply_chain_release: SupplyChainReleaseConfig
+    crm_release: CrmReleaseConfig | None = None
     runtime_plugin_policy: PluginHostPolicy | None = Field(default=None, exclude=True)
 
     @field_validator("base_ai_providers")
@@ -371,6 +423,10 @@ class DeploymentCompositionConfig(StrictModel):
     @model_validator(mode="after")
     def validate_secret_slots(self) -> DeploymentCompositionConfig:
         ids = {provider.provider_id for provider in self.base_ai_providers}
+        if ("yeaher.crm" in ids) != (self.crm_release is not None):
+            raise ValueError(
+                "crm_release must be present exactly when the yeaher.crm provider is enabled"
+            )
         if set(self.credential_broker.allowed_provider_ids) != ids - {"openai.responses"}:
             raise ValueError("credential broker must match the enabled request-auth providers")
         mcp = next(
@@ -458,7 +514,7 @@ def _validate_supply_chain_policy(
     by_id = {item.plugin_id: item for item in policy.plugins}
     expected_ids = {"supply-chain-planning"}
     if crm_enabled:
-        expected_ids.update({"ebizhub.crm-agent", "ebizhub.crm-advisor"})
+        expected_ids.add(CRM_PLUGIN_ID)
     if allow_local_fixture:
         expected_ids.add("deployment.fixture.governed-artifact")
     if len(by_id) != len(policy.plugins) or set(by_id) != expected_ids:
@@ -489,25 +545,19 @@ def _validate_supply_chain_policy(
         ):
             raise ValueError("Runtime local fixture policy is not the exact deterministic pin")
     if crm_enabled:
-        for plugin_id, entry_point in (
-            ("ebizhub.crm-agent", "crm_agent.plugin:factory"),
-            ("ebizhub.crm-advisor", "crm_advisor.plugin:factory"),
+        crm = by_id[CRM_PLUGIN_ID]
+        if (
+            crm.version != CRM_AGENT_DISTRIBUTION_VERSION
+            or crm.package_name != CRM_AGENT_DISTRIBUTION
+            or crm.entry_point != CRM_PLUGIN_ENTRY_POINT
+            or crm.permissions != frozenset({"crm.compute", "crm.preview"})
+            or crm.network_targets
+            or crm.secret_names
+            or set(crm.config) != {"policy_version"}
+            or not isinstance(crm.config["policy_version"], str)
+            or not 0 < len(crm.config["policy_version"]) <= 64
         ):
-            crm = by_id[plugin_id]
-            if (
-                crm.version != "2.0.0"
-                or crm.package_name != "ebiz-agent-crm"
-                or crm.entry_point != entry_point
-                or crm.permissions != frozenset({"crm.compute", "crm.preview"})
-                or crm.network_targets
-                or crm.secret_names
-                or set(crm.config) != {"policy_version"}
-                or not isinstance(crm.config["policy_version"], str)
-                or not 0 < len(crm.config["policy_version"]) <= 64
-            ):
-                raise ValueError("CRM plugins must be exact network-free advisory pins")
-        if by_id["ebizhub.crm-agent"].config != by_id["ebizhub.crm-advisor"].config:
-            raise ValueError("CRM plugins must use the same policy version")
+            raise ValueError("CRM plugin must be the exact network-free ebizhub.crm-agent pin")
 
 
 def _validate_provider_config(provider: ProviderDeploymentConfig) -> None:
@@ -596,7 +646,17 @@ def _safe_validation_message(label: str, error: ValidationError) -> str:
 
 
 __all__ = [
+    "CRM_ADVISE_WORKFLOW",
+    "CRM_ADVISE_WORKFLOW_VERSION",
+    "CRM_AGENT_DISTRIBUTION",
+    "CRM_AGENT_DISTRIBUTION_VERSION",
+    "CRM_CAPABILITY_SETS",
+    "CRM_PLUGIN_ENTRY_POINT",
+    "CRM_PLUGIN_ID",
+    "CRM_READ_TOOL_BY_OPERATION",
     "CredentialBrokerConfig",
+    "CrmAdviseWorkflowPin",
+    "CrmReleaseConfig",
     "DeploymentCompositionConfig",
     "ProviderDeploymentConfig",
     "StreamingBffReleaseConfig",

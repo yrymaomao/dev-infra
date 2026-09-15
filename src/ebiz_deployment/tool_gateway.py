@@ -1,8 +1,17 @@
-"""One deployment-owned Gateway composition with independently scoped workflow offers."""
+"""One deployment-owned Gateway composition with independently scoped workflow offers.
+
+One Runtime process receives one composition with one catalog generation and
+one pin per business agent offer. Every offer carries its own authority profile
+(scopes and credential reference - never unioned) and names the BFF reception
+profile that answers the Gateway's current-policy question for it: the policy
+port routes each query by the agent prefix of the signed identity's
+``session_key`` to that profile's ``/internal/<agent>/v2/openclaw/authorize``.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -50,19 +59,65 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
 )
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+_SESSION_KEY_PREFIX = re.compile(r"^agent:[a-z0-9][a-z0-9._-]{0,63}:openclaw:$")
+_AUTHORIZE_PATH = re.compile(r"^/internal/[a-z0-9][a-z0-9-]*/v2/openclaw/authorize$")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayPolicyRoute:
+    """Which BFF reception profile answers for the run bindings of one agent instance."""
+
+    session_key_prefix: str
+    authorize_path: str
+
+    def __post_init__(self) -> None:
+        if _SESSION_KEY_PREFIX.fullmatch(self.session_key_prefix) is None:
+            raise ValueError("Tool Gateway policy route needs an agent session-key prefix")
+        if _AUTHORIZE_PATH.fullmatch(self.authorize_path) is None:
+            raise ValueError("Tool Gateway policy route needs a reception authorize path")
+
+
+SUPPLY_CHAIN_ROUTE = GatewayPolicyRoute(
+    session_key_prefix="agent:main:openclaw:",
+    authorize_path="/internal/supply-chain/v2/openclaw/authorize",
+)
+
 
 class BffToolGatewayPolicyPort:
     """Resolve current OpenClaw run authority from the BFF on every Gateway action."""
 
-    def __init__(self, *, client: httpx.AsyncClient, connector_credential: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        connector_credential: str,
+        routes: tuple[GatewayPolicyRoute, ...] = (SUPPLY_CHAIN_ROUTE,),
+    ) -> None:
         if len(connector_credential) < 32:
             raise ValueError("Gateway connector credential is invalid")
+        if not routes:
+            raise ValueError("Tool Gateway policy port requires at least one route")
+        prefixes = [route.session_key_prefix for route in routes]
+        if len(set(prefixes)) != len(prefixes):
+            raise ValueError("Tool Gateway policy routes must have unique session-key prefixes")
         self._client = client
         self._credential = connector_credential
+        self._routes = routes
+
+    def route_for(self, session_key: str) -> GatewayPolicyRoute:
+        for route in self._routes:
+            if session_key.startswith(route.session_key_prefix):
+                return route
+        if len(self._routes) == 1:
+            # A single-profile deployment keeps answering for every key; the one
+            # BFF profile still fences the prefix itself.
+            return self._routes[0]
+        raise ToolGatewayPolicyRejected()
 
     async def authorize(self, request: ToolGatewayPolicyRequest) -> ToolGatewayPolicyReply:
+        route = self.route_for(request.identity.session_key)
         response = await self._client.post(
-            "/internal/supply-chain/v2/openclaw/authorize",
+            route.authorize_path,
             headers={"Authorization": f"Bearer {self._credential}"},
             json={
                 "tenant_id": request.identity.tenant_id,
@@ -115,12 +170,23 @@ class GatewayAuthorityProfile:
     cid: str
     credential_ref: str
     scopes: frozenset[str]
+    authorize_path: str = SUPPLY_CHAIN_ROUTE.authorize_path
+    session_key_prefix: str = SUPPLY_CHAIN_ROUTE.session_key_prefix
 
     def __post_init__(self) -> None:
         if not self.cid or not self.credential_ref or len(self.credential_ref) > 256:
             raise ValueError("Tool Gateway authority profile is invalid")
         if not {"workflow:start", "runtime:admission"} <= self.scopes:
             raise ValueError("Tool Gateway admission scopes are required")
+        GatewayPolicyRoute(
+            session_key_prefix=self.session_key_prefix, authorize_path=self.authorize_path
+        )
+
+    @property
+    def route(self) -> GatewayPolicyRoute:
+        return GatewayPolicyRoute(
+            session_key_prefix=self.session_key_prefix, authorize_path=self.authorize_path
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +197,18 @@ class GatewayWorkflowOffer:
     def __post_init__(self) -> None:
         if self.pin.kind != "workflow":
             raise ValueError("this composition requires published workflow offers")
+
+
+def policy_routes(offers: tuple[GatewayWorkflowOffer, ...]) -> tuple[GatewayPolicyRoute, ...]:
+    """The distinct BFF routes of a set of offers; one prefix may name only one path."""
+
+    by_prefix: dict[str, GatewayPolicyRoute] = {}
+    for offer in offers:
+        route = offer.authority.route
+        existing = by_prefix.setdefault(route.session_key_prefix, route)
+        if existing != route:
+            raise ValueError("offers sharing an agent instance must share its authorize path")
+    return tuple(by_prefix[prefix] for prefix in sorted(by_prefix))
 
 
 class DynamicGatewayContext:
@@ -162,6 +240,10 @@ class DynamicGatewayContext:
         ):
             raise GatewayOperationConflict()
         profile = self._profiles[reference]
+        if not decision.session_key.startswith(profile.session_key_prefix):
+            # The BFF profile that authorized this run is not the one this offer
+            # belongs to: never lend one agent's scopes to another agent's session.
+            raise GatewayOperationConflict()
         actor_id = uuid5(
             NAMESPACE_URL,
             f"ebizhub:openclaw:principal:{decision.tenant_id}:{decision.principal_id}",
@@ -236,6 +318,8 @@ class SharedToolGatewayComposition:
             raise ValueError("Tool Gateway secret material is invalid")
         if not offers:
             raise ValueError("Tool Gateway requires at least one workflow offer")
+        if len({offer.pin.offer_id for offer in offers}) != len(offers):
+            raise ValueError("Tool Gateway offer ids must be unique")
         self.generation = GatewayCatalogGeneration(
             tenant_id=tenant_id,
             generation_id=generation_id,
@@ -244,6 +328,7 @@ class SharedToolGatewayComposition:
         )
         self._tenant_id = tenant_id
         self.offers = offers
+        self.routes = policy_routes(offers)
         self._bff_url = bff_url.rstrip("/")
         self._connector_credential = connector_credential
         self._jwt_key = jwt_key
@@ -279,6 +364,7 @@ class SharedToolGatewayComposition:
                 policy_port=BffToolGatewayPolicyPort(
                     client=client,
                     connector_credential=self._connector_credential,
+                    routes=self.routes,
                 ),
             )
             projector = RegistryToolOfferProjector(capabilities, workflows)
@@ -412,10 +498,13 @@ class SupplyChainToolGatewayComposition(SharedToolGatewayComposition):
 
 
 __all__ = [
+    "SUPPLY_CHAIN_ROUTE",
     "BffToolGatewayPolicyPort",
     "DynamicGatewayContext",
     "GatewayAuthorityProfile",
+    "GatewayPolicyRoute",
     "GatewayWorkflowOffer",
     "SharedToolGatewayComposition",
     "SupplyChainToolGatewayComposition",
+    "policy_routes",
 ]

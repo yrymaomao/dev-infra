@@ -1,0 +1,228 @@
+{
+  "schema_version": "2",
+  "runtime": {
+    "supported_api_version": "ebizhub.runtime/v1",
+    "plugin_policy_path": "${RUNTIME_PLUGIN_POLICY_PATH}"
+  },
+  "secrets": {
+    "allowed_env": {
+      "api_key": "DEPLOY_OPENAI_API_KEY",
+      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+      "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
+      "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
+      "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
+      "supply_chain_openclaw_connector_credential": "BFF_OPENCLAW_CONNECTOR_CREDENTIAL",
+      "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY"
+    }
+  },
+  "credential_broker": {
+    "url": "${CREDENTIAL_BROKER_URL}",
+    "auth_secret_name": "broker_client_token",
+    "allowed_provider_ids": [
+      "mcp.streamable_http",
+      "yeaher.crm",
+      "yeaher.erp"
+    ],
+    "timeout_seconds": 5.0
+  },
+  "base_ai_providers": [
+    {
+      "provider_id": "mcp.streamable_http",
+      "package_name": "ebiz-adapter-mcp",
+      "package_version": "${MCP_PACKAGE_VERSION}",
+      "record_digest": "${MCP_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_mcp:McpProviderFactory",
+      "api_version": "streamable-http/1",
+      "enabled_operations": [
+        "tools.call",
+        "tools.list"
+      ],
+      "egress_hosts": [
+        "${MCP_EGRESS_HOST}"
+      ],
+      "secret_names": [],
+      "config": {
+        "server_name": "erp-production-read",
+        "url": "${MCP_ENDPOINT}",
+        "allowed_tools": [
+          "query_crm_account_capabilities_v1",
+          "query_crm_case_context_v1",
+          "query_crm_case_evidence_v1",
+          "query_crm_case_v1",
+          "query_inventory_batch_snapshot_v1",
+          "query_inventory_skus_by_threshold_v1",
+          "query_inventory_summary_v2",
+          "query_sku_boston_cohort_v1",
+          "query_sku_fulfillment_inventory_snapshot_v1",
+          "query_sku_fulfillment_sales_profit_windows_v2",
+          "query_sku_identity_mapping_v1",
+          "query_sku_sales_profit_windows_v1",
+          "query_sku_upc_mapping"
+        ],
+        "auth_profile": "X_MCP_KEY",
+        "network": {
+          "timeout_seconds": 30,
+          "connect_timeout_seconds": 10,
+          "max_connections": 100,
+          "verify_tls": true
+        }
+      }
+    },
+    {
+      "provider_id": "yeaher.crm",
+      "package_name": "ebiz-adapter-crm",
+      "package_version": "0.1.0",
+      "record_digest": "${CRM_ADAPTER_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_crm:CrmProviderFactory",
+      "api_version": "v1",
+      "enabled_operations": [
+        "crm.get_account_capabilities",
+        "crm.get_case",
+        "crm.get_case_context",
+        "crm.get_case_evidence"
+      ],
+      "egress_hosts": [],
+      "secret_names": [],
+      "config": {
+        "mcp": {
+          "tools": {
+            "crm.get_account_capabilities": "query_crm_account_capabilities_v1",
+            "crm.get_case": "query_crm_case_v1",
+            "crm.get_case_context": "query_crm_case_context_v1",
+            "crm.get_case_evidence": "query_crm_case_evidence_v1"
+          }
+        }
+      }
+    },
+    {
+      "provider_id": "yeaher.erp",
+      "package_name": "ebiz-adapter-erp",
+      "package_version": "${ERP_PACKAGE_VERSION}",
+      "record_digest": "${ERP_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_erp:ErpProviderFactory",
+      "api_version": "v1",
+      "enabled_operations": [
+        "catalog.resolve_sku_identity",
+        "inventory.get_total_snapshot",
+        "inventory.get_batch_snapshot",
+        "sales_profit.get_boston_cohort",
+        "sales_profit.get_sku_windows",
+        "inventory.list_skus_by_threshold",
+        "catalog.resolve_sku_identity_batch",
+        "inventory.get_fba_snapshot",
+        "sales_profit.get_sku_fulfillment_windows"
+      ],
+      "egress_hosts": [],
+      "secret_names": [],
+      "config": {
+        "mcp": {
+          "tools": {
+            "catalog.resolve_sku_identity": "query_sku_upc_mapping",
+            "inventory.get_total_snapshot": "query_inventory_summary_v2",
+            "sales_profit.get_boston_cohort": "query_sku_boston_cohort_v1",
+            "sales_profit.get_sku_windows": "query_sku_sales_profit_windows_v1",
+            "inventory.list_skus_by_threshold": "query_inventory_skus_by_threshold_v1",
+            "inventory.get_batch_snapshot": "query_inventory_batch_snapshot_v1",
+            "catalog.resolve_sku_identity_batch": "query_sku_identity_mapping_v1",
+            "inventory.get_fba_snapshot": "query_sku_fulfillment_inventory_snapshot_v1",
+            "sales_profit.get_sku_fulfillment_windows": "query_sku_fulfillment_sales_profit_windows_v2"
+          }
+        }
+      }
+    },
+    {
+      "provider_id": "openai.responses",
+      "package_name": "ebiz-adapter-model-openai",
+      "package_version": "${OPENAI_ADAPTER_PACKAGE_VERSION}",
+      "record_digest": "${OPENAI_RECORD_DIGEST}",
+      "entry_point_group": "base_ai.provider_factories",
+      "entry_point_value": "ebiz_adapter_model_openai:OpenAIProviderFactory",
+      "api_version": "responses/v1",
+      "enabled_operations": [
+        "responses.create_structured"
+      ],
+      "egress_hosts": [
+        "${OPENAI_EGRESS_HOST}"
+      ],
+      "secret_names": [
+        "api_key"
+      ],
+      "config": {
+        "api_key_secret_name": "api_key",
+        "base_url": "${OPENAI_ENDPOINT}",
+        "enabled_operations": [
+          "responses.create_structured"
+        ],
+        "network": {
+          "timeout_seconds": 30,
+          "connect_timeout_seconds": 10,
+          "max_connections": 100,
+          "verify_tls": true
+        }
+      }
+    }
+  ],
+  "supply_chain_release": {
+    "agent_id": "inventory-supply-chain",
+    "agent_version": 8,
+    "agent_distribution": "ebiz-agent-inventory-supply-chain",
+    "agent_distribution_version": "4.1.0",
+    "agent_record_digest": "${SUPPLY_CHAIN_AGENT_RECORD_DIGEST}",
+    "workflow_code": "inventory-supply-chain-batch-weekly",
+    "workflow_version": 6,
+    "workflow_artifact_digest": "${SUPPLY_CHAIN_WORKFLOW_DIGEST}",
+    "registry_import_graph_digest": "${SUPPLY_CHAIN_REGISTRY_GRAPH_DIGEST}",
+    "registry_import_plan_digest": "${SUPPLY_CHAIN_PUBLICATION_PLAN_DIGEST}",
+    "capability_sets": [
+      {"set_id": "inventory.core", "version": 4, "distribution_name": "ebiz-capability-inventory-catalog", "distribution_version": "4.0.0", "record_digest": "${INVENTORY_CATALOG_RECORD_DIGEST}"},
+      {"set_id": "commerce-sales.analytics", "version": 4, "distribution_name": "ebiz-capability-commerce-sales-catalog", "distribution_version": "4.0.0", "record_digest": "${COMMERCE_SALES_CATALOG_RECORD_DIGEST}"},
+      {"set_id": "supply-chain.planning", "version": 3, "distribution_name": "ebiz-capability-supply-chain", "distribution_version": "3.0.0", "record_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}"}
+    ],
+    "streaming_bff": {
+      "version": "0.1.4",
+      "schema": "supply_chain_bff",
+      "migration_head": "0009_conversation_profile_index",
+      "secret_references": ["supply_chain_bff_postgresql_url", "supply_chain_cursor_hmac_signing_key", "supply_chain_bff_rabbitmq_url", "supply_chain_openclaw_connector_credential", "supply_chain_tool_gateway_jwt_key"],
+      "features": {"async_start": false, "runtime_stream": false, "activity_ui": false, "model_error_polish": false, "level2": false, "level2_mq": false},
+      "limits": {"max_batch_size": 200, "tenant_dispatch_concurrency": 4, "runtime_subscription_limit": 200, "max_selected_skus": 10000, "bulk_batch_size": 200, "tenant_bulk_concurrency": 2, "global_bulk_concurrency": 8},
+      "etl_wait": {"max_seconds": 1800, "poll_seconds": 60, "timeout_risk_flag": "DATA_SNAPSHOT_LAGGED"},
+      "schedule_defaults": {"weekday": 1, "local_time": "12:00", "policy_mode": "ACTIVE_AT_RUN"},
+      "stream": {"db_tail_ms": 500, "heartbeat_seconds": 15, "activity_push_per_second": 4},
+      "retention_days": {"runtime_events": 7, "batch_mapping": 30, "completed_activity": 7},
+      "activity_schema": "business-agent.activity-event.v1",
+      "eta_profile": {"version": "supply-chain-v6-level2-1", "fixed_seconds": 2.0, "per_item_seconds": 15.0, "uncertainty_ratio": 0.3}
+    },
+    "provider_versions": {
+      "yeaher.erp": "0.2.0",
+      "deployment.supply-chain-on-demand-context": "0.1.4",
+      "supply-chain-planning.fulfillment-resolver": "3.0.0",
+      "supply-chain-planning.forecast-engine": "3.0.0",
+      "supply-chain-planning.classification-engine": "3.0.0",
+      "supply-chain-planning.action-router": "3.0.0",
+      "supply-chain-planning.replenishment-engine": "3.0.0",
+      "supply-chain-planning.clearance-engine": "3.0.0",
+      "supply-chain-planning.level2-fulfillment": "3.0.0",
+      "supply-chain-planning.level2-forecast": "3.0.0",
+      "supply-chain-planning.level2-optimizer": "3.0.0",
+      "supply-chain-planning.level2-batch": "3.0.0"
+    }
+  },
+  "crm_release": {
+    "agent_id": "crm",
+    "agent_distribution": "ebiz-agent-crm",
+    "agent_distribution_version": "2.0.0",
+    "agent_record_digest": "${CRM_AGENT_RECORD_DIGEST}",
+    "advise_workflow": {
+      "code": "crm-case-advise-on-demand",
+      "version": 1,
+      "digest": "${CRM_ADVISOR_WORKFLOW_DIGEST}"
+    },
+    "capability_sets": [
+      {"set_id": "crm", "version": 2, "distribution_name": "ebiz-agent-crm", "distribution_version": "2.0.0", "record_digest": "${CRM_AGENT_RECORD_DIGEST}"},
+      {"set_id": "crm-advise", "version": 1, "distribution_name": "ebiz-agent-crm", "distribution_version": "2.0.0", "record_digest": "${CRM_AGENT_RECORD_DIGEST}"}
+    ]
+  }
+}

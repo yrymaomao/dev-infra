@@ -12,8 +12,47 @@ from ebiz_runtime_contracts.tool_gateway_policy import PolicyTarget, ToolGateway
 from test_composition_launcher import configured_files
 
 from ebiz_deployment.config import CRM_READ_TOOL_BY_OPERATION, load_deployment_config
-from ebiz_deployment.launcher import launch
+from ebiz_deployment.launcher import CRM_SCOPES, SUPPLY_CHAIN_SCOPES, launch
 from ebiz_deployment.tool_gateway import DynamicGatewayContext, SharedToolGatewayComposition
+
+CRM_DIGEST = "b" * 64
+
+
+def crm_plugin(plugin_id="ebizhub.crm-agent", entry="crm_agent.plugin:factory"):
+    return {
+        "plugin_id": plugin_id,
+        "version": "2.0.0",
+        "package_name": "ebiz-agent-crm",
+        "entry_point": entry,
+        "package_digest": "e" * 64,
+        "permissions": ["crm.compute", "crm.preview"],
+        "network_targets": [],
+        "secret_names": [],
+        "config": {"policy_version": "crm-policy-v1"},
+    }
+
+
+def crm_release():
+    pin = {
+        "distribution_name": "ebiz-agent-crm",
+        "distribution_version": "2.0.0",
+        "record_digest": "e" * 64,
+    }
+    return {
+        "agent_id": "crm",
+        "agent_distribution": "ebiz-agent-crm",
+        "agent_distribution_version": "2.0.0",
+        "agent_record_digest": "e" * 64,
+        "advise_workflow": {
+            "code": "crm-case-advise-on-demand",
+            "version": 1,
+            "digest": CRM_DIGEST,
+        },
+        "capability_sets": [
+            {"set_id": "crm", "version": 2, **pin},
+            {"set_id": "crm-advise", "version": 1, **pin},
+        ],
+    }
 
 
 def configure_crm(tmp_path):
@@ -39,32 +78,17 @@ def configure_crm(tmp_path):
             "config": {"mcp": {"tools": CRM_READ_TOOL_BY_OPERATION}},
         }
     )
+    document["crm_release"] = crm_release()
     path.write_text(json.dumps(document))
     policy = json.loads(policy_path.read_text())
-    for plugin, entry in [
-        ("ebizhub.crm-agent", "crm_agent.plugin:factory"),
-        ("ebizhub.crm-advisor", "crm_advisor.plugin:factory"),
-    ]:
-        policy["plugins"].append(
-            {
-                "plugin_id": plugin,
-                "version": "2.0.0",
-                "package_name": "ebiz-agent-crm",
-                "entry_point": entry,
-                "package_digest": "e" * 64,
-                "permissions": ["crm.compute", "crm.preview"],
-                "network_targets": [],
-                "secret_names": [],
-                "config": {"policy_version": "crm-policy-v1"},
-            }
-        )
+    policy["plugins"].append(crm_plugin())
     policy_path.write_text(json.dumps(policy))
     env.update(
         {
             "SUPPLY_CHAIN_TOOL_GATEWAY_ENABLED": "true",
             "CRM_TOOL_GATEWAY_ENABLED": "true",
             "SUPPLY_CHAIN_ON_DEMAND_WORKFLOW_DIGEST": "a" * 64,
-            "CRM_ADVISOR_WORKFLOW_DIGEST": "b" * 64,
+            "CRM_ADVISOR_WORKFLOW_DIGEST": CRM_DIGEST,
             "SUPPLY_CHAIN_CREDENTIAL_REF": "opaque:supply-chain",
             "CRM_CREDENTIAL_REF": "opaque:crm-readonly",
             "BFF_OPENCLAW_CONNECTOR_CREDENTIAL": "c" * 32,
@@ -115,7 +139,7 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
         decision = ToolGatewayPolicyReply(
             tenant_id="tenant-a",
             principal_id="operator",
-            session_key="run",
+            session_key=authority.session_key_prefix + "0" * 48,
             binding_active=True,
             action="invoke",
             policy_revision="1",
@@ -131,14 +155,32 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
         ]:
             with pytest.raises(GatewayOperationConflict):
                 resolver.resolve(decision, ref.model_copy(update=changed))
+        other_prefix = next(a.session_key_prefix for _, a in profiles if a is not authority)
         for changed in [
             {"tenant_id": "tenant-b"},
             {"binding_active": False},
             {"allowed_targets": ()},
             {"action": "catalog"},
+            # a run bound by the other profile's BFF never borrows these scopes
+            {"session_key": other_prefix + "0" * 48},
         ]:
             with pytest.raises((GatewayOperationConflict, ValueError)):
                 resolver.resolve(decision.model_copy(update=changed), ref)
+    # R1-05: the CRM offer carries exactly the eight advise scopes, the Supply Chain
+    # offer exactly its five; neither borrows from the other.
+    assert shared.offers[0].authority.scopes == SUPPLY_CHAIN_SCOPES
+    assert shared.offers[1].authority.scopes == CRM_SCOPES
+    assert len(CRM_SCOPES) == 8 and "inventory.read" not in CRM_SCOPES
+    assert shared.offers[1].pin.name == "crm_case_advice"
+    assert shared.offers[1].pin.aliases == ("crm_case_analysis", "crm_case_advise_on_demand")
+    assert shared.offers[1].pin.version == 1
+    assert shared.offers[1].pin.publication_digest == CRM_DIGEST
+    assert [r.authorize_path for r in shared.routes] == [
+        "/internal/crm/v2/openclaw/authorize",
+        "/internal/supply-chain/v2/openclaw/authorize",
+    ]
+    assert shared.offers[1].authority.session_key_prefix == "agent:crm:openclaw:"
+    assert shared.offers[0].authority.session_key_prefix == "agent:main:openclaw:"
     assert not any(s.startswith("crm.") for s in shared.offers[0].authority.scopes)
     assert not any(
         s.startswith("inventory.") or "write" in s or "send" in s
@@ -147,7 +189,16 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
 
 
 @pytest.mark.parametrize(
-    "mutation", ["write_operation", "write_tool", "broker", "plugin", "policy"]
+    "mutation",
+    [
+        "write_operation",
+        "write_tool",
+        "broker",
+        "plugin",
+        "second_plugin",
+        "release_missing",
+        "release_sets",
+    ],
 )
 def test_crm_deployment_fails_closed_on_write_or_mismatched_authority(tmp_path, mutation):
     path, policy_path, env = configure_crm(tmp_path)
@@ -163,12 +214,27 @@ def test_crm_deployment_fails_closed_on_write_or_mismatched_authority(tmp_path, 
         document["credential_broker"]["allowed_provider_ids"].remove("yeaher.crm")
     elif mutation == "plugin":
         policy["plugins"][-1]["permissions"].append("crm.message.send")
+    elif mutation == "second_plugin":
+        # There is no ebizhub.crm-advisor plugin in the CRM wheel; a second pin is refused.
+        policy["plugins"].append(crm_plugin("ebizhub.crm-advisor", "crm_advisor.plugin:factory"))
+    elif mutation == "release_missing":
+        del document["crm_release"]
     else:
-        policy["plugins"][-1]["config"]["policy_version"] = "different-policy"
+        document["crm_release"]["capability_sets"].pop()
     path.write_text(json.dumps(document))
     policy_path.write_text(json.dumps(policy))
     with pytest.raises(ValueError):
         load_deployment_config(path, env)
+
+
+def test_launcher_refuses_a_workflow_digest_that_differs_from_the_release_pin(
+    tmp_path, monkeypatch
+):
+    _, _, env = configure_crm(tmp_path)
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    env["CRM_ADVISOR_WORKFLOW_DIGEST"] = "f" * 64
+    with pytest.raises(ValueError, match="crm_release.advise_workflow.digest"):
+        launch([], environ=env, runtime_main=lambda argv, **kwargs: 0)
 
 
 @pytest.mark.asyncio

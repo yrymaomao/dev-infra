@@ -33,6 +33,7 @@ ebiz-release-material-guard = "ebiz_deployment.release_material_guard:main"
 ebiz-model-seam-release = "ebiz_deployment.model_seam_release:main"
 ebiz-supply-chain-bff = "ebiz_deployment.supply_chain_bff.cli:main"
 ebiz-supply-chain = "ebiz_deployment.supply_chain_bff.report_cli:main"
+ebiz-crm-advise-publish = "ebiz_deployment.crm_advise_publication:main"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]

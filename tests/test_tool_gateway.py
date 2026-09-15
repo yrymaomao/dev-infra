@@ -16,15 +16,19 @@ from ebiz_deployment.tool_gateway import (
     BffToolGatewayPolicyPort,
     DynamicGatewayContext,
     GatewayAuthorityProfile,
+    GatewayPolicyRoute,
 )
 
+SUPPLY_CHAIN_KEY = "agent:main:openclaw:" + "1" * 48
+CRM_KEY = "agent:crm:openclaw:" + "2" * 48
 
-def _identity() -> ToolGatewayIdentity:
+
+def _identity(session_key: str = SUPPLY_CHAIN_KEY) -> ToolGatewayIdentity:
     now = datetime.now(UTC)
     return ToolGatewayIdentity(
         tenant_id="tenant-a",
         principal_id="principal-a",
-        session_key="session-a",
+        session_key=session_key,
         issued_at=now,
         expires_at=now + timedelta(minutes=2),
     )
@@ -165,7 +169,7 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
         ToolGatewayPolicyReply(
             tenant_id="tenant-a",
             principal_id="principal-a",
-            session_key="session-a",
+            session_key=SUPPLY_CHAIN_KEY,
             binding_active=True,
             action="invoke",
             policy_revision="1",
@@ -176,7 +180,7 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
     assert context.auth.tenant_id == "tenant-a"
     assert context.auth.cid == "supply-chain-dev"
     assert context.auth.credential_ref == "opaque:dev-erp-mcp"
-    assert context.session_key == "session-a"
+    assert context.session_key == SUPPLY_CHAIN_KEY
     assert context.auth.scopes == frozenset(
         {
             "workflow:start",
@@ -186,3 +190,64 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
             "supply_chain.preview",
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_policy_port_routes_each_agent_session_to_its_own_reception_profile() -> None:
+    from agent_runtime.application.tool_gateway_authorization import ToolGatewayPolicyRejected
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        offer = "crm-case-advice" if "/crm/" in request.url.path else "supply-chain-on-demand"
+        return httpx.Response(
+            200,
+            json={"binding_active": True, "policy_revision": "1", "allowed_offer_ids": [offer]},
+        )
+
+    routes = (
+        GatewayPolicyRoute("agent:main:openclaw:", "/internal/supply-chain/v2/openclaw/authorize"),
+        GatewayPolicyRoute("agent:crm:openclaw:", "/internal/crm/v2/openclaw/authorize"),
+    )
+    async with httpx.AsyncClient(
+        base_url="http://127.0.0.1:8100", transport=httpx.MockTransport(handler)
+    ) as client:
+        port = BffToolGatewayPolicyPort(client=client, connector_credential="c" * 32, routes=routes)
+        candidates = (
+            PolicyTarget(kind="offer", target_id="supply-chain-on-demand"),
+            PolicyTarget(kind="offer", target_id="crm-case-advice"),
+        )
+        crm = await port.authorize(
+            ToolGatewayPolicyRequest(
+                identity=_identity(CRM_KEY), action="discover", candidates=candidates
+            )
+        )
+        supply_chain = await port.authorize(
+            ToolGatewayPolicyRequest(
+                identity=_identity(SUPPLY_CHAIN_KEY), action="discover", candidates=candidates
+            )
+        )
+        with pytest.raises(ToolGatewayPolicyRejected):
+            await port.authorize(
+                ToolGatewayPolicyRequest(
+                    identity=_identity("agent:other:openclaw:" + "3" * 48),
+                    action="discover",
+                    candidates=candidates,
+                )
+            )
+    assert seen == [
+        "/internal/crm/v2/openclaw/authorize",
+        "/internal/supply-chain/v2/openclaw/authorize",
+    ]
+    assert crm.allowed_targets == (PolicyTarget(kind="offer", target_id="crm-case-advice"),)
+    assert supply_chain.allowed_targets == (
+        PolicyTarget(kind="offer", target_id="supply-chain-on-demand"),
+    )
+
+
+def test_policy_routes_reject_malformed_prefixes_and_paths() -> None:
+    with pytest.raises(ValueError):
+        GatewayPolicyRoute("session-", "/internal/crm/v2/openclaw/authorize")
+    with pytest.raises(ValueError):
+        GatewayPolicyRoute("agent:crm:openclaw:", "/api/crm/v2/openclaw/authorize")

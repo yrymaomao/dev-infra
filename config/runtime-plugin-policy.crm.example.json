@@ -1,0 +1,26 @@
+{
+  "plugins": [
+    {
+      "plugin_id": "supply-chain-planning",
+      "version": "3.0.0",
+      "package_name": "ebiz-capability-supply-chain",
+      "entry_point": "ebiz_capability_supply_chain.plugin:factory",
+      "package_digest": "${SUPPLY_CHAIN_PLANNING_RECORD_DIGEST}",
+      "permissions": ["supply_chain.preview"],
+      "network_targets": [],
+      "secret_names": [],
+      "config": {}
+    },
+    {
+      "plugin_id": "ebizhub.crm-agent",
+      "version": "2.0.0",
+      "package_name": "ebiz-agent-crm",
+      "entry_point": "crm_agent.plugin:factory",
+      "package_digest": "${CRM_AGENT_RECORD_DIGEST}",
+      "permissions": ["crm.compute", "crm.preview"],
+      "network_targets": [],
+      "secret_names": [],
+      "config": {"policy_version": "${CRM_POLICY_VERSION}"}
+    }
+  ]
+}
