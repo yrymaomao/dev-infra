@@ -1,0 +1,4 @@
+# Byte-compared contract copies and shared fixtures must check out with LF on every platform
+# (tests/test_crm_reception.py compares the bundled schemas with the wheel byte for byte).
+src/ebiz_deployment/crm_reception/contracts/*.yaml text eol=lf
+tests/fixtures/**/*.json text eol=lf
