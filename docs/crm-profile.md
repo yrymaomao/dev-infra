@@ -164,7 +164,7 @@ v1.5 sections 6.3, 8.3, 10.2, 12.2, 13.1 and the integrated design section 12.3.
 | Route | Reply |
 | --- | --- |
 | `GET /api/crm/v2/openclaw/operations/{operationId}` | `200 {status, case, evidence[], approval \| null, effects[], audit_href}` |
-| `POST /api/crm/v2/openclaw/operations/{operationId}/approval/decision` with `{approval_id, row_version, decision: APPROVED \| REJECTED, reason}` | `200 {status}`; `409` stale `row_version` / already decided / not the operation's pending approval; `403` not an authorized approver; `410` approval deadline passed |
+| `POST /api/crm/v2/openclaw/operations/{operationId}/approval/decision` with `{approval_id, row_version, decision: APPROVED \| REJECTED, reason}` | `200 {status}`; `409` stale `row_version` / already decided / not the operation's pending approval; `403` not an authorized approver; `410` approval deadline passed; `422 CRM_DECISION_REASON_INVALID` when the reason is (or wholly contains) the drafted message body - model text never becomes the audit reason (black-box O-16) |
 
 Bodies are bare (no `{requestId, data}` envelope). Errors use the standard
 BFF envelope `{error_code, phase, category, retryable, safe_message,

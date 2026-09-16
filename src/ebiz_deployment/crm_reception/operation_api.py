@@ -177,6 +177,33 @@ def _project_proposal(value: dict[str, Any] | None) -> ApprovalProposal | None:
         return None
 
 
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalized_text(value: str) -> str:
+    return _WHITESPACE.sub(" ", value).strip().casefold()
+
+
+def reason_is_draft_text(reason: str, view: ApprovalRecordView) -> bool:
+    """True when the decision reason is (or wholly contains) the drafted message body.
+
+    Only the frozen preview's ``draft.body`` counts; the comparison ignores case
+    and whitespace so that a pasted draft with reflowed lines is still caught.
+    """
+
+    preview = view.preview
+    if preview is None or preview.draft is None:
+        return False
+    body = preview.draft.get("body")
+    if not isinstance(body, str):
+        return False
+    draft = _normalized_text(body)
+    if not draft:
+        return False
+    given = _normalized_text(reason)
+    return given == draft or draft in given
+
+
 def _project_draft(value: dict[str, Any] | None) -> ApprovalDraft | None:
     if value is None:
         return None
@@ -429,13 +456,27 @@ def operation_router(
                     "The approval is no longer the operation's pending item.",
                     category="conflict",
                 )
+            reason = body.reason.strip() or None
+            if reason is not None:
+                # O-16: the reason is the reviewer's own words. The drafted message is
+                # model text; recorded as the audit reason it would launder the model's
+                # claim into a human justification, so it is refused before forwarding.
+                view = await runtime.read_approval(actor, body.approval_id)
+                if view is not None and reason_is_draft_text(reason, view):
+                    return _error(
+                        request,
+                        422,
+                        "CRM_DECISION_REASON_INVALID",
+                        "The reason must be your own words, not the drafted message.",
+                        category="validation",
+                    )
             try:
                 await runtime.decide(
                     actor,
                     approval_id=body.approval_id,
                     row_version=body.row_version,
                     decision=body.decision,
-                    reason=body.reason.strip() or None,
+                    reason=reason,
                 )
             except RuntimeDecisionRefused as refusal:
                 return _refusal(request, refusal)

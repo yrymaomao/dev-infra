@@ -600,7 +600,14 @@ async def test_decision_is_forwarded_with_the_session_actor_and_status_is_reread
     assert decision["reason"] == "Looks right"
     actor = decision["actor"]
     assert actor == WorkbenchActor(tenant_id=TENANT, actor_id="agent-7", roles=("CRM_SUPERVISOR",))
-    assert [kind for kind, _ in runtime.calls] == ["operation", "execution", "decide", "operation"]
+    # O-16: a non-empty reason is checked against the frozen draft before forwarding.
+    assert [kind for kind, _ in runtime.calls] == [
+        "operation",
+        "execution",
+        "approval",
+        "decide",
+        "operation",
+    ]
 
 
 async def test_reject_stays_reject_and_empty_reason_is_none() -> None:
@@ -613,6 +620,81 @@ async def test_reject_stays_reject_and_empty_reason_is_none() -> None:
     assert response.status_code == 200
     assert runtime.decisions[0]["decision"] == "REJECTED"
     assert runtime.decisions[0]["reason"] is None
+    assert [kind for kind, _ in runtime.calls] == ["operation", "execution", "decide", "operation"]
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Hello, your return label is on its way.",
+        "  hello,   your RETURN label is on its way.  ",
+        "Hello,\nyour return label\nis on its way.",
+        "Rejected because: Hello, your return label is on its way.",
+    ],
+)
+async def test_O_16_rejection_reason_equal_to_the_draft_body_is_refused_before_forwarding(
+    reason: str,
+) -> None:
+    """Design row O-16: model text (the drafted message) can never become the audit reason."""
+
+    runtime = waiting_runtime()
+    app, _ = make_app(runtime, supervisor())
+    async with http(app) as client:
+        response = await client.post(
+            f"{BASE}/{OP}/approval/decision",
+            json=decision_body(decision="REJECTED", reason=reason),
+        )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["error_code"] == "CRM_DECISION_REASON_INVALID"
+    assert body["category"] == "validation" and body["retryable"] is False
+    assert "return label" not in response.text  # the draft is not echoed back either
+    assert runtime.decisions == []  # forbidden effect: nothing reached the Runtime
+    assert [kind for kind, _ in runtime.calls] == ["operation", "execution", "approval"]
+
+
+async def test_O_16_a_reviewer_reason_that_merely_cites_the_draft_is_forwarded() -> None:
+    runtime = waiting_runtime()
+    app, _ = make_app(runtime, supervisor())
+    async with http(app) as client:
+        response = await client.post(
+            f"{BASE}/{OP}/approval/decision",
+            json=decision_body(decision="REJECTED", reason="The label promise is wrong."),
+        )
+    assert response.status_code == 200, response.text
+    assert runtime.decisions[0]["reason"] == "The label promise is wrong."
+
+
+async def test_S_08_operation_and_decision_routes_log_no_case_id_token_or_draft(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Design row S-08: nothing the BFF logs carries the case id, the ERP token or draft text."""
+
+    import logging
+
+    runtime = waiting_runtime()
+    app, _ = make_app(runtime, supervisor())
+    with caplog.at_level(logging.DEBUG):
+        async with http(app) as client:
+            read = await client.get(f"{BASE}/{OP}", headers={"_token_": "erp-secret-token"})
+            assert read.status_code == 200, read.text
+            decided = await client.post(
+                f"{BASE}/{OP}/approval/decision",
+                json=decision_body(decision="REJECTED", reason="Wrong tone for this buyer."),
+                headers={"_token_": "erp-secret-token"},
+            )
+            assert decided.status_code == 200, decided.text
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    for forbidden in (
+        "CASE-0042",
+        "erp-secret-token",
+        "Hello, your return label is on its way.",
+        "buyer@example.com",
+        "+1-555-0100",
+        "Where is my parcel",
+        "Wrong tone for this buyer.",
+    ):
+        assert forbidden not in logged, forbidden
 
 
 @pytest.mark.parametrize(
