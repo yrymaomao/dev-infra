@@ -230,3 +230,11 @@ the enablement order and the note that CRM call segments answer 401 until the
 crm-service JWT change and `session-principal` route are deployed. Start from
 `config/deployment.crm.example.json` and
 `config/runtime-plugin-policy.crm.example.json` for a two-profile deployment.
+
+Two business agents are two OpenClaw host OS processes. The composition owns
+one catalog generation per instance; `ebiz-gateway-generation-export` writes
+one unsigned payload per instance (only that instance's offer, its own
+generation id) for the Adapter's `sign-generation.mjs` /
+`prepare-plugin-manifest.mjs`, and `ebiz_deployment.openclaw_instances`
+checks the two instances' material (`config/openclaw/<instance>/`) for the
+design §12.2 isolation rule. See `docs/crm-host-instance.md`.

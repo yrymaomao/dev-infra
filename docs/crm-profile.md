@@ -74,6 +74,7 @@ Runtime process (`ebiz-runtime-deployment`), on top of `SUPPLY_CHAIN_TOOL_GATEWA
 | `CRM_ADVISOR_WORKFLOW_DIGEST` | the checksum printed by the publish job; must equal `crm_release.advise_workflow.digest` |
 | `CRM_CREDENTIAL_REF` | opaque, tenant-bound CRM read-only broker reference (one per tenant) |
 | `CRM_TOOL_GATEWAY_CID` | trusted caller id of the CRM offer (default `crm-advisor`) |
+| `CRM_TOOL_GATEWAY_GENERATION_ID` | the CRM host instance's own generation id (default `<TOOL_GATEWAY_GENERATION_ID>-crm`, must differ) |
 | `CRM_ADAPTER_RECORD_DIGEST`, `CRM_AGENT_RECORD_DIGEST`, `CRM_POLICY_VERSION` | release pins consumed by `config/deployment.crm.example.json` and `config/runtime-plugin-policy.crm.example.json` |
 
 `config/deployment.crm.example.json` is the complete two-profile deployment
@@ -103,12 +104,16 @@ having been done.
    The job is idempotent, refuses any WRITE binding and exits non-zero unless
    the published checksum equals `--expect-digest`. Pin the printed value as
    `CRM_ADVISOR_WORKFLOW_DIGEST`.
-4. Export and sign one catalog generation containing both offers
-   (`TOOL_GATEWAY_GENERATION_ID` / `TOOL_GATEWAY_CATALOG_REVISION`), keep the
-   previous generation for old-operation result validation, and materialize
-   the CRM host instance's plugin manifest for exactly `crm_case_advice` and
-   the fixed control tools. Each OpenClaw instance gets its own persistent
-   SQLite volume, identity and ingress.
+4. Export one catalog generation **per OpenClaw host instance** with
+   `ebiz-gateway-generation-export` (the Supply Chain instance keeps
+   `TOOL_GATEWAY_GENERATION_ID`, the CRM instance gets
+   `CRM_TOOL_GATEWAY_GENERATION_ID`, default `<TOOL_GATEWAY_GENERATION_ID>-crm`;
+   both share `TOOL_GATEWAY_CATALOG_REVISION`), sign each with the Adapter's
+   `sign-generation.mjs`, keep the previous generation of each instance for
+   old-operation result validation, and materialize the CRM host instance's
+   plugin manifest for exactly `crm_case_advice` and the fixed control tools.
+   Each OpenClaw instance gets its own persistent SQLite volume, identity and
+   ingress; see `docs/crm-host-instance.md`.
 5. Start the CRM host instance against the BFF with a Fake CRM behind
    `yeaher.crm`; check discover/describe/invoke of `crm_case_advice`, the run
    binding, `/internal/crm/v2/openclaw/authorize`, and the four-segment result
@@ -141,9 +146,10 @@ BFF forwards it there; crm-service also accepts `_refresh_token_` and the
 - a second OpenClaw instance for CRM with its own ingress URL/credential
   (`BFF_CRM_OPENCLAW_INGRESS_URL`, `BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL`), agent
   id `crm`, its own SQLite volume and trust material;
-- the same catalog generation exported for both instances, each materializing
-  only its own tool names (`inventory_supply_chain_on_demand` vs
-  `crm_case_advice`);
+- one signed catalog generation per instance, each containing only that
+  instance's offer and materializing only its tool names
+  (`inventory_supply_chain_on_demand` vs `crm_case_advice`) under its own
+  generation id (`docs/crm-host-instance.md`);
 - the shared connector credential and run-JWT verification material on both
   instances (one BFF, one Runtime identity provider).
 

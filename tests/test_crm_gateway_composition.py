@@ -127,10 +127,15 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
     assert launch([], environ=env, runtime_main=runtime_main) == 0
     shared = received["gateway_composition"]
     assert isinstance(shared, SharedToolGatewayComposition)
-    assert [p.code for p in shared.generation.pins] == [
-        "inventory-supply-chain-on-demand",
-        "crm-case-advise-on-demand",
+    # §12.2: one generation per OpenClaw host instance, each with only its offer.
+    assert [
+        (i.agent_id, i.generation.generation_id, [p.code for p in i.generation.pins])
+        for i in shared.instances
+    ] == [
+        ("main", "sc-crm-1", ["inventory-supply-chain-on-demand"]),
+        ("crm", "sc-crm-1-crm", ["crm-case-advise-on-demand"]),
     ]
+    assert {g.catalog_revision for g in shared.generations} == {"sc-crm-1"}
     profiles = tuple((reference(offer.pin), offer.authority) for offer in shared.offers)
     resolver = DynamicGatewayContext(
         connector_id="openclaw", tenant_id="tenant-a", profiles=profiles
@@ -270,9 +275,13 @@ async def test_composition_builds_preparation_for_each_pin_but_only_one_lifecycl
         )
     )
     monkeypatch.setattr(gateway, "RegistryToolOfferProjector", lambda *args: projector)
-    monkeypatch.setattr(
-        gateway.ToolGatewayCatalogService, "create", AsyncMock(return_value=object())
-    )
+    created = []
+
+    async def create(**kwargs):
+        created.append(kwargs["generation"])
+        return SimpleNamespace(generation_id=kwargs["generation"].generation_id)
+
+    monkeypatch.setattr(gateway.ToolGatewayCatalogService, "create", create)
     monkeypatch.setattr(gateway, "ToolGatewaySnapshotService", lambda **kwargs: object())
     monkeypatch.setattr(gateway, "GatewaySnapshotPreparation", lambda **kwargs: kwargs)
 
@@ -297,6 +306,12 @@ async def test_composition_builds_preparation_for_each_pin_but_only_one_lifecycl
 
     monkeypatch.setattr(gateway._GatewayLifecycle, "start", start)
     monkeypatch.setattr(gateway, "ToolGatewayDeliveryService", lambda **kwargs: object())
+
+    def services(**kwargs):
+        captured["catalog"] = kwargs["catalog"]
+        return SimpleNamespace(**kwargs)
+
+    monkeypatch.setattr(gateway, "GatewayServices", services)
     container = SimpleNamespace(
         unit_of_work_factory=object(),
         governed_artifact_service=object(),
@@ -312,7 +327,21 @@ async def test_composition_builds_preparation_for_each_pin_but_only_one_lifecycl
             "supply-chain-on-demand",
             "crm-case-advice",
         ]
-        assert [p["pin"] for _, p in captured["preparations"]] == list(shared.generation.pins)
+        assert [p["pin"] for _, p in captured["preparations"]] == [
+            pin for generation in shared.generations for pin in generation.pins
+        ]
+        assert [p["generation"].generation_id for _, p in captured["preparations"]] == [
+            "sc-crm-1",
+            "sc-crm-1-crm",
+        ]
+        # One Runtime catalog per instance generation, routed by generation id.
+        assert [g.generation_id for g in created] == ["sc-crm-1", "sc-crm-1-crm"]
+        assert [[p.name for p in g.pins] for g in created] == [
+            ["inventory_supply_chain_on_demand"],
+            ["crm_case_advice"],
+        ]
+        assert isinstance(captured["catalog"], gateway.InstanceRoutedCatalog)
+        assert captured["catalog"].generation_ids == ("sc-crm-1", "sc-crm-1-crm")
         assert workflows.get_published.await_count == 2
     finally:
         for client in clients:

@@ -1,0 +1,13 @@
+{
+  "version": "openclaw-host-instance.v1",
+  "agentId": "crm",
+  "hostRoot": "C:\\openclaw\\host",
+  "port": 18790,
+  "stateDir": "C:\\openclaw\\crm\\state",
+  "configPath": "C:\\openclaw\\crm\\openclaw.json",
+  "gatewayTokenEnv": "EBIZ_CRM_GATEWAY_TOKEN",
+  "pluginInstallDir": "C:\\openclaw\\crm\\plugin\\package",
+  "deploymentPath": "C:\\openclaw\\crm\\deployment.json",
+  "receptionPath": "config/crm-reception.v1.json",
+  "ingressUrl": "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
+}
