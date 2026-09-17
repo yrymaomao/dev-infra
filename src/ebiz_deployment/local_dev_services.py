@@ -775,7 +775,11 @@ def create_mcp_app() -> ASGIApp:
         )
 
     @server.tool(name="query_inventory_batch_snapshot_v1", structured_output=True)
-    async def inventory_batch_snapshot(skus: SkuBatch) -> dict[str, Any]:
+    async def inventory_batch_snapshot(
+        skus: SkuBatch,
+        marketScope: MarketScope,  # noqa: N803 - Java MCP wire field
+    ) -> dict[str, Any]:
+        del marketScope
         if len(skus) != len(set(skus)):
             raise ValueError("skus must be unique")
         return _yeaher_result(

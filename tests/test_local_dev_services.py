@@ -418,6 +418,22 @@ def test_mcp_requires_broker_token_and_exposes_supply_chain_v6_read_tools() -> N
             },
             headers=headers,
         )
+        inventory_batch = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_inventory_batch_snapshot_v1",
+                    "arguments": {
+                        "marketScope": "NA_COMPANY",
+                        "skus": ["SKU-LOCAL-FBA", "SKU-LOCAL-MIXED"],
+                    },
+                },
+            },
+            headers=headers,
+        )
 
     assert listed.status_code == 200
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
@@ -454,6 +470,14 @@ def test_mcp_requires_broker_token_and_exposes_supply_chain_v6_read_tools() -> N
     assert set(cohort_output["properties"]) == {"success", "code", "message", "result"}
     member_schema = cohort_output["properties"]["result"]["properties"]["members"]["items"]
     assert member_schema["additionalProperties"] is False
+    inventory_batch_tool = next(
+        tool
+        for tool in listed.json()["result"]["tools"]
+        if tool["name"] == "query_inventory_batch_snapshot_v1"
+    )
+    assert set(inventory_batch_tool["inputSchema"]["required"]) == {"marketScope", "skus"}
+    assert inventory_batch.status_code == 200
+    assert inventory_batch.json()["result"]["isError"] is False
     assert identity.status_code == 200
     identity_document = identity.json()["result"]["structuredContent"]
     assert set(identity_document) == {"success", "code", "message", "result"}
