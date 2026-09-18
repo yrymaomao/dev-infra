@@ -29,7 +29,7 @@ def build_provider_composition(
     config: DeploymentCompositionConfig,
     environ: dict[str, str] | MappingProxyType[str, str],
 ) -> CompositionArtifacts:
-    """Preflight secrets and construct the exact three-provider Runtime bridge."""
+    """Preflight secrets and construct the explicitly allowlisted Runtime bridge."""
 
     if config.runtime_plugin_policy is None:
         raise ValueError("Runtime plugin policy was not loaded")

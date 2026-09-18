@@ -12,7 +12,9 @@ from ebiz_deployment.supply_chain_bff.models import SCHEMA, Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep the BFF process loggers alive: fileConfig() would otherwise disable every
+    # logger created before the migration ran (the worker safe-failure log included).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 target_metadata = Base.metadata
 
 

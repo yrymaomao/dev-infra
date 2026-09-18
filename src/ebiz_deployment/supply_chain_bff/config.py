@@ -46,7 +46,10 @@ class BffSettings:
     level2_mq_enabled: bool = False
     autonomous_schedule_dispatch_enabled: bool = True
     openclaw_enabled: bool = False
+    openclaw_reception_enabled: bool = False
     openclaw_connector_credential: str | None = field(default=None, repr=False)
+    openclaw_ingress_url: str = "http://127.0.0.1:18789/ebiz/tool-gateway/ingress"
+    openclaw_ingress_credential: str | None = field(default=None, repr=False)
     tool_gateway_jwt_key: str | None = field(default=None, repr=False)
     tool_gateway_issuer: str = "ebizhub-supply-chain-bff"
     tool_gateway_audience: str = "ebizhub-tool-gateway"
@@ -55,6 +58,19 @@ class BffSettings:
     openclaw_principal_id: str = "openclaw-supply-chain"
     openclaw_agent_id: str = "main"
     openclaw_offer_id: str = "supply-chain-on-demand"
+    # CRM reception profile (OpenClaw x CRM Phase 1). Its OpenClaw host is a
+    # separate Adapter instance with its own ingress; the connector credential and
+    # Gateway JWT key are the BFF's and shared with the Supply Chain profile.
+    crm_openclaw_enabled: bool = False
+    crm_openclaw_tenant_id: str = "tenant-local-dev"
+    crm_openclaw_agent_id: str = "crm"
+    crm_openclaw_offer_id: str = "crm-case-advice"
+    crm_openclaw_ingress_url: str = "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
+    crm_openclaw_ingress_credential: str | None = field(default=None, repr=False)
+    crm_service_url: str | None = None
+    # Phase 2 workbench operation routes (P2-G). Off by default: they need the
+    # Runtime owner reads listed in docs/crm-profile.md "Workbench operation routes".
+    crm_workbench_operations_enabled: bool = False
     max_selected_skus: int = 10_000
     bulk_batch_size: int = 200
     tenant_bulk_concurrency: int = 2
@@ -114,6 +130,48 @@ class BffSettings:
             os.environ.get("BFF_OPENCLAW_CONNECTOR_CREDENTIAL", "").strip() or None
         )
         tool_gateway_jwt_key = os.environ.get("TOOL_GATEWAY_JWT_KEY", "").strip() or None
+        openclaw_ingress_url = _ingress_url(
+            "BFF_OPENCLAW_INGRESS_URL", "http://127.0.0.1:18789/ebiz/tool-gateway/ingress"
+        )
+        crm_openclaw_enabled = _boolean("BFF_CRM_OPENCLAW_ENABLED", False)
+        crm_openclaw_ingress_url = _ingress_url(
+            "BFF_CRM_OPENCLAW_INGRESS_URL", "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
+        )
+        crm_openclaw_ingress_credential = (
+            os.environ.get("BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
+        )
+        crm_service_url = os.environ.get("BFF_CRM_SERVICE_URL", "").strip() or None
+        crm_workbench_operations_enabled = _boolean("BFF_CRM_WORKBENCH_OPERATIONS_ENABLED", False)
+        if crm_workbench_operations_enabled and not crm_openclaw_enabled:
+            raise ValueError(
+                "BFF_CRM_WORKBENCH_OPERATIONS_ENABLED requires BFF_CRM_OPENCLAW_ENABLED "
+                "(session exchange, tenant fence and profile)"
+            )
+        if crm_openclaw_enabled:
+            if not openclaw_enabled:
+                raise ValueError(
+                    "BFF_CRM_OPENCLAW_ENABLED requires BFF_OPENCLAW_ENABLED "
+                    "(shared connector credential and Gateway JWT key)"
+                )
+            if crm_service_url is None:
+                raise ValueError(
+                    "BFF_CRM_SERVICE_URL is required when the CRM reception is enabled"
+                )
+            _service_origin(crm_service_url, "BFF_CRM_SERVICE_URL")
+            credential = crm_openclaw_ingress_credential
+            if credential is None or len(credential) < 32:
+                raise ValueError(
+                    "BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL must be a bounded credential of at least "
+                    "32 characters"
+                )
+            if crm_openclaw_ingress_url == openclaw_ingress_url:
+                raise ValueError(
+                    "BFF_CRM_OPENCLAW_INGRESS_URL must name the CRM host instance, not the Supply "
+                    "Chain one"
+                )
+        openclaw_ingress_credential = (
+            os.environ.get("BFF_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
+        )
         if openclaw_enabled and (
             openclaw_connector_credential is None
             or len(openclaw_connector_credential) < 32
@@ -157,14 +215,25 @@ class BffSettings:
             ),
             openclaw_enabled=openclaw_enabled,
             openclaw_connector_credential=openclaw_connector_credential,
+            openclaw_ingress_url=openclaw_ingress_url,
+            openclaw_ingress_credential=openclaw_ingress_credential,
             tool_gateway_jwt_key=tool_gateway_jwt_key,
             tool_gateway_issuer=_bounded("TOOL_GATEWAY_JWT_ISSUER", "ebizhub-supply-chain-bff"),
             tool_gateway_audience=_bounded("TOOL_GATEWAY_JWT_AUDIENCE", "ebizhub-tool-gateway"),
             openclaw_selector=_bounded("BFF_OPENCLAW_SELECTOR", "supply-chain-dev"),
             openclaw_tenant_id=_bounded("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
             openclaw_principal_id=_bounded("BFF_OPENCLAW_PRINCIPAL_ID", "openclaw-supply-chain"),
+            openclaw_reception_enabled=_boolean("BFF_OPENCLAW_RECEPTION_ENABLED", False),
             openclaw_agent_id=_openclaw_agent_id("BFF_OPENCLAW_AGENT_ID", "main"),
             openclaw_offer_id=_bounded("BFF_OPENCLAW_OFFER_ID", "supply-chain-on-demand"),
+            crm_openclaw_enabled=crm_openclaw_enabled,
+            crm_openclaw_tenant_id=_bounded("BFF_CRM_OPENCLAW_TENANT_ID", "tenant-local-dev"),
+            crm_openclaw_agent_id=_openclaw_agent_id("BFF_CRM_OPENCLAW_AGENT_ID", "crm"),
+            crm_openclaw_offer_id=_bounded("BFF_CRM_OPENCLAW_OFFER_ID", "crm-case-advice"),
+            crm_openclaw_ingress_url=crm_openclaw_ingress_url,
+            crm_openclaw_ingress_credential=crm_openclaw_ingress_credential,
+            crm_service_url=crm_service_url,
+            crm_workbench_operations_enabled=crm_workbench_operations_enabled,
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
             tenant_bulk_concurrency=_integer(
@@ -187,6 +256,37 @@ class BffSettings:
                 uncertainty_ratio=_float("BFF_ETA_UNCERTAINTY_RATIO", 0.3, minimum=0, maximum=1),
             ),
         )
+
+
+def _ingress_url(name: str, default: str) -> str:
+    value = os.environ.get(name, default).strip()
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path != "/ebiz/tool-gateway/ingress"
+    ):
+        raise ValueError(f"{name} must be the loopback ingress path")
+    return value
+
+
+def _service_origin(value: str, name: str) -> None:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"{name} must be a credential-free HTTP(S) origin")
+    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+        raise ValueError(f"{name} requires HTTPS outside loopback")
 
 
 def _required(name: str) -> str:

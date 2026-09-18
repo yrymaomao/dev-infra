@@ -134,6 +134,14 @@ def validated_batch_artifact(
     items = payload.get("items")
     if not isinstance(items, list) or len(items) != expected_item_count:
         raise BatchResultContractError("Report result artifact count does not match its batch")
+    if schema_version == "supply-chain.report-batch-results.v2":
+        skus = [item["sku"] for item in items]
+        if len(set(skus)) != len(skus):
+            raise BatchResultContractError("Report result artifact contains duplicate SKUs")
+        for item in items:
+            forecast = item.get("forecast")
+            if isinstance(forecast, Mapping) and forecast.get("sku") != item["sku"]:
+                raise BatchResultContractError("Report forecast SKU does not match its item")
     statuses = [item.get("result_status") for item in items if isinstance(item, Mapping)]
     actual_counts = (
         statuses.count("COMPLETE"),

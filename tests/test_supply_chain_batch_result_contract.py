@@ -24,6 +24,26 @@ def _artifact() -> dict[str, object]:
     return value
 
 
+@pytest.mark.parametrize("corruption", ["forecast_sku", "duplicate_sku"])
+def test_v2_artifact_rejects_inconsistent_sku_identity(corruption: str) -> None:
+    artifact = _artifact()
+    items = artifact["items"]
+    assert isinstance(items, list)
+    if corruption == "forecast_sku":
+        items[0]["forecast"]["sku"] = "OTHER-SKU"
+    else:
+        items[1]["sku"] = items[0]["sku"]
+    with pytest.raises(BatchResultContractError, match="SKU"):
+        validated_batch_artifact(
+            artifact,
+            report_run_id=UUID("11111111-1111-4111-8111-111111111111"),
+            batch_id=UUID("22222222-2222-4222-8222-222222222222"),
+            item_offset=400,
+            expected_item_count=3,
+            expected_counts=(1, 1, 1),
+        )
+
+
 def test_batch_output_and_restricted_artifact_are_validated_together() -> None:
     output = {
         "result_artifact_ref": "memory://payloads/v1/result",

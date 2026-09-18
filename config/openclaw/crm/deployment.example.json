@@ -1,0 +1,26 @@
+{
+  "connector": "crm",
+  "gatewayOrigin": "http://127.0.0.1:8000",
+  "credentialUrl": "http://127.0.0.1:8001/api/crm/v2/openclaw/credentials",
+  "endUrl": "http://127.0.0.1:8001/api/crm/v2/openclaw/runs/end",
+  "connectorCredentialEnv": "EBIZ_CRM_CONNECTOR",
+  "ingressCredentialEnv": "EBIZ_CRM_INGRESS",
+  "generation": {
+    "path": "C:\\openclaw\\crm\\generations\\generation-crm.signed.json",
+    "deploymentRoot": "C:\\openclaw\\crm\\generations",
+    "publicKeys": {
+      "ebizhub-deployment-generation-2026-09": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAREPLACE_WITH_THE_REVIEWED_ED25519_SPKI_KEY=\n-----END PUBLIC KEY-----\n"
+    },
+    "expectedPayloadDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "tenantId": "tenant-example",
+    "audience": "ebizhub-openclaw",
+    "generationId": "supply-chain-v2-dev-1-crm"
+  },
+  "retainedGenerations": [],
+  "ledgerPath": "C:\\openclaw\\crm\\ledger\\invocations.sqlite",
+  "workspaceDir": "C:\\openclaw\\crm\\workspace",
+  "agentId": "crm",
+  "provider": "ebiz-model",
+  "model": "governed-128k",
+  "timeoutMs": 180000
+}

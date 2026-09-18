@@ -21,13 +21,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-SCHEMA = "supply_chain_bff"
+from ebiz_deployment.bff_persistence import SCHEMA as SCHEMA
+from ebiz_deployment.bff_persistence import Base as Base
 
-
-class Base(DeclarativeBase):
-    pass
+# ``SCHEMA`` and ``Base`` come from ``ebiz_deployment.bff_persistence`` so the generic
+# OpenClaw reception tables share this metadata and the single Alembic chain.
 
 
 class Batch(Base):

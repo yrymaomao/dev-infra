@@ -14,7 +14,12 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
-    Base.metadata.create_all(bind=op.get_bind(), checkfirst=True)
+    # Only the three tables owned by this revision. Importing later ORM models
+    # must not create future tables ahead of their authoritative migrations.
+    tables = [Base.metadata.tables[f"{SCHEMA}.{name}"] for name in (
+        "agent_execution_batch", "agent_execution_batch_item", "agent_execution_batch_activity",
+    )]
+    Base.metadata.create_all(bind=op.get_bind(), tables=tables, checkfirst=True)
 
 
 def downgrade() -> None:

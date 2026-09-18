@@ -1,0 +1,434 @@
+$schema: https://schemas.ebizhub.com/meta/runtime-contract/v1.2
+$vocabulary:
+  https://schemas.ebizhub.com/vocab/runtime-identity/v1: true
+title: CRM Agent on-demand advice output contract
+description: >-
+  The reference closure of CaseAdvice, projected out of crm-case.schema.yaml so
+  the advise workflow's result schema can be bundled without the whole Case
+  contract. A Workflow resource $ref bundles and resolves the whole FILE it
+  names, and the resolved Case contract is 249 KB against the 65 KB
+  per-resource budget tests/test_workflow_resource_budget.py enforces. Every
+  definition below is byte-identical to its crm-case.schema.yaml original;
+  tests/test_advise_workflow.py recomputes the closure and fails on any drift,
+  on anything missing, and on anything extra. Regenerate with
+  tools/project_advice_output_schema.py.
+$defs:
+  ActionType:
+    type: string
+    enum:
+    - SEND_MESSAGE
+    - CREATE_RETURN
+    - CREATE_REPAIR
+    - CREATE_EXCHANGE
+    - CREATE_REFUND
+    - ESCALATE_DISPUTE
+    - REQUEST_INFORMATION
+  AdviceOutcome:
+    type: string
+    enum:
+    - ADVISED
+    - BLOCKED
+    - TAKEOVER
+  CaseAdvice:
+    type: object
+    additionalProperties: false
+    required:
+    - schema_version
+    - case_id
+    - case_version
+    - outcome
+    - policy_version
+    - snapshot_hash
+    - observed_at
+    - assessment
+    - evidence_refs
+    properties:
+      schema_version:
+        const: crm.case-advice.v1
+      case_id:
+        type: string
+        minLength: 1
+        maxLength: 128
+      case_version:
+        type: integer
+        minimum: 0
+      outcome:
+        $ref: '#/$defs/AdviceOutcome'
+      policy_version:
+        type: string
+        minLength: 1
+        maxLength: 64
+      snapshot_hash:
+        $ref: '#/$defs/Sha256'
+      observed_at:
+        $ref: '#/$defs/Timestamp'
+      assessment:
+        $ref: '#/$defs/CaseAdviceAssessment'
+      decision:
+        $ref: '#/$defs/CaseAdviceDecision'
+      proposal:
+        $ref: '#/$defs/CaseAdviceProposal'
+      draft:
+        $ref: '#/$defs/ReplyDraft'
+      handoff:
+        $ref: '#/$defs/HumanHandoffSummary'
+      evidence_refs:
+        type: array
+        minItems: 1
+        maxItems: 16
+        items:
+          $ref: '#/$defs/EvidenceRef'
+  CaseAdviceAssessment:
+    type: object
+    additionalProperties: false
+    required:
+    - status
+    - blocking_claims
+    - exceptions
+    - risk_flags
+    properties:
+      status:
+        type: string
+        enum:
+        - ACTIONABLE
+        - BLOCKED
+        - HUMAN_TAKEOVER
+      blocking_claims:
+        type: array
+        maxItems: 50
+        items:
+          $ref: '#/$defs/ClaimName'
+      exceptions:
+        type: array
+        maxItems: 32
+        items:
+          $ref: '#/$defs/EvidenceException'
+      risk_flags:
+        type: array
+        maxItems: 20
+        items:
+          $ref: '#/$defs/RiskFlag'
+  CaseAdviceDecision:
+    type: object
+    additionalProperties: false
+    required:
+    - next_action
+    - action_type
+    - priority
+    - reasons
+    - risk_flags
+    - requires_human
+    - summary
+    properties:
+      next_action:
+        $ref: '#/$defs/NextAction'
+      action_type:
+        $ref: '#/$defs/ActionType'
+      priority:
+        type: string
+        enum:
+        - P0
+        - P1
+        - P2
+        - P3
+      reasons:
+        type: array
+        minItems: 1
+        maxItems: 30
+        items:
+          $ref: '#/$defs/UpperCode'
+      risk_flags:
+        type: array
+        maxItems: 20
+        items:
+          $ref: '#/$defs/RiskFlag'
+      requires_human:
+        type: boolean
+      summary:
+        type: string
+        minLength: 1
+        maxLength: 1200
+  CaseAdviceProposal:
+    type: object
+    additionalProperties: false
+    required:
+    - action_type
+    - impact_summary
+    - risk_summary
+    - target_thread_ref
+    - body_hash
+    - channel_send_supported
+    properties:
+      action_type:
+        $ref: '#/$defs/ActionType'
+      impact_summary:
+        type: string
+        minLength: 1
+        maxLength: 800
+      risk_summary:
+        type: string
+        minLength: 1
+        maxLength: 800
+      target_thread_ref:
+        type: string
+        minLength: 1
+        maxLength: 256
+      body_hash:
+        $ref: '#/$defs/Sha256'
+      channel_send_supported:
+        type: boolean
+  ClaimName:
+    type: string
+    minLength: 1
+    maxLength: 64
+    pattern: ^[a-z][a-z0-9_]*$
+  EvidenceException:
+    type: object
+    additionalProperties: false
+    required:
+    - code
+    - importance
+    - claim
+    - detail
+    properties:
+      code:
+        $ref: '#/$defs/UpperCode'
+      importance:
+        type: string
+        enum:
+        - blocking
+        - degrading
+        - informational
+      claim:
+        $ref: '#/$defs/ClaimName'
+      detail:
+        type: string
+        minLength: 1
+        maxLength: 400
+  EvidenceRef:
+    description: source_type is what kind of record this is; source_system is which service produced it.
+      They are independent axes and neither is encoded in the other.
+    type: object
+    additionalProperties: false
+    required:
+    - evidence_id
+    - tenant_id
+    - source_type
+    - source_system
+    - captured_at
+    - content_ref
+    - schema_version
+    - classification
+    properties:
+      evidence_id:
+        type: string
+        minLength: 36
+        maxLength: 36
+        format: uuid
+      tenant_id:
+        type: string
+        minLength: 1
+        maxLength: 128
+      source_type:
+        type: string
+        maxLength: 64
+        enum:
+        - case_record
+        - conversation_message
+        - case_action
+        - case_decision
+        - manual_task
+        - account_capability
+        - order_snapshot
+        - after_sales_snapshot
+        - shipment_snapshot
+        - warehouse_snapshot
+        - dispute_snapshot
+        - knowledge_article
+      source_system:
+        type: string
+        minLength: 1
+        maxLength: 128
+      external_object_id:
+        type: string
+        minLength: 1
+        maxLength: 256
+      captured_at:
+        $ref: '#/$defs/Timestamp'
+      freshness_at:
+        $ref: '#/$defs/Timestamp'
+      content_ref:
+        type: string
+        minLength: 1
+        maxLength: 512
+      content_hash:
+        $ref: '#/$defs/Sha256'
+      content_type:
+        type: string
+        minLength: 1
+        maxLength: 256
+      size_bytes:
+        type: integer
+        minimum: 0
+      access_level:
+        type: string
+        minLength: 1
+        maxLength: 128
+      retention_policy:
+        type: string
+        minLength: 1
+        maxLength: 128
+      schema_version:
+        type: integer
+        minimum: 1
+      capability_ref:
+        $ref: '#/$defs/VersionedRef'
+      plugin_ref:
+        oneOf:
+        - $ref: '#/$defs/VersionedRef'
+        - type: 'null'
+      execution_id:
+        type:
+        - string
+        - 'null'
+        format: uuid
+      trace_id:
+        type: string
+        minLength: 1
+        maxLength: 256
+      classification:
+        type: string
+        enum:
+        - internal
+        - confidential
+        - restricted
+  HumanHandoffSummary:
+    description: Model output for the human takeover branch. Operator-facing only.
+    type: object
+    additionalProperties: false
+    required:
+    - summary
+    - open_questions
+    - risk_flags
+    properties:
+      summary:
+        type: string
+        minLength: 1
+        maxLength: 2000
+      open_questions:
+        type: array
+        maxItems: 20
+        items:
+          type: string
+          minLength: 1
+          maxLength: 300
+      risk_flags:
+        type: array
+        maxItems: 20
+        items:
+          $ref: '#/$defs/RiskFlag'
+  Locale:
+    type: string
+    minLength: 2
+    maxLength: 16
+    pattern: ^[a-z]{2}(-[A-Z]{2})?$
+  NextAction:
+    type: string
+    enum:
+    - SEND_MESSAGE
+    - PROPOSE_ACTION
+    - MANUAL_TASK
+    - NO_ACTION
+  ReplyDraft:
+    description: Model output. Every factual sentence must cite an EvidenceRef content_ref.
+    type: object
+    additionalProperties: false
+    required:
+    - locale
+    - body
+    - citations
+    - contains_commitment
+    properties:
+      subject:
+        type: string
+        minLength: 1
+        maxLength: 200
+      locale:
+        $ref: '#/$defs/Locale'
+      body:
+        type: string
+        minLength: 1
+        maxLength: 8000
+      citations:
+        type: array
+        minItems: 0
+        maxItems: 50
+        items:
+          type: string
+          minLength: 1
+          maxLength: 512
+      contains_commitment:
+        type: boolean
+      requested_information:
+        type: array
+        maxItems: 20
+        items:
+          type: string
+          minLength: 1
+          maxLength: 200
+  RiskFlag:
+    type: string
+    enum:
+    - EVIDENCE_CONFLICT
+    - HIGH_VALUE_REFUND
+    - REPEATED_CLAIM
+    - PLATFORM_DISPUTE
+    - LEGAL_THREAT
+    - PERSONAL_THREAT
+    - POLICY_VERSION_MISSING
+    - LOW_MODEL_CONFIDENCE
+    - CAPABILITY_UNKNOWN
+    - CONTENT_SAFETY
+    - LOCALE_MISMATCH
+    - ATTACHMENT_EVIDENCE_REQUIRED
+    - UNGROUNDED_CLAIM
+    - PROHIBITED_COMMITMENT
+  Sha256:
+    type: string
+    pattern: ^[a-f0-9]{64}$
+  Timestamp:
+    type: string
+    format: date-time
+    minLength: 20
+    maxLength: 64
+  UpperCode:
+    type: string
+    minLength: 1
+    maxLength: 64
+    pattern: ^[A-Z][A-Z0-9_]*$
+  VersionedRef:
+    type: object
+    additionalProperties: false
+    required:
+    - resource_type
+    - resource_id
+    - version
+    - digest
+    properties:
+      resource_type:
+        type: string
+        minLength: 1
+        maxLength: 64
+      resource_id:
+        type: string
+        minLength: 1
+        maxLength: 256
+      version:
+        oneOf:
+        - type: integer
+          minimum: 1
+        - type: string
+          minLength: 1
+          maxLength: 128
+      digest:
+        $ref: '#/$defs/Sha256'

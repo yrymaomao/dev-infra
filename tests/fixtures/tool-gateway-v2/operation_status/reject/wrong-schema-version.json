@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "operation_id": "10000000-0000-4000-8000-000000000001",
+  "state": "running",
+  "revision": 3,
+  "observed_at": "2026-09-16T02:00:30Z",
+  "execution_id": "20000000-0000-4000-8000-000000000002",
+  "execution_deadline_at": "2026-09-16T02:30:00Z",
+  "cancel_requested": false,
+  "settlement": {
+    "state": "not_started",
+    "effect": "none"
+  },
+  "next_action": "poll_status",
+  "retry_after_seconds": 5
+}

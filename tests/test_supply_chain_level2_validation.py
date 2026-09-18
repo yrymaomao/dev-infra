@@ -23,7 +23,12 @@ from ebiz_deployment.supply_chain_bff.level2_contracts import (
 )
 from ebiz_deployment.supply_chain_bff.level2_repository import next_weekly_fire
 from ebiz_deployment.supply_chain_bff.policy import PolicyInvalid, validate_policy
-from ebiz_deployment.supply_chain_bff.selection_csv import CsvFileError, parse_selection_csv
+from ebiz_deployment.supply_chain_bff.selection_csv import (
+    CSV_TEMPLATE_BYTES,
+    CSV_TEMPLATE_VERSION,
+    CsvFileError,
+    parse_selection_csv,
+)
 
 ROOT = Path(__file__).parents[1]
 
@@ -59,6 +64,10 @@ class _ScheduleWorker:
         return None
 
 
+#: The Supply Chain profile only answers for session keys its own agent instance minted.
+SESSION_KEY = "agent:main:openclaw:" + "0" * 48
+
+
 class _OpenClawRepository:
     def __init__(self) -> None:
         self.ended = False
@@ -72,16 +81,20 @@ class _OpenClawRepository:
         principal_id: str,
         agent_id: str,
         now: datetime,
+        model_session_id: str | None = None,
+        turn_id: object | None = None,
     ) -> dict[str, str]:
         assert selector == "supply-chain-dev"
         assert run_id == "run-a"
         assert agent_id == "main"
+        assert model_session_id is None
+        assert turn_id is None
         assert now.tzinfo is not None
         return {
             "tenantId": tenant_id,
             "principalId": principal_id,
             "sessionId": "00000000-0000-4000-8000-000000000009",
-            "sessionKey": "session-a",
+            "sessionKey": SESSION_KEY,
             "runId": run_id,
         }
 
@@ -96,7 +109,7 @@ class _OpenClawRepository:
         assert (tenant_id, principal_id, session_key) == (
             "tenant-local-dev",
             "openclaw-supply-chain",
-            "session-a",
+            SESSION_KEY,
         )
         assert now.tzinfo is not None
         return True, "3"
@@ -138,6 +151,7 @@ def test_csv_accepts_valid_rows_deduplicates_and_isolates_conflicts() -> None:
     assert [row.sku for row in parsed.rows] == ["SKU-1", "SKU-3"]
     assert [error.code for error in parsed.errors] == [
         "CSV_DUPLICATE_CONFLICT",
+        "CSV_DUPLICATE_CONFLICT",
         "CSV_ROW_INVALID",
     ]
     assert parsed.input_row_count == 6
@@ -174,6 +188,73 @@ def test_csv_10001_rows_is_rejected_not_truncated() -> None:
 def test_csv_file_size_is_bounded_before_parsing() -> None:
     with pytest.raises(CsvFileError, match="5 MiB"):
         parse_selection_csv(b"x" * (5 * 1024 * 1024 + 1))
+
+
+def test_csv_v1_dialect_accepts_bom_and_quoted_newline_without_column_drift() -> None:
+    parsed = parse_selection_csv(
+        b"\xef\xbb\xbfsku,fulfillment_mode,fba_ratio,fbm_ratio\n"
+        b'"SKU-1",FBM,,\n"SKU-2\nCONTINUED",FBM,,\nSKU-3,FBM,,\n'
+    )
+    assert [row.sku for row in parsed.rows] == ["SKU-1", "SKU-3"]
+    assert [(error.row, error.code) for error in parsed.errors] == [(3, "CSV_ROW_INVALID")]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"sku;fulfillment_mode;fba_ratio;fbm_ratio\nSKU-1;FBM;;\n",
+        b"sku,fulfillment_mode,fba_ratio,fbm_ratio,unexpected\nSKU-1,FBM,,,value\n",
+        b"sku,fulfillment_mode,fba_ratio\nSKU-1,FBM,\n",
+    ],
+)
+def test_csv_v1_dialect_rejects_unpublished_headers_or_delimiter(content: bytes) -> None:
+    with pytest.raises(CsvFileError, match="header"):
+        parse_selection_csv(content)
+
+
+@pytest.mark.anyio
+async def test_csv_template_endpoint_publishes_exact_versioned_dialect() -> None:
+    secret = "j" * 32
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"c" * 32,
+        jwt_secret=secret,
+        runtime_url="http://127.0.0.1:8000",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:runtime-service",
+        level2_enabled=True,
+    )
+    token = jwt.encode(
+        {
+            "aud": "agent-runtime",
+            "sub": "user-a",
+            "tenant_id": "tenant-a",
+            "exp": int(clock_time.time()) + 60,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    app = create_app(
+        BffContainer(
+            settings=settings,
+            repository=object(),  # type: ignore[arg-type]
+            runtime=object(),  # type: ignore[arg-type]
+            coordinator=_IdleCoordinator(),  # type: ignore[arg-type]
+            cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
+            level2_repository=object(),  # type: ignore[arg-type]
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://bff.test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as client:
+        response = await client.get("/api/supply-chain/v2/selection-imports/template.csv")
+
+    assert response.status_code == 200
+    assert response.content == CSV_TEMPLATE_BYTES
+    assert response.headers["x-supply-chain-template-version"] == CSV_TEMPLATE_VERSION
+    assert response.headers["content-disposition"].endswith('supply-chain-selection-v1.csv"')
 
 
 def test_schedule_defaults_to_monday_noon_and_validates_modes() -> None:
@@ -370,7 +451,10 @@ def test_policy_digest_is_canonical_and_cross_fields_are_checked() -> None:
 
 
 @pytest.mark.anyio
-async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding() -> None:
+@pytest.mark.parametrize("crm_enabled", [False, True])
+async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding(
+    crm_enabled: bool,
+) -> None:
     connector = "c" * 32
     gateway_key = "g" * 32
     repository = _OpenClawRepository()
@@ -383,6 +467,7 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
         runtime_credential_ref="opaque:runtime-service",
         level2_enabled=True,
         openclaw_enabled=True,
+        crm_openclaw_enabled=crm_enabled,
         openclaw_connector_credential=connector,
         tool_gateway_jwt_key=gateway_key,
     )
@@ -395,6 +480,8 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
             cursor=CursorSigner(b"h" * 32, ttl=timedelta(days=7)),
             level2_repository=repository,  # type: ignore[arg-type]
             level2_worker=_ScheduleWorker(),  # type: ignore[arg-type]
+            # The CRM profile needs a session-principal client; this test never calls it.
+            crm_session_client=object(),  # type: ignore[arg-type]
         )
     )
     headers = {"Authorization": f"Bearer {connector}"}
@@ -410,9 +497,14 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
             json={
                 "tenant_id": "tenant-local-dev",
                 "principal_id": "openclaw-supply-chain",
-                "session_key": "session-a",
+                "session_key": SESSION_KEY,
                 "action": "invoke",
-                "candidate_offer_ids": ["supply-chain-on-demand", "other"],
+                "candidate_offer_ids": [
+                    "supply-chain-on-demand",
+                    "crm-case-advice",
+                    "crm-send",
+                    "other",
+                ],
             },
         )
         ended = await client.post("/api/supply-chain/v2/openclaw/runs/end", json={"runId": "run-a"})
@@ -423,12 +515,14 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
         payload["jwt"], gateway_key, algorithms=["HS256"], audience="ebizhub-tool-gateway"
     )
     assert claims["tenant_id"] == "tenant-local-dev"
-    assert claims["session_key"] == "session-a"
+    assert claims["session_key"] == SESSION_KEY
     assert payload["identity"]["runId"] == "run-a"
     assert policy.status_code == 200, policy.text
     assert policy.json() == {
         "binding_active": True,
         "policy_revision": "3",
+        # R1-06: the Supply Chain profile never authorizes another profile's offer,
+        # whether or not the CRM profile is enabled on the same BFF.
         "allowed_offer_ids": ["supply-chain-on-demand"],
     }
     assert ended.json() == {"ended": True}

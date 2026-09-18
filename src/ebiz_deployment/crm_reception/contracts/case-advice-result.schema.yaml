@@ -1,0 +1,57 @@
+$schema: https://schemas.ebizhub.com/meta/runtime-contract/v1.2
+$vocabulary:
+  https://schemas.ebizhub.com/vocab/runtime-identity/v1: true
+title: CRM Case Advice Result
+# The Workflow v1.3 envelope of `crm-case-advise-on-demand`: exactly the six
+# keys the Runtime's ScopedResultBuilder emits, modelled on Supply Chain's
+# schemas/level2/batch-result.schema.yaml. All three terminals COMPLETE - a
+# blocked Case and a human takeover are answers too, and `payload.outcome`
+# says which - so `status` is a constant, and `evidence` and `issues` are
+# empty by construction: v1.3 `end.result.evidence_claims` and `issue_refs`
+# are static projections that cannot carry a run-time-sized list, so the
+# evidence the advice rests on travels as `payload.evidence_refs` and the
+# blocking claims as `payload.assessment`.
+#
+# A separate file rather than a second definition in
+# schemas/agent-result.schema.yaml, because that document must hold exactly one
+# `x-runtime-identity: scope` object (`test_result_schema_has_one_scope_identity`)
+# and the orchestrate envelope already is it.
+type: object
+additionalProperties: false
+required: [tenant_id, status, scope, payload, evidence, issues]
+properties:
+  tenant_id:
+    type: string
+    minLength: 1
+    maxLength: 256
+    x-runtime-identity: tenant
+  status: {const: COMPLETE}
+  # The same eight replay anchors as the orchestrate envelope's Scope, projected
+  # from `assess_evidence` by every terminal: which Case, at which version,
+  # under which policy, evaluated when.
+  scope:
+    type: object
+    additionalProperties: false
+    required:
+      [tenant_id, account_id, platform, case_id, case_version, snapshot_hash,
+       policy_version, produced_at]
+    properties:
+      tenant_id:
+        type: string
+        minLength: 1
+        maxLength: 256
+        x-runtime-identity: tenant
+      account_id: {type: string, minLength: 1, maxLength: 128}
+      platform: {type: string, minLength: 1, maxLength: 64}
+      case_id: {type: string, minLength: 1, maxLength: 128}
+      case_version: {type: integer, minimum: 0}
+      snapshot_hash: {type: string, pattern: "^[a-f0-9]{64}$"}
+      policy_version: {type: string, minLength: 1, maxLength: 64}
+      produced_at: {type: string, format: date-time}
+  payload: {$ref: "crm-advice-output.schema.yaml#/$defs/CaseAdvice"}
+  evidence:
+    type: array
+    maxItems: 0
+  issues:
+    type: array
+    maxItems: 0

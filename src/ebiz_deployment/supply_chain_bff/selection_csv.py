@@ -10,7 +10,10 @@ from pydantic import ValidationError
 
 from .level2_contracts import CsvRowError, CsvSelectionRow
 
-_HEADERS = ("sku", "fulfillment_mode", "fba_ratio", "fbm_ratio")
+CSV_TEMPLATE_VERSION = "supply-chain.selection-import-template.v1"
+CSV_HEADERS = ("sku", "fulfillment_mode", "fba_ratio", "fbm_ratio")
+CSV_TEMPLATE_BYTES = (",".join(CSV_HEADERS) + "\n").encode("utf-8")
+_HEADERS = CSV_HEADERS
 MAX_CSV_BYTES = 5 * 1024 * 1024
 
 
@@ -44,7 +47,7 @@ def parse_selection_csv(content: bytes, *, max_rows: int = 10_000) -> CsvSelecti
         raise CsvFileError("CSV header must be sku,fulfillment_mode,fba_ratio,fbm_ratio")
 
     accepted: dict[str, CsvSelectionRow] = {}
-    first_rows: dict[str, int] = {}
+    sku_rows: dict[str, list[int]] = {}
     conflicted: set[str] = set()
     errors: list[CsvRowError] = []
     input_row_count = 0
@@ -72,31 +75,33 @@ def parse_selection_csv(content: bytes, *, max_rows: int = 10_000) -> CsvSelecti
                     )
                 )
                 continue
+            sku_rows.setdefault(parsed.sku, []).append(row_number)
             previous = accepted.get(parsed.sku)
             if previous is None and parsed.sku not in conflicted:
                 accepted[parsed.sku] = parsed
-                first_rows[parsed.sku] = row_number
                 continue
             if previous is not None and _configuration(previous) == _configuration(parsed):
                 continue
             conflicted.add(parsed.sku)
             accepted.pop(parsed.sku, None)
+    except csv.Error:
+        raise CsvFileError("CSV structure is invalid") from None
+    for sku in conflicted:
+        for row_number in sku_rows[sku]:
             errors.append(
                 CsvRowError(
                     row=row_number,
-                    sku=parsed.sku,
+                    sku=sku,
                     code="CSV_DUPLICATE_CONFLICT",
                     message=(
-                        "Duplicate SKU conflicts with row "
-                        f"{first_rows.get(parsed.sku, row_number)} and was excluded."
+                        "Duplicate SKU has conflicting configurations; "
+                        "all rows in this SKU group were excluded."
                     ),
                 )
             )
-    except csv.Error:
-        raise CsvFileError("CSV structure is invalid") from None
     return CsvSelection(
         rows=tuple(accepted.values()),
-        errors=tuple(errors),
+        errors=tuple(sorted(errors, key=lambda error: error.row)),
         input_row_count=input_row_count,
     )
 
