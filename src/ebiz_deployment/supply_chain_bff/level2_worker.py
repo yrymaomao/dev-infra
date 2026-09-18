@@ -681,7 +681,8 @@ def _merge_selection_pages(pages: list[dict[str, Any]]) -> dict[str, Any]:
     warnings: list[str] = []
     ambiguities: list[str] = []
     seen_cursors: set[str] = set()
-    previous_sku: str | None = None
+    previous_sort_key: str | None = None
+    seen_skus: set[str] = set()
     for page_no, page in enumerate(pages):
         if (
             page["selector"] != selector
@@ -696,9 +697,13 @@ def _merge_selection_pages(pages: list[dict[str, Any]]) -> dict[str, Any]:
             sku = row.get("sku")
             if not isinstance(sku, str) or not sku:
                 raise ValueError("selection discovery row omitted canonical SKU")
-            if previous_sku is not None and sku <= previous_sku:
+            sort_key = sku.casefold()
+            if sku in seen_skus or (
+                previous_sort_key is not None and sort_key < previous_sort_key
+            ):
                 raise ValueError("selection discovery rows are not globally unique and ordered")
-            previous_sku = sku
+            seen_skus.add(sku)
+            previous_sort_key = sort_key
             rows.append(row)
             if len(rows) == 10_001:
                 break

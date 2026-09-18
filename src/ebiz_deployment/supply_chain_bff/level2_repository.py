@@ -354,7 +354,9 @@ class Level2Repository:
         if not all(isinstance(sku, str) and sku for sku in skus):
             raise ValueError("selection rows require canonical SKU")
         sku_values = cast(list[str], skus)
-        if sku_values != sorted(sku_values) or len(set(sku_values)) != len(sku_values):
+        if sku_values != sorted(sku_values, key=str.casefold) or len(set(sku_values)) != len(
+            sku_values
+        ):
             raise ValueError("selection rows must be unique and ordered by SKU_ASC")
         staged = await self._stage(tenant_id, {"rows": rows, "skus": sku_values})
         async with self._factory() as session, session.begin():

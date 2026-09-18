@@ -86,6 +86,14 @@ def test_selection_pages_freeze_snapshot_order_and_stop_at_10001() -> None:
     assert oversized["limit_reached"] is True
 
 
+def test_selection_pages_accept_case_insensitive_database_order_across_pages() -> None:
+    merged = _merge_selection_pages(
+        [_page(["alpha-SKU"], next_cursor="cursor-2"), _page(["BETA-SKU"])]
+    )
+
+    assert [row["sku"] for row in merged["rows"]] == ["alpha-SKU", "BETA-SKU"]
+
+
 @pytest.mark.parametrize(
     "pages",
     [
