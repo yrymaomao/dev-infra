@@ -6,9 +6,12 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from sqlalchemy.engine import make_url
+
+from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
 
 from .eta import EtaProfile
 
@@ -25,6 +28,8 @@ class BffSettings:
     runtime_url: str
     skill_input_ref: str
     runtime_credential_ref: str = field(repr=False)
+    user_bound_credentials_enabled: bool = False
+    credential_bindings: CredentialBindings | None = field(default=None, repr=False)
     rabbitmq_url: str | None = field(default=None, repr=False)
     snapshot_time_override: datetime | None = None
     max_batch_size: int = 200
@@ -141,6 +146,21 @@ class BffSettings:
             os.environ.get("BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
         )
         crm_service_url = os.environ.get("BFF_CRM_SERVICE_URL", "").strip() or None
+        user_bound_credentials_enabled = _boolean(
+            "BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", False
+        )
+        credential_bindings = None
+        if user_bound_credentials_enabled:
+            if crm_service_url is None:
+                raise ValueError("BFF_CRM_SERVICE_URL is required for user-bound credentials")
+            _service_origin(crm_service_url, "BFF_CRM_SERVICE_URL")
+            binding_path = _required("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH")
+            binding_digest = _required("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256")
+            credential_bindings = CredentialBindings.load(
+                Path(binding_path), expected_sha256=binding_digest
+            )
+            if _boolean("BFF_LEGACY_BATCHES_ENABLED", False):
+                raise ValueError("legacy batches cannot use user-bound credentials")
         crm_workbench_operations_enabled = _boolean("BFF_CRM_WORKBENCH_OPERATIONS_ENABLED", False)
         if crm_workbench_operations_enabled and not crm_openclaw_enabled:
             raise ValueError(
@@ -186,6 +206,8 @@ class BffSettings:
             runtime_url=runtime_url,
             skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
             runtime_credential_ref=credential_ref,
+            user_bound_credentials_enabled=user_bound_credentials_enabled,
+            credential_bindings=credential_bindings,
             rabbitmq_url=rabbitmq_url,
             rabbitmq_exchange=_rabbit_name("BFF_RABBITMQ_EXCHANGE", "supply-chain.report.v1"),
             rabbitmq_queue=_rabbit_name("BFF_RABBITMQ_QUEUE", "supply-chain.report-batch.v1"),

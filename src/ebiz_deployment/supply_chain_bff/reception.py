@@ -10,7 +10,11 @@ same deployment-constant tenant/principal comparison in the owner policy.
 from __future__ import annotations
 
 from ebiz_deployment.bff_persistence import SCHEMA
-from ebiz_deployment.openclaw_reception.conversation_api import OwnerPolicy, constant_owner
+from ebiz_deployment.openclaw_reception.conversation_api import (
+    OwnerPolicy,
+    constant_owner,
+    tenant_owner,
+)
 from ebiz_deployment.openclaw_reception.profile import ReceptionProfile, session_key_prefix_for
 
 from .config import BffSettings
@@ -38,6 +42,11 @@ def supply_chain_profile(settings: BffSettings) -> ReceptionProfile:
 
 
 def supply_chain_owner(settings: BffSettings) -> OwnerPolicy:
+    if settings.user_bound_credentials_enabled:
+        return tenant_owner(
+            enabled=settings.openclaw_enabled,
+            tenant_id=settings.openclaw_tenant_id,
+        )
     return constant_owner(
         enabled=settings.openclaw_enabled,
         tenant_id=settings.openclaw_tenant_id,

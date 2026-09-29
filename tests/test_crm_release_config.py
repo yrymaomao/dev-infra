@@ -82,7 +82,7 @@ def test_four_providers_one_crm_plugin_and_the_crm_release_block_load(tmp_path: 
         ("crm-advise", 1),
     ]
     assert config.supply_chain_release.streaming_bff.migration_head == (
-        "0009_conversation_profile_index"
+        "0010_supply_chain_user_credentials"
     )
 
 

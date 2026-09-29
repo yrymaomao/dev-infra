@@ -213,7 +213,31 @@ eight scopes beside the Supply Chain pin, and `ebiz-crm-advise-publish`
 (`tools/publish_crm_advise.py`) publishes `crm@2`, `crm-advise@1` and the
 workflow from the installed CRM wheel, failing unless the checksum equals the
 reviewed digest. Both profiles share the `supply_chain_bff` schema and one
-Alembic chain (head `0009_conversation_profile_index`).
+Alembic chain (head `0010_supply_chain_user_credentials`).
+
+### Supply Chain user-bound MCP credential references (opt-in)
+
+Set `BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED=true` in both the BFF and
+Tool Gateway environments. Both processes must receive the same absolute
+`SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH` and pinned
+`SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256`. The file is a deployment-controlled
+JSON document containing **references only**, for example:
+
+```json
+{"bindings":[{"cid":"tenant-id","uid":"user-id","credential_ref":"opaque:reference"}]}
+```
+
+Every `(cid, uid)` may occur only once. The BFF obtains both identifiers from
+`BFF_CRM_SERVICE_URL`'s trusted `session-principal` response to the browser's
+ERP bearer; the browser cannot provide a reference. The Gateway verifies the
+same binding-file digest through its authenticated BFF policy response before
+starting a new on-demand operation. Missing/mismatched bindings fail closed.
+Migrate the BFF database to `0010_supply_chain_user_credentials` before
+enabling this mode. Existing ownerless reports can finish in the background
+using `SUPPLY_CHAIN_CREDENTIAL_REF`, but are not readable by new user sessions;
+ownerless schedules do not fire again. The file and any MCP Key remain outside
+Git. Disable the feature flag to retain the previous dev behavior while no
+user-owned records have been created.
 
 Phase 2 adds the workbench operation routes behind
 `BFF_CRM_WORKBENCH_OPERATIONS_ENABLED` (`GET`/`POST

@@ -86,7 +86,7 @@ Nothing below is a record of having been done.
    `CRM_ADAPTER_RECORD_DIGEST`), the base tarball digest and the
    `compatibility.json` pin.
 2. **Migrate with admission off.** `BFF_CRM_OPENCLAW_ENABLED=false`,
-   `CRM_TOOL_GATEWAY_ENABLED=false`; Alembic to `0009_conversation_profile_index`.
+   `CRM_TOOL_GATEWAY_ENABLED=false`; Alembic to `0010_supply_chain_user_credentials`.
 3. **Publish** `crm@2`, `crm-advise@1`, `crm-case-advise-on-demand@1` with
    `ebiz-crm-advise-publish --expect-digest <reviewed>`; pin the printed checksum
    as `CRM_ADVISOR_WORKFLOW_DIGEST`.

@@ -174,6 +174,7 @@ class BatchCoordinator:
         tenant_id: str,
         *,
         include_model_feedback: bool = False,
+        credential_ref: str | None = None,
     ) -> str:
         """Mint a short-lived service token; browser credentials are never persisted."""
 
@@ -195,7 +196,7 @@ class BatchCoordinator:
                 "actor_type": "service",
                 "scopes": scopes,
                 "roles": ["supply-chain-bff"],
-                "credential_ref": self._settings.runtime_credential_ref,
+                "credential_ref": credential_ref or self._settings.runtime_credential_ref,
                 "iat": issued_at,
                 "exp": issued_at + 300,
             },

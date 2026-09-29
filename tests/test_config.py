@@ -59,7 +59,7 @@ def streaming_bff_document() -> dict[str, object]:
     return {
         "version": "0.1.4",
         "schema": "supply_chain_bff",
-        "migration_head": "0009_conversation_profile_index",
+        "migration_head": "0010_supply_chain_user_credentials",
         "secret_references": [
             "supply_chain_bff_postgresql_url",
             "supply_chain_cursor_hmac_signing_key",

@@ -75,6 +75,8 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
 )
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
+
 _SESSION_KEY_PREFIX = re.compile(r"^agent:[a-z0-9][a-z0-9._-]{0,63}:openclaw:$")
 _AGENT_OF_PREFIX = re.compile(r"^agent:(?P<agent>[a-z0-9][a-z0-9._-]{0,63}):openclaw:$")
 _AUTHORIZE_PATH = re.compile(r"^/internal/[a-z0-9][a-z0-9-]*/v2/openclaw/authorize$")
@@ -109,6 +111,7 @@ class BffToolGatewayPolicyPort:
         client: httpx.AsyncClient,
         connector_credential: str,
         routes: tuple[GatewayPolicyRoute, ...] = (SUPPLY_CHAIN_ROUTE,),
+        expected_supply_chain_binding_digest: str | None = None,
     ) -> None:
         if len(connector_credential) < 32:
             raise ValueError("Gateway connector credential is invalid")
@@ -120,6 +123,7 @@ class BffToolGatewayPolicyPort:
         self._client = client
         self._credential = connector_credential
         self._routes = routes
+        self._expected_supply_chain_binding_digest = expected_supply_chain_binding_digest
 
     def route_for(self, session_key: str) -> GatewayPolicyRoute:
         for route in self._routes:
@@ -151,6 +155,15 @@ class BffToolGatewayPolicyPort:
         if response.status_code != 200:
             raise ToolGatewayPolicyUnavailable()
         value = response.json()
+        if (
+            isinstance(value, dict)
+            and route.authorize_path == SUPPLY_CHAIN_ROUTE.authorize_path
+            and self._expected_supply_chain_binding_digest is not None
+        ):
+            if value.pop("credential_binding_digest", None) != (
+                self._expected_supply_chain_binding_digest
+            ):
+                raise ToolGatewayPolicyRejected()
         if not isinstance(value, dict) or set(value) != {
             "binding_active",
             "policy_revision",
@@ -356,12 +369,18 @@ class DynamicGatewayContext:
         connector_id: str,
         tenant_id: str,
         profiles: tuple[tuple[ToolOfferReference, GatewayAuthorityProfile], ...],
+        credential_bindings: CredentialBindings | None = None,
+        user_bound_offer_ids: frozenset[str] = frozenset(),
     ) -> None:
         if not profiles or len({ref for ref, _ in profiles}) != len(profiles):
             raise ValueError("Tool Gateway requires unique exact authority profiles")
         self.connector_id = connector_id
         self._tenant_id = tenant_id
         self._profiles = dict(profiles)
+        self._credential_bindings = credential_bindings
+        self._user_bound_offer_ids = user_bound_offer_ids
+        if user_bound_offer_ids and credential_bindings is None:
+            raise ValueError("user-bound offers require credential bindings")
 
     def resolve(
         self, decision: ToolGatewayPolicyReply, reference: ToolOfferReference
@@ -376,6 +395,15 @@ class DynamicGatewayContext:
         ):
             raise GatewayOperationConflict()
         profile = self._profiles[reference]
+        credential_ref = profile.credential_ref
+        if reference.offer_id in self._user_bound_offer_ids:
+            assert self._credential_bindings is not None
+            try:
+                credential_ref = self._credential_bindings.resolve(
+                    decision.tenant_id, decision.principal_id
+                )
+            except LookupError:
+                raise GatewayOperationConflict() from None
         if not decision.session_key.startswith(profile.session_key_prefix):
             # The BFF profile that authorized this run is not the one this offer
             # belongs to: never lend one agent's scopes to another agent's session.
@@ -390,10 +418,14 @@ class DynamicGatewayContext:
             session_key=decision.session_key,
             auth=AuthContext(
                 tenant_id=decision.tenant_id,
-                cid=profile.cid,
+                cid=(
+                    decision.tenant_id
+                    if reference.offer_id in self._user_bound_offer_ids
+                    else profile.cid
+                ),
                 actor=ActorRef(actor_id=actor_id, actor_type="service"),
                 scopes=profile.scopes,
-                credential_ref=profile.credential_ref,
+                credential_ref=credential_ref,
             ),
             revision=decision.policy_revision,
         )
@@ -440,6 +472,8 @@ class SharedToolGatewayComposition:
         generation_id: str = "supply-chain-v2-dev-1",
         catalog_revision: str = "supply-chain-v2-dev-1",
         instance_generation_ids: Mapping[str, str] | None = None,
+        credential_bindings: CredentialBindings | None = None,
+        user_bound_offer_ids: frozenset[str] = frozenset(),
     ) -> None:
         parsed = urlsplit(bff_url)
         if (
@@ -459,6 +493,11 @@ class SharedToolGatewayComposition:
             raise ValueError("Tool Gateway offer ids must be unique")
         if len({offer.pin.name.casefold() for offer in offers}) != len(offers):
             raise ValueError("Tool Gateway native tool names must be unique")
+        if user_bound_offer_ids and (
+            credential_bindings is None
+            or not user_bound_offer_ids <= {offer.pin.offer_id for offer in offers}
+        ):
+            raise ValueError("user-bound Tool Gateway offers require pinned credential bindings")
         self.instances = gateway_instances(
             tenant_id=tenant_id,
             offers=offers,
@@ -474,6 +513,8 @@ class SharedToolGatewayComposition:
         self._jwt_key = jwt_key
         self._jwt_issuer = jwt_issuer
         self._jwt_audience = jwt_audience
+        self._credential_bindings = credential_bindings
+        self._user_bound_offer_ids = user_bound_offer_ids
 
     @property
     def tenant_id(self) -> str:
@@ -522,6 +563,11 @@ class SharedToolGatewayComposition:
                     client=client,
                     connector_credential=self._connector_credential,
                     routes=self.routes,
+                    expected_supply_chain_binding_digest=(
+                        self._credential_bindings.digest
+                        if self._credential_bindings is not None
+                        else None
+                    ),
                 ),
             )
             projector = RegistryToolOfferProjector(capabilities, workflows)
@@ -584,6 +630,8 @@ class SharedToolGatewayComposition:
                 connector_id="openclaw",
                 tenant_id=self._tenant_id,
                 profiles=tuple(profiles),
+                credential_bindings=self._credential_bindings,
+                user_bound_offer_ids=self._user_bound_offer_ids,
             )
             repository = GatewayOperationRepository(container.unit_of_work_factory)
             operations = GatewayOperationService(

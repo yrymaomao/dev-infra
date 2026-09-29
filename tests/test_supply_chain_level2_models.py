@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from ebiz_deployment.supply_chain_bff.level2_models import ReportOutbox
+from ebiz_deployment.supply_chain_bff.level2_models import (
+    ReportOutbox,
+    ReportRun,
+    ReportSchedule,
+    SelectionPreview,
+)
 from ebiz_deployment.supply_chain_bff.models import SCHEMA, Base
 
 
@@ -38,3 +43,11 @@ def test_outbox_payload_is_opaque_batch_metadata_only() -> None:
         "published_at",
         "created_at",
     }
+
+
+def test_user_owned_resources_pin_opaque_reference_without_putting_it_in_mq() -> None:
+    for model in (SelectionPreview, ReportRun, ReportSchedule):
+        columns = model.__table__.columns
+        assert columns["owner_uid"].nullable is True  # legacy rows remain recoverable
+        assert columns["credential_ref"].nullable is True
+    assert "credential_ref" not in ReportOutbox.__table__.columns

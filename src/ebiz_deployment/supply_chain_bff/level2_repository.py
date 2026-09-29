@@ -57,6 +57,18 @@ _PAYLOAD_PERMISSION = "supply-chain:level2"
 _TERMINAL_REPORT = frozenset({"SUCCEEDED", "SUCCEEDED_EMPTY", "PARTIAL", "FAILED", "CANCELLED"})
 
 
+def _scoped_request_id(owner_uid: str | None, request_id: str) -> str:
+    if owner_uid is None:
+        return request_id
+    digest = hashlib.sha256(f"{owner_uid}\x1f{request_id}".encode()).hexdigest()
+    return f"user:{digest}"
+
+
+def _owner_reference(owner_uid: str | None, credential_ref: str | None) -> None:
+    if (owner_uid is None) != (credential_ref is None):
+        raise ValueError("user ownership and credential reference must be pinned together")
+
+
 class ResourceConflict(RuntimeError):
     pass
 
@@ -90,6 +102,7 @@ class ClaimedPreview:
     payload_hash: str
     lease_owner: str
     requested_at: datetime
+    credential_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +123,7 @@ class ClaimedReportBatch:
     policy_version: int | None
     data_cutoff: datetime
     lease_owner: str
+    credential_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +135,7 @@ class ActiveReportExecution:
     sequence: int
     item_offset: int
     item_count: int
+    credential_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +145,7 @@ class ClaimedScheduledReport:
     schedule_id: UUID
     selection_preview_id: UUID | None
     lease_owner: str
+    credential_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +188,11 @@ class Level2Repository(RestrictedPayloadAccess):
         request_payload: dict[str, object],
         selector: dict[str, object] | None,
         now: datetime,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> UUID:
+        _owner_reference(owner_uid, credential_ref)
+        client_request_id = _scoped_request_id(owner_uid, client_request_id)
         staged = await self._stage(tenant_id, request_payload)
         preview_id = uuid4()
         try:
@@ -181,6 +201,8 @@ class Level2Repository(RestrictedPayloadAccess):
                     SelectionPreview(
                         id=preview_id,
                         tenant_id=tenant_id,
+                        owner_uid=owner_uid,
+                        credential_ref=credential_ref,
                         client_request_id=client_request_id,
                         source_kind=source_kind,
                         status="PLANNING" if source_kind == "NATURAL_LANGUAGE" else "DISCOVERING",
@@ -206,7 +228,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 existing.payload_ref,
                 existing.payload_hash,
             )
-            if existing_payload != request_payload:
+            if existing.owner_uid != owner_uid or existing_payload != request_payload:
                 raise ResourceConflict("client_request_id was already used for another selection")
             return existing.id
         await self._commit_staged(tenant_id, staged)
@@ -219,7 +241,11 @@ class Level2Repository(RestrictedPayloadAccess):
         client_request_id: str,
         parsed: CsvSelection,
         now: datetime,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> UUID:
+        _owner_reference(owner_uid, credential_ref)
+        client_request_id = _scoped_request_id(owner_uid, client_request_id)
         rows_payload = {"rows": [row.model_dump(mode="json") for row in parsed.rows]}
         errors_payload = {"errors": [error.model_dump(mode="json") for error in parsed.errors]}
         staged = await self._stage(tenant_id, rows_payload)
@@ -234,6 +260,8 @@ class Level2Repository(RestrictedPayloadAccess):
                     SelectionPreview(
                         id=preview_id,
                         tenant_id=tenant_id,
+                        owner_uid=owner_uid,
+                        credential_ref=credential_ref,
                         client_request_id=client_request_id,
                         source_kind="CSV",
                         status="READY" if parsed.rows else "REJECTED",
@@ -262,7 +290,11 @@ class Level2Repository(RestrictedPayloadAccess):
                         SelectionPreview.client_request_id == client_request_id,
                     )
                 )
-            if existing is None or existing.payload_hash != staged.payload_hash:
+            if (
+                existing is None
+                or existing.owner_uid != owner_uid
+                or existing.payload_hash != staged.payload_hash
+            ):
                 raise ResourceConflict("client_request_id was already used for another CSV")
             return existing.id
         await self._commit_staged(tenant_id, staged)
@@ -302,6 +334,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 payload_hash=preview.payload_hash,
                 lease_owner=worker_id,
                 requested_at=preview.created_at,
+                credential_ref=preview.credential_ref,
             )
 
     async def load_preview_request(self, claim: ClaimedPreview) -> dict[str, Any]:
@@ -396,13 +429,14 @@ class Level2Repository(RestrictedPayloadAccess):
         await self._commit_staged(tenant_id, staged)
 
     async def get_preview(
-        self, *, tenant_id: str, preview_id: UUID, now: datetime
+        self, *, tenant_id: str, preview_id: UUID, now: datetime, owner_uid: str | None = None
     ) -> dict[str, Any] | None:
         async with self._factory() as session:
             preview = await session.scalar(
                 select(SelectionPreview).where(
                     SelectionPreview.tenant_id == tenant_id,
                     SelectionPreview.id == preview_id,
+                    SelectionPreview.owner_uid == owner_uid,
                 )
             )
         if preview is None:
@@ -542,22 +576,30 @@ class Level2Repository(RestrictedPayloadAccess):
         request: ReportRunRequest,
         now: datetime,
         trace_id: str,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> CreatedReport:
+        _owner_reference(owner_uid, credential_ref)
+        request_id = _scoped_request_id(owner_uid, request.client_request_id)
         async with self._factory() as session:
             existing = await session.scalar(
                 select(ReportRun).where(
                     ReportRun.tenant_id == tenant_id,
-                    ReportRun.client_request_id == request.client_request_id,
+                    ReportRun.client_request_id == request_id,
                 )
             )
             if existing is not None:
-                if existing.selection_preview_id != request.selection_preview_id:
+                if (
+                    existing.owner_uid != owner_uid
+                    or existing.selection_preview_id != request.selection_preview_id
+                ):
                     raise ResourceConflict("client_request_id was already used for another report")
                 return CreatedReport(existing.id, existing.sku_count, existing.batch_count)
             preview = await session.scalar(
                 select(SelectionPreview).where(
                     SelectionPreview.tenant_id == tenant_id,
                     SelectionPreview.id == request.selection_preview_id,
+                    SelectionPreview.owner_uid == owner_uid,
                 )
             )
         policy = await self._resolve_policy_snapshot(
@@ -567,6 +609,8 @@ class Level2Repository(RestrictedPayloadAccess):
         )
         if preview is None:
             raise LookupError("selection preview not found")
+        if preview.credential_ref != credential_ref:
+            raise ResourceConflict("selection preview credential binding changed")
         if preview.status != "READY" or preview.expires_at <= now or preview.confirmed:
             raise ResourceNotReady("selection preview is not ready for confirmation")
         if preview.snapshot_time is None:
@@ -638,18 +682,23 @@ class Level2Repository(RestrictedPayloadAccess):
                     .where(
                         SelectionPreview.tenant_id == tenant_id,
                         SelectionPreview.id == preview.id,
+                        SelectionPreview.owner_uid == owner_uid,
                         SelectionPreview.confirmed.is_(False),
                     )
                     .with_for_update()
                 )
                 if locked_preview is None:
                     raise ResourceConflict("selection preview was already confirmed")
+                if locked_preview.credential_ref != credential_ref:
+                    raise ResourceConflict("selection preview credential binding changed")
                 locked_preview.confirmed = True
                 session.add(
                     ReportRun(
                         id=report_id,
                         tenant_id=tenant_id,
-                        client_request_id=request.client_request_id,
+                        owner_uid=owner_uid,
+                        credential_ref=credential_ref,
+                        client_request_id=request_id,
                         selection_preview_id=preview.id,
                         policy_mode=request.policy_mode,
                         policy_version=policy.version,
@@ -695,12 +744,15 @@ class Level2Repository(RestrictedPayloadAccess):
                 existing = await session.scalar(
                     select(ReportRun).where(
                         ReportRun.tenant_id == tenant_id,
-                        ReportRun.client_request_id == request.client_request_id,
+                        ReportRun.client_request_id == request_id,
                     )
                 )
             if existing is None:
                 raise
-            if existing.selection_preview_id != request.selection_preview_id:
+            if (
+                existing.owner_uid != owner_uid
+                or existing.selection_preview_id != request.selection_preview_id
+            ):
                 raise ResourceConflict("client_request_id was already used for another report")
             return CreatedReport(existing.id, existing.sku_count, existing.batch_count)
         for staged_selection in staged_batch_selections:
@@ -714,12 +766,14 @@ class Level2Repository(RestrictedPayloadAccess):
         report_run_id: UUID,
         item_offset: int = 0,
         item_limit: int = 200,
+        owner_uid: str | None = None,
     ) -> dict[str, Any] | None:
         async with self._factory() as session:
             report = await session.scalar(
                 select(ReportRun).where(
                     ReportRun.tenant_id == tenant_id,
                     ReportRun.id == report_run_id,
+                    ReportRun.owner_uid == owner_uid,
                 )
             )
             if report is None:
@@ -856,12 +910,14 @@ class Level2Repository(RestrictedPayloadAccess):
             )
         return result
 
-    async def list_reports(self, *, tenant_id: str, limit: int) -> list[dict[str, Any]]:
+    async def list_reports(
+        self, *, tenant_id: str, limit: int, owner_uid: str | None = None
+    ) -> list[dict[str, Any]]:
         async with self._factory() as session:
             reports = (
                 await session.scalars(
                     select(ReportRun)
-                    .where(ReportRun.tenant_id == tenant_id)
+                    .where(ReportRun.tenant_id == tenant_id, ReportRun.owner_uid == owner_uid)
                     .order_by(ReportRun.created_at.desc(), ReportRun.id.desc())
                     .limit(limit)
                 )
@@ -885,7 +941,9 @@ class Level2Repository(RestrictedPayloadAccess):
             for report in reports
         ]
 
-    async def get_report_status(self, *, tenant_id: str, report_run_id: UUID) -> str | None:
+    async def get_report_status(
+        self, *, tenant_id: str, report_run_id: UUID, owner_uid: str | None = None
+    ) -> str | None:
         async with self._factory() as session:
             return cast(
                 str | None,
@@ -893,15 +951,22 @@ class Level2Repository(RestrictedPayloadAccess):
                     select(ReportRun.status).where(
                         ReportRun.tenant_id == tenant_id,
                         ReportRun.id == report_run_id,
+                        ReportRun.owner_uid == owner_uid,
                     )
                 ),
             )
 
-    async def cancel_report(self, *, tenant_id: str, report_run_id: UUID) -> bool:
+    async def cancel_report(
+        self, *, tenant_id: str, report_run_id: UUID, owner_uid: str | None = None
+    ) -> bool:
         async with self._factory() as session, session.begin():
             report = await session.scalar(
                 select(ReportRun)
-                .where(ReportRun.tenant_id == tenant_id, ReportRun.id == report_run_id)
+                .where(
+                    ReportRun.tenant_id == tenant_id,
+                    ReportRun.id == report_run_id,
+                    ReportRun.owner_uid == owner_uid,
+                )
                 .with_for_update()
             )
             if report is None:
@@ -951,15 +1016,22 @@ class Level2Repository(RestrictedPayloadAccess):
         report_run_id: UUID,
         after_sequence: int,
         limit: int = 1000,
+        owner_uid: str | None = None,
     ) -> list[dict[str, Any]]:
         async with self._factory() as session:
             rows = (
                 await session.scalars(
                     select(ReportActivity)
+                    .join(
+                        ReportRun,
+                        (ReportRun.tenant_id == ReportActivity.tenant_id)
+                        & (ReportRun.id == ReportActivity.report_run_id),
+                    )
                     .where(
                         ReportActivity.tenant_id == tenant_id,
                         ReportActivity.report_run_id == report_run_id,
                         ReportActivity.stream_sequence > after_sequence,
+                        ReportRun.owner_uid == owner_uid,
                     )
                     .order_by(ReportActivity.stream_sequence)
                     .limit(limit)
@@ -1241,6 +1313,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 policy_version=report.policy_version,
                 data_cutoff=report.data_cutoff,
                 lease_owner=worker_id,
+                credential_ref=report.credential_ref,
             )
 
     async def load_report_artifacts(
@@ -1434,8 +1507,14 @@ class Level2Repository(RestrictedPayloadAccess):
     async def active_report_executions(self) -> list[ActiveReportExecution]:
         async with self._factory() as session:
             rows = (
-                await session.scalars(
-                    select(ReportBatch).where(
+                await session.execute(
+                    select(ReportBatch, ReportRun.credential_ref)
+                    .join(
+                        ReportRun,
+                        (ReportRun.tenant_id == ReportBatch.tenant_id)
+                        & (ReportRun.id == ReportBatch.report_run_id),
+                    )
+                    .where(
                         ReportBatch.status.in_(("DISPATCHED", "RUNNING", "WAITING")),
                         ReportBatch.runtime_execution_id.is_not(None),
                     )
@@ -1450,8 +1529,9 @@ class Level2Repository(RestrictedPayloadAccess):
                 sequence=row.runtime_sequence,
                 item_offset=row.item_offset,
                 item_count=row.item_count,
+                credential_ref=credential_ref,
             )
-            for row in rows
+            for row, credential_ref in rows
         ]
 
     async def record_report_snapshot(
@@ -1668,7 +1748,11 @@ class Level2Repository(RestrictedPayloadAccess):
         request: ScheduleCreate,
         idempotency_key: str,
         now: datetime,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> dict[str, Any]:
+        _owner_reference(owner_uid, credential_ref)
+        idempotency_key = _scoped_request_id(owner_uid, idempotency_key)
         if request.policy_mode == "PINNED":
             policy = await self._resolve_policy_snapshot(
                 tenant_id=tenant_id,
@@ -1693,6 +1777,8 @@ class Level2Repository(RestrictedPayloadAccess):
         schedule = ReportSchedule(
             id=schedule_id,
             tenant_id=tenant_id,
+            owner_uid=owner_uid,
+            credential_ref=credential_ref,
             name=request.name,
             timezone=request.timezone,
             weekday=request.weekday,
@@ -1727,7 +1813,7 @@ class Level2Repository(RestrictedPayloadAccess):
                         ReportSchedule.id == replay.schedule_id,
                     )
                 )
-                if persisted is None:
+                if persisted is None or persisted.owner_uid != owner_uid:
                     raise ResourceConflict("idempotent schedule is no longer available")
                 schedule = persisted
             else:
@@ -1754,13 +1840,16 @@ class Level2Repository(RestrictedPayloadAccess):
         schedule_id: UUID,
         idempotency_key: str,
         now: datetime,
+        owner_uid: str | None = None,
     ) -> UUID | None:
-        client_request_id = f"schedule:{schedule_id}:manual:{idempotency_key}"
+        scoped_key = _scoped_request_id(owner_uid, idempotency_key)
+        client_request_id = f"schedule:{schedule_id}:manual:{scoped_key}"
         async with self._factory() as session, session.begin():
             schedule = await session.scalar(
                 select(ReportSchedule).where(
                     ReportSchedule.tenant_id == tenant_id,
                     ReportSchedule.id == schedule_id,
+                    ReportSchedule.owner_uid == owner_uid,
                 )
             )
             if schedule is None:
@@ -1775,6 +1864,8 @@ class Level2Repository(RestrictedPayloadAccess):
                 return existing.id
             report = ReportRun(
                 tenant_id=tenant_id,
+                owner_uid=schedule.owner_uid,
+                credential_ref=schedule.credential_ref,
                 client_request_id=client_request_id,
                 selection_preview_id=None,
                 schedule_id=schedule.id,
@@ -1792,13 +1883,23 @@ class Level2Repository(RestrictedPayloadAccess):
         return report.id
 
     async def enqueue_due_schedules(
-        self, *, now: datetime, tenant_id: str | None = None, limit: int = 100
+        self,
+        *,
+        now: datetime,
+        tenant_id: str | None = None,
+        limit: int = 100,
+        user_bound_only: bool = False,
     ) -> int:
         created = 0
         async with self._factory() as session, session.begin():
             predicates = [
                 ReportSchedule.active.is_(True),
                 ReportSchedule.next_fire_at_utc <= now,
+                (
+                    ReportSchedule.owner_uid.is_not(None)
+                    if user_bound_only
+                    else ReportSchedule.owner_uid.is_(None)
+                ),
             ]
             if tenant_id is not None:
                 predicates.append(ReportSchedule.tenant_id == tenant_id)
@@ -1824,6 +1925,8 @@ class Level2Repository(RestrictedPayloadAccess):
                     session.add(
                         ReportRun(
                             tenant_id=schedule.tenant_id,
+                            owner_uid=schedule.owner_uid,
+                            credential_ref=schedule.credential_ref,
                             client_request_id=client_request_id,
                             selection_preview_id=None,
                             schedule_id=schedule.id,
@@ -1873,6 +1976,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 schedule_id=report.schedule_id,
                 selection_preview_id=report.selection_preview_id,
                 lease_owner=worker_id,
+                credential_ref=report.credential_ref,
             )
 
     async def prepare_scheduled_selection(
@@ -1896,6 +2000,8 @@ class Level2Repository(RestrictedPayloadAccess):
         if schedule.selection_mode == "DYNAMIC_SELECTOR":
             preview_id = await self.create_preview(
                 tenant_id=claim.tenant_id,
+                owner_uid=schedule.owner_uid,
+                credential_ref=schedule.credential_ref,
                 client_request_id=client_request_id,
                 source_kind="SELECTOR",
                 request_payload={"selector": dict(schedule.selector or {})},
@@ -1922,6 +2028,8 @@ class Level2Repository(RestrictedPayloadAccess):
             )
             preview_id = await self.create_csv_preview(
                 tenant_id=claim.tenant_id,
+                owner_uid=schedule.owner_uid,
+                credential_ref=schedule.credential_ref,
                 client_request_id=client_request_id,
                 parsed=parsed,
                 now=now,
@@ -2022,6 +2130,11 @@ class Level2Repository(RestrictedPayloadAccess):
                 report.lease_expires_at = None
                 report.next_attempt_at = now + timedelta(seconds=1)
                 return False
+            if (
+                preview.owner_uid != report.owner_uid
+                or preview.credential_ref != report.credential_ref
+            ):
+                raise ResourceConflict("scheduled selection ownership changed")
             if (
                 preview.status != "READY"
                 or preview.snapshot_time is None
@@ -2188,12 +2301,17 @@ class Level2Repository(RestrictedPayloadAccess):
                 )
             )
 
-    async def list_schedules(self, *, tenant_id: str) -> list[dict[str, Any]]:
+    async def list_schedules(
+        self, *, tenant_id: str, owner_uid: str | None = None
+    ) -> list[dict[str, Any]]:
         async with self._factory() as session:
             schedules = (
                 await session.scalars(
                     select(ReportSchedule)
-                    .where(ReportSchedule.tenant_id == tenant_id)
+                    .where(
+                        ReportSchedule.tenant_id == tenant_id,
+                        ReportSchedule.owner_uid == owner_uid,
+                    )
                     .order_by(ReportSchedule.created_at, ReportSchedule.id)
                 )
             ).all()
@@ -2207,12 +2325,17 @@ class Level2Repository(RestrictedPayloadAccess):
         patch: SchedulePatch,
         idempotency_key: str,
         now: datetime,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> dict[str, Any] | None:
+        _owner_reference(owner_uid, credential_ref)
+        idempotency_key = _scoped_request_id(owner_uid, idempotency_key)
         async with self._factory() as session:
             current = await session.scalar(
                 select(ReportSchedule).where(
                     ReportSchedule.tenant_id == tenant_id,
                     ReportSchedule.id == schedule_id,
+                    ReportSchedule.owner_uid == owner_uid,
                 )
             )
         if current is None:
@@ -2265,7 +2388,7 @@ class Level2Repository(RestrictedPayloadAccess):
                         ReportSchedule.id == schedule_id,
                     )
                 )
-                if schedule is None:
+                if schedule is None or schedule.owner_uid != owner_uid:
                     return None
                 return await self._public_schedule(schedule)
             schedule = await session.scalar(
@@ -2273,6 +2396,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 .where(
                     ReportSchedule.tenant_id == tenant_id,
                     ReportSchedule.id == schedule_id,
+                    ReportSchedule.owner_uid == owner_uid,
                 )
                 .with_for_update()
             )
@@ -2289,6 +2413,7 @@ class Level2Repository(RestrictedPayloadAccess):
                 schedule.fixed_skus_hash = staged.payload_hash if staged is not None else None
             schedule.policy_mode = merged.policy_mode
             schedule.policy_version = merged.policy_version
+            schedule.credential_ref = credential_ref
             schedule.active = merged.active
             schedule.next_fire_at_utc = next_weekly_fire(merged, after=now)
             session.add(

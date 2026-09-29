@@ -26,7 +26,9 @@ from ebiz_deployment.crm_reception.profile import PROFILE_VERSION as CRM_PROFILE
 from ebiz_deployment.crm_reception.profile import crm_owner, crm_profile
 from ebiz_deployment.crm_reception.session_api import (
     CrmSessionPrincipalClient,
+    SessionInvalid,
     SessionPrincipalClient,
+    SessionUnavailable,
     WorkbenchTokenIssuer,
     session_router,
 )
@@ -85,6 +87,7 @@ _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 class Principal:
     tenant_id: str
     principal_id: str = ""
+    credential_ref: str | None = None
 
 
 @dataclass(slots=True)
@@ -243,6 +246,16 @@ def _mount_crm(
 
 
 def create_app(container: BffContainer) -> FastAPI:
+    if (
+        container.settings.user_bound_credentials_enabled
+        and container.settings.legacy_batches_enabled
+    ):
+        raise ValueError("legacy batches cannot use user-bound credentials")
+    if container.settings.user_bound_credentials_enabled and (
+        container.settings.credential_bindings is None
+        or (container.settings.crm_service_url is None and container.crm_session_client is None)
+    ):
+        raise ValueError("user-bound BFF requires CRM session service and credential bindings")
     receptions = mount_receptions(container)
     supply_chain_conversations = next(
         (
@@ -316,7 +329,9 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=503, detail="Level 2 service is unavailable")
         return container.level2_repository
 
-    def principal(authorization: Annotated[str | None, Header()] = None) -> Principal:
+    async def principal(
+        request: Request, authorization: Annotated[str | None, Header()] = None
+    ) -> Principal:
         if (
             not authorization
             or not authorization.startswith("Bearer ")
@@ -324,6 +339,35 @@ def create_app(container: BffContainer) -> FastAPI:
         ):
             raise HTTPException(status_code=401, detail="authentication failed")
         token = authorization.removeprefix("Bearer ").strip()
+        if (
+            container.settings.user_bound_credentials_enabled
+            and request.url.path.startswith("/api/supply-chain/")
+            and not request.url.path.endswith("/schedules/dispatch-due")
+        ):
+            session_client = container.crm_session_client
+            if session_client is None:
+                crm_url = container.settings.crm_service_url
+                if crm_url is None:
+                    raise HTTPException(status_code=503, detail="session service unavailable")
+                session_client = CrmSessionPrincipalClient(crm_url)
+            try:
+                identity = await session_client.resolve(token)
+            except SessionInvalid as error:
+                raise HTTPException(status_code=error.status, detail="session invalid") from None
+            except SessionUnavailable:
+                raise HTTPException(status_code=503, detail="session service unavailable") from None
+            bindings = container.settings.credential_bindings
+            if bindings is None:
+                raise HTTPException(status_code=503, detail="credential bindings unavailable")
+            try:
+                credential_ref = bindings.resolve(identity.tenant_id, identity.actor_id)
+            except LookupError:
+                raise HTTPException(status_code=403, detail="credential binding denied") from None
+            return Principal(
+                tenant_id=identity.tenant_id,
+                principal_id=identity.actor_id,
+                credential_ref=credential_ref,
+            )
         try:
             claims = jwt.decode(
                 token,
@@ -409,10 +453,19 @@ def create_app(container: BffContainer) -> FastAPI:
             conversations=supply_chain_conversations,
             connector=openclaw_connector,
             tokens=tokens,
-            static_identity=StaticRunIdentity(
-                selector=container.settings.openclaw_selector,
-                tenant_id=container.settings.openclaw_tenant_id,
-                principal_id=container.settings.openclaw_principal_id,
+            static_identity=(
+                None
+                if container.settings.user_bound_credentials_enabled
+                else StaticRunIdentity(
+                    selector=container.settings.openclaw_selector,
+                    tenant_id=container.settings.openclaw_tenant_id,
+                    principal_id=container.settings.openclaw_principal_id,
+                )
+            ),
+            credential_binding_digest=(
+                container.settings.credential_bindings.digest
+                if container.settings.credential_bindings is not None
+                else None
             ),
         )
     )
@@ -426,6 +479,8 @@ def create_app(container: BffContainer) -> FastAPI:
         current: Principal = Depends(principal),
     ) -> JSONResponse:
         settings = container.settings
+        if settings.user_bound_credentials_enabled:
+            raise HTTPException(status_code=404, detail="legacy turn route is disabled")
         if not settings.openclaw_enabled or current.tenant_id != settings.openclaw_tenant_id:
             raise HTTPException(status_code=403, detail="connector binding denied")
         credential = settings.openclaw_ingress_credential
@@ -644,6 +699,8 @@ def create_app(container: BffContainer) -> FastAPI:
         source_kind = "NATURAL_LANGUAGE" if body.natural_language is not None else "SELECTOR"
         preview_id = await repository.create_preview(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            credential_ref=current.credential_ref,
             client_request_id=body.client_request_id,
             source_kind=source_kind,
             request_payload=body.model_dump(mode="json"),
@@ -668,6 +725,7 @@ def create_app(container: BffContainer) -> FastAPI:
     ) -> dict[str, object]:
         preview = await repository.get_preview(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
             preview_id=preview_id,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
         )
@@ -707,6 +765,8 @@ def create_app(container: BffContainer) -> FastAPI:
         client_request_id = str(form.get("client_request_id") or uuid4().hex)
         preview_id = await repository.create_csv_preview(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            credential_ref=current.credential_ref,
             client_request_id=client_request_id,
             parsed=parsed,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
@@ -732,6 +792,8 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=503, detail="Level 2 report dispatch is unavailable")
         created = await repository.create_report(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            credential_ref=current.credential_ref,
             request=body,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
             trace_id=_request_id(request) or uuid4().hex,
@@ -758,6 +820,7 @@ def create_app(container: BffContainer) -> FastAPI:
     ) -> dict[str, object]:
         report = await repository.get_report(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
             report_run_id=report_run_id,
             item_offset=item_offset,
             item_limit=item_limit,
@@ -772,7 +835,11 @@ def create_app(container: BffContainer) -> FastAPI:
         current: Principal = Depends(principal),
         repository: Level2Repository = Depends(level2),
     ) -> list[dict[str, object]]:
-        return await repository.list_reports(tenant_id=current.tenant_id, limit=limit)
+        return await repository.list_reports(
+            tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            limit=limit,
+        )
 
     @app.get("/api/supply-chain/v2/reports/{report_run_id}/export.csv")
     async def export_report(
@@ -782,6 +849,7 @@ def create_app(container: BffContainer) -> FastAPI:
     ) -> StreamingResponse:
         first_page = await repository.get_report(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
             report_run_id=report_run_id,
             item_offset=0,
             item_limit=200,
@@ -809,6 +877,7 @@ def create_app(container: BffContainer) -> FastAPI:
                 current_offset = next_offset
                 next_page = await repository.get_report(
                     tenant_id=current.tenant_id,
+                    owner_uid=current.principal_id if current.credential_ref is not None else None,
                     report_run_id=report_run_id,
                     item_offset=current_offset,
                     item_limit=200,
@@ -839,6 +908,7 @@ def create_app(container: BffContainer) -> FastAPI:
         if (
             await repository.get_report_status(
                 tenant_id=current.tenant_id,
+                owner_uid=current.principal_id if current.credential_ref is not None else None,
                 report_run_id=report_run_id,
             )
             is None
@@ -858,6 +928,7 @@ def create_app(container: BffContainer) -> FastAPI:
             while True:
                 activities = await repository.list_report_activities(
                     tenant_id=current.tenant_id,
+                    owner_uid=current.principal_id if current.credential_ref is not None else None,
                     report_run_id=report_run_id,
                     after_sequence=sequences["_report"],
                 )
@@ -874,6 +945,7 @@ def create_app(container: BffContainer) -> FastAPI:
                         await asyncio.sleep(1 / container.settings.activity_push_per_second)
                 latest_status = await repository.get_report_status(
                     tenant_id=current.tenant_id,
+                    owner_uid=current.principal_id if current.credential_ref is not None else None,
                     report_run_id=report_run_id,
                 )
                 if latest_status is None or latest_status in _TERMINAL_REPORT:
@@ -901,11 +973,13 @@ def create_app(container: BffContainer) -> FastAPI:
         found = (
             await container.level2_worker.cancel_report(
                 tenant_id=current.tenant_id,
+                owner_uid=current.principal_id if current.credential_ref is not None else None,
                 report_run_id=report_run_id,
             )
             if container.level2_worker is not None
             else await repository.cancel_report(
                 tenant_id=current.tenant_id,
+                owner_uid=current.principal_id if current.credential_ref is not None else None,
                 report_run_id=report_run_id,
             )
         )
@@ -980,6 +1054,8 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
         return await repository.create_schedule(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            credential_ref=current.credential_ref,
             request=body,
             idempotency_key=idempotency_key,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
@@ -990,7 +1066,10 @@ def create_app(container: BffContainer) -> FastAPI:
         current: Principal = Depends(principal),
         repository: Level2Repository = Depends(level2),
     ) -> list[dict[str, object]]:
-        return await repository.list_schedules(tenant_id=current.tenant_id)
+        return await repository.list_schedules(
+            tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+        )
 
     @app.patch("/api/supply-chain/v2/schedules/{schedule_id}")
     async def update_schedule(
@@ -1004,6 +1083,8 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
         schedule = await repository.update_schedule(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
+            credential_ref=current.credential_ref,
             schedule_id=schedule_id,
             patch=body,
             idempotency_key=idempotency_key,
@@ -1026,6 +1107,7 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=422, detail="Idempotency-Key is invalid")
         report_run_id = await repository.create_schedule_run(
             tenant_id=current.tenant_id,
+            owner_uid=current.principal_id if current.credential_ref is not None else None,
             schedule_id=schedule_id,
             idempotency_key=idempotency_key,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
@@ -1047,6 +1129,7 @@ def create_app(container: BffContainer) -> FastAPI:
             raise HTTPException(status_code=503, detail="Level 2 schedule worker is unavailable")
         created = await repository.enqueue_due_schedules(
             tenant_id=current.tenant_id,
+            user_bound_only=container.settings.user_bound_credentials_enabled,
             now=container.settings.snapshot_time_override or datetime.now(UTC),
         )
         return {

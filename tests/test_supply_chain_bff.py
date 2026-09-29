@@ -98,6 +98,15 @@ def test_coordinator_mints_short_lived_tenant_service_token() -> None:
     assert claims["tenant_id"] == "tenant-a"
     assert claims["actor_type"] == "service"
     assert claims["credential_ref"] == "opaque:runtime-service"
+    pinned_claims = jwt.decode(
+        coordinator.authorization_for_tenant("tenant-a", credential_ref="key:alice").removeprefix(
+            "Bearer "
+        ),
+        secret,
+        algorithms=["HS256"],
+        audience="agent-runtime",
+    )
+    assert pinned_claims["credential_ref"] == "key:alice"
     assert set(claims["scopes"]) == {
         "inventory.read",
         "sales_profit.read",

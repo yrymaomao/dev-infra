@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from agent_runtime.application.tool_gateway_authorization import ToolGatewayPolicyRejected
+from agent_runtime.application.tool_gateway_operations import GatewayOperationConflict
 from ebiz_runtime_contracts.tool_gateway import ToolGatewayIdentity
 from ebiz_runtime_contracts.tool_gateway_catalog import ToolOfferReference
 from ebiz_runtime_contracts.tool_gateway_policy import (
@@ -12,6 +14,7 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
     ToolGatewayPolicyRequest,
 )
 
+from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
 from ebiz_deployment.tool_gateway import (
     BffToolGatewayPolicyPort,
     DynamicGatewayContext,
@@ -67,6 +70,42 @@ async def test_policy_port_preserves_current_binding_and_exact_offer() -> None:
     assert reply.allowed_targets == (
         PolicyTarget(kind="offer", target_id="supply-chain-on-demand"),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bff_digest,allowed", [("a" * 64, True), ("b" * 64, False)])
+async def test_gateway_rejects_bff_binding_digest_drift_before_invocation(
+    bff_digest: str, allowed: bool
+) -> None:
+    async with httpx.AsyncClient(
+        base_url="http://127.0.0.1:8100",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "binding_active": True,
+                    "policy_revision": "1",
+                    "allowed_offer_ids": ["supply-chain-on-demand"],
+                    "credential_binding_digest": bff_digest,
+                },
+            )
+        ),
+    ) as client:
+        port = BffToolGatewayPolicyPort(
+            client=client,
+            connector_credential="c" * 32,
+            expected_supply_chain_binding_digest="a" * 64,
+        )
+        request = ToolGatewayPolicyRequest(
+            identity=_identity(),
+            action="invoke",
+            candidates=(PolicyTarget(kind="offer", target_id="supply-chain-on-demand"),),
+        )
+        if allowed:
+            assert (await port.authorize(request)).binding_active is True
+        else:
+            with pytest.raises(ToolGatewayPolicyRejected):
+                await port.authorize(request)
 
 
 @pytest.mark.asyncio
@@ -190,6 +229,55 @@ def test_dynamic_context_uses_authorized_identity_not_tool_arguments() -> None:
             "supply_chain.preview",
         }
     )
+
+
+def test_supply_chain_context_selects_only_signed_users_bound_reference() -> None:
+    reference = ToolOfferReference(
+        generation_id="generation-a",
+        offer_id="supply-chain-on-demand",
+        version=1,
+        publication_digest="a" * 64,
+        input_schema_digest="b" * 64,
+        output_schema_digest="c" * 64,
+    )
+    resolver = DynamicGatewayContext(
+        connector_id="openclaw",
+        tenant_id="tenant-a",
+        profiles=(
+            (
+                reference,
+                GatewayAuthorityProfile(
+                    cid="supply-chain-dev",
+                    credential_ref="opaque:legacy",
+                    scopes=frozenset({"workflow:start", "runtime:admission"}),
+                ),
+            ),
+        ),
+        credential_bindings=CredentialBindings(
+            digest="a" * 64,
+            _by_owner={("tenant-a", "alice"): "key:alice", ("tenant-a", "bob"): "key:bob"},
+        ),
+        user_bound_offer_ids=frozenset({reference.offer_id}),
+    )
+
+    def decision(uid: str) -> ToolGatewayPolicyReply:
+        return ToolGatewayPolicyReply(
+            tenant_id="tenant-a",
+            principal_id=uid,
+            session_key=SUPPLY_CHAIN_KEY,
+            binding_active=True,
+            action="invoke",
+            policy_revision="1",
+            allowed_targets=(PolicyTarget(kind="offer", target_id=reference.offer_id),),
+        )
+
+    alice = resolver.resolve(decision("alice"), reference)
+    bob = resolver.resolve(decision("bob"), reference)
+    assert alice.auth.credential_ref == "key:alice"
+    assert bob.auth.credential_ref == "key:bob"
+    assert alice.auth.cid == bob.auth.cid == "tenant-a"
+    with pytest.raises(GatewayOperationConflict):
+        resolver.resolve(decision("charlie"), reference)
 
 
 @pytest.mark.asyncio

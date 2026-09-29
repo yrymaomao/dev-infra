@@ -51,6 +51,8 @@ class SelectionPreview(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    owner_uid: Mapped[str | None] = mapped_column(String(256))
+    credential_ref: Mapped[str | None] = mapped_column(String(256))
     client_request_id: Mapped[str] = mapped_column(String(200), nullable=False)
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
@@ -126,6 +128,8 @@ class ReportSchedule(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    owner_uid: Mapped[str | None] = mapped_column(String(256))
+    credential_ref: Mapped[str | None] = mapped_column(String(256))
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     weekday: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -204,6 +208,8 @@ class ReportRun(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    owner_uid: Mapped[str | None] = mapped_column(String(256))
+    credential_ref: Mapped[str | None] = mapped_column(String(256))
     client_request_id: Mapped[str] = mapped_column(String(200), nullable=False)
     selection_preview_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     schedule_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))

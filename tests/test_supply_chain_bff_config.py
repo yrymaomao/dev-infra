@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from ebiz_deployment.supply_chain_bff.config import BffSettings
@@ -33,6 +35,30 @@ def test_level2_flags_default_off_and_product_limits_are_bounded(
     assert settings.etl_wait_seconds == 1800
     assert settings.etl_poll_seconds == 60
     assert settings.report_schema_version == "supply-chain.report.v2"
+    assert settings.user_bound_credentials_enabled is False
+
+
+def test_user_bound_mode_requires_crm_and_pinned_binding_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", "true")
+    with pytest.raises(ValueError, match="BFF_CRM_SERVICE_URL"):
+        BffSettings.from_environment()
+    monkeypatch.setenv("BFF_CRM_SERVICE_URL", "https://crm.example.test")
+    with pytest.raises(ValueError, match="SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH"):
+        BffSettings.from_environment()
+    document = b'{"bindings":[{"cid":"tenant-a","uid":"alice","credential_ref":"key:alice"}]}'
+    path = tmp_path / "bindings.json"
+    path.write_bytes(document)
+    monkeypatch.setenv("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH", str(path))
+    monkeypatch.setenv(
+        "SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256", hashlib.sha256(document).hexdigest()
+    )
+    settings = BffSettings.from_environment()
+    assert settings.user_bound_credentials_enabled is True
+    assert settings.credential_bindings is not None
+    assert settings.credential_bindings.resolve("tenant-a", "alice") == "key:alice"
 
 
 def test_report_schema_version_rejects_v1_for_new_reports(

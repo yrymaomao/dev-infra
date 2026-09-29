@@ -24,8 +24,8 @@ def alembic_head() -> str:
     return heads[0]
 
 
-def test_alembic_chain_head_is_the_profile_index_revision() -> None:
-    assert alembic_head() == "0009_conversation_profile_index"
+def test_alembic_chain_head_is_the_user_credentials_revision() -> None:
+    assert alembic_head() == "0010_supply_chain_user_credentials"
 
 
 def test_every_migration_head_pin_matches_the_alembic_head() -> None:

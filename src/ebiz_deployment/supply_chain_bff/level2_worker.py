@@ -35,7 +35,7 @@ from .runtime_client import (
 _TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 _LOG_TOKEN = re.compile(r"[A-Za-z0-9_.:@-]{1,256}")
 _LOGGER = logging.getLogger(__name__)
-AuthorizationFactory = Callable[[str], str]
+AuthorizationFactory = Callable[..., str]
 
 
 def _safe_log_token(value: object, *, fallback: str = "unknown") -> str:
@@ -92,6 +92,12 @@ class Level2Worker:
         self._stream_supported = settings.stream_enabled
         self._stream_tasks: dict[UUID, asyncio.Task[None]] = {}
 
+    def _authorization(self, tenant_id: str, credential_ref: str | None) -> str:
+        if credential_ref is None:
+            # Only previously accepted rows may use the legacy fixed reference.
+            return self._authorization_for_tenant(tenant_id)
+        return self._authorization_for_tenant(tenant_id, credential_ref=credential_ref)
+
     async def run_forever(self, *, stop: asyncio.Event) -> None:
         tasks: list[asyncio.Task[None]] = []
         if self._bus is not None:
@@ -105,7 +111,10 @@ class Level2Worker:
         try:
             while not stop.is_set():
                 if self._settings.autonomous_schedule_dispatch_enabled:
-                    await self._repository.enqueue_due_schedules(now=datetime.now(UTC))
+                    await self._repository.enqueue_due_schedules(
+                        now=datetime.now(UTC),
+                        user_bound_only=self._settings.user_bound_credentials_enabled,
+                    )
                 await self.process_scheduled_report_once()
                 await self.process_selection_once()
                 if self._bus is not None:
@@ -191,7 +200,7 @@ class Level2Worker:
                 now=now,
                 trace_id=f"schedule:{claim.report_run_id}",
             )
-        except (LookupError, TypeError, ValueError) as error:
+        except (LookupError, TypeError, ValueError, ResourceConflict) as error:
             await self._repository.retry_scheduled_report(
                 claim,
                 now=now,
@@ -223,7 +232,7 @@ class Level2Worker:
         for target in active:
             try:
                 snapshot = await self._runtime.get_execution(
-                    authorization=self._authorization_for_tenant(target.tenant_id),
+                    authorization=self._authorization(target.tenant_id, target.credential_ref),
                     execution_id=str(target.execution_id),
                 )
                 if snapshot.get("status") == "FAILED":
@@ -248,7 +257,7 @@ class Level2Worker:
     async def _stream_execution(self, target: ActiveReportExecution) -> None:
         try:
             async for event in self._runtime.stream(
-                authorization=self._authorization_for_tenant(target.tenant_id),
+                authorization=self._authorization(target.tenant_id, target.credential_ref),
                 sequences={str(target.execution_id): target.sequence},
             ):
                 await self._repository.record_report_runtime_event(
@@ -267,7 +276,18 @@ class Level2Worker:
                 task.result()
             del self._stream_tasks[execution_id]
 
-    async def cancel_report(self, *, tenant_id: str, report_run_id: UUID) -> bool:
+    async def cancel_report(
+        self, *, tenant_id: str, report_run_id: UUID, owner_uid: str | None = None
+    ) -> bool:
+        if (
+            await self._repository.get_report_status(
+                tenant_id=tenant_id,
+                report_run_id=report_run_id,
+                owner_uid=owner_uid,
+            )
+            is None
+        ):
+            return False
         targets = [
             target
             for target in await self._repository.active_report_executions()
@@ -276,13 +296,14 @@ class Level2Worker:
         found = await self._repository.cancel_report(
             tenant_id=tenant_id,
             report_run_id=report_run_id,
+            owner_uid=owner_uid,
         )
         if not found:
             return False
         for target in targets:
             try:
                 await self._runtime.cancel(
-                    authorization=self._authorization_for_tenant(tenant_id),
+                    authorization=self._authorization(tenant_id, target.credential_ref),
                     execution_id=str(target.execution_id),
                 )
             except RuntimeRequestError:
@@ -299,7 +320,7 @@ class Level2Worker:
             if not isinstance(natural_language, str) or not natural_language:
                 raise ValueError("natural-language selection request is invalid")
             planner = await self._runtime.start(
-                authorization=self._authorization_for_tenant(claim.tenant_id),
+                authorization=self._authorization(claim.tenant_id, claim.credential_ref),
                 respond_async=self._settings.async_start_enabled,
                 payload={
                     "agent": {"id": "inventory-supply-chain", "version": 6},
@@ -312,7 +333,7 @@ class Level2Worker:
                 },
             )
             selector, planner_ambiguities = _planner_result(
-                await self._terminal_snapshot(claim.tenant_id, planner)
+                await self._terminal_snapshot(claim.tenant_id, planner, claim.credential_ref)
             )
         else:
             selector = InventorySelector.model_validate(claim.selector).model_dump(mode="json")
@@ -328,11 +349,11 @@ class Level2Worker:
                 cursor=cursor,
             )
             started = await self._runtime.start(
-                authorization=self._authorization_for_tenant(claim.tenant_id),
+                authorization=self._authorization(claim.tenant_id, claim.credential_ref),
                 respond_async=self._settings.async_start_enabled,
                 payload=execution_request,
             )
-            snapshot = await self._terminal_snapshot(claim.tenant_id, started)
+            snapshot = await self._terminal_snapshot(claim.tenant_id, started, claim.credential_ref)
             page = _selection_result(snapshot, selector=selector)
             pages.append(page)
             source_snapshot_id = cast(str, page["source_snapshot_id"])
@@ -362,7 +383,7 @@ class Level2Worker:
         try:
             claim = await self._governed_claim(claim)
             result = await self._runtime.start(
-                authorization=self._authorization_for_tenant(claim.tenant_id),
+                authorization=self._authorization(claim.tenant_id, claim.credential_ref),
                 respond_async=self._settings.async_start_enabled,
                 payload=_batch_runtime_payload(claim),
             )
@@ -377,6 +398,7 @@ class Level2Worker:
                         sequence=0,
                         item_offset=claim.item_offset,
                         item_count=claim.item_count,
+                        credential_ref=claim.credential_ref,
                     ),
                     snapshot=result.snapshot,
                     now=datetime.now(UTC),
@@ -440,7 +462,7 @@ class Level2Worker:
 
     async def _governed_claim(self, claim: ClaimedReportBatch) -> ClaimedReportBatch:
         documents = await self._repository.load_report_artifacts(claim)
-        authorization = self._authorization_for_tenant(claim.tenant_id)
+        authorization = self._authorization(claim.tenant_id, claim.credential_ref)
         selection_evidence_id = claim.selection_evidence_id
         if selection_evidence_id is None:
             registered = await self._artifacts.register(
@@ -492,6 +514,7 @@ class Level2Worker:
         self,
         tenant_id: str,
         started: RuntimeStartResult,
+        credential_ref: str | None = None,
     ) -> dict[str, Any]:
         snapshot = started.snapshot
         if snapshot.get("status") in _TERMINAL:
@@ -501,7 +524,7 @@ class Level2Worker:
         while loop.time() < deadline:
             await asyncio.sleep(min(self._settings.db_tail_seconds, 1.0))
             snapshot = await self._runtime.get_execution(
-                authorization=self._authorization_for_tenant(tenant_id),
+                authorization=self._authorization(tenant_id, credential_ref),
                 execution_id=started.execution_id,
             )
             if snapshot.get("status") in _TERMINAL:
@@ -698,9 +721,7 @@ def _merge_selection_pages(pages: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(sku, str) or not sku:
                 raise ValueError("selection discovery row omitted canonical SKU")
             sort_key = sku.casefold()
-            if sku in seen_skus or (
-                previous_sort_key is not None and sort_key < previous_sort_key
-            ):
+            if sku in seen_skus or (previous_sort_key is not None and sort_key < previous_sort_key):
                 raise ValueError("selection discovery rows are not globally unique and ordered")
             seen_skus.add(sku)
             previous_sort_key = sort_key

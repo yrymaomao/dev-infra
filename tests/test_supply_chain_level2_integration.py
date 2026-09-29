@@ -25,6 +25,8 @@ from ebiz_deployment.supply_chain_bff.level2_models import (
     ReportBatch,
     ReportInbox,
     ReportOutbox,
+    ReportRun,
+    ReportSchedule,
 )
 from ebiz_deployment.supply_chain_bff.level2_repository import (
     ActiveReportExecution,
@@ -44,6 +46,148 @@ RESULT_FIXTURE = (
     / "fixtures"
     / "report-batch-results.v2.valid.json"
 )
+
+
+@pytest.mark.asyncio
+async def test_same_tenant_users_keep_selection_report_and_reference_separate(
+    level2_database_url: str,
+) -> None:
+    engine = create_async_engine(level2_database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = MemoryPayloadStore(redacted_fields=frozenset(), inline_classifications=frozenset())
+    repository = Level2Repository(factory, payload_store=store)
+    tenant_id = f"owner-test-{uuid4().hex}"
+    now = datetime.now(UTC)
+    parsed = CsvSelection(
+        rows=(CsvSelectionRow(row=2, sku="TEST-SKU"),), errors=(), input_row_count=1
+    )
+    try:
+        previews = {}
+        reports = {}
+        for uid in ("alice", "bob"):
+            previews[uid] = await repository.create_csv_preview(
+                tenant_id=tenant_id,
+                owner_uid=uid,
+                credential_ref=f"key:{uid}",
+                client_request_id="same-preview-request",
+                parsed=parsed,
+                now=now,
+            )
+            reports[uid] = await repository.create_report(
+                tenant_id=tenant_id,
+                owner_uid=uid,
+                credential_ref=f"key:{uid}",
+                request=ReportRunRequest(
+                    selection_preview_id=previews[uid],
+                    client_request_id="same-report-request",
+                ),
+                now=now,
+                trace_id=f"trace-{uid}",
+            )
+        assert previews["alice"] != previews["bob"]
+        assert reports["alice"].report_run_id != reports["bob"].report_run_id
+        assert (
+            await repository.get_preview(
+                tenant_id=tenant_id, owner_uid="bob", preview_id=previews["alice"], now=now
+            )
+            is None
+        )
+        assert (
+            await repository.get_report_status(
+                tenant_id=tenant_id,
+                owner_uid="bob",
+                report_run_id=reports["alice"].report_run_id,
+            )
+            is None
+        )
+        assert [
+            row["report_run_id"]
+            for row in await repository.list_reports(
+                tenant_id=tenant_id, owner_uid="alice", limit=10
+            )
+        ] == [str(reports["alice"].report_run_id)]
+        async with factory() as session:
+            alice = await session.get(ReportRun, reports["alice"].report_run_id)
+            bob = await session.get(ReportRun, reports["bob"].report_run_id)
+            alice_outbox = await session.scalar(
+                select(ReportOutbox).where(
+                    ReportOutbox.report_run_id == reports["alice"].report_run_id
+                )
+            )
+            assert alice is not None and alice.credential_ref == "key:alice"
+            assert bob is not None and bob.credential_ref == "key:bob"
+            assert alice_outbox is not None
+            assert "credential_ref" not in alice_outbox.payload
+        claimed = await repository.claim_report_delivery(
+            message=ReportBatchMessage.model_validate(alice_outbox.payload),
+            worker_id="owner-test",
+            now=now,
+            tenant_concurrency=4,
+            global_concurrency=8,
+        )
+        assert claimed is not None and claimed.credential_ref == "key:alice"
+
+        schedule_request = ScheduleCreate(
+            name="Weekly review",
+            timezone="UTC",
+            selection_mode="FIXED_SKUS",
+            fixed_skus=("TEST-SKU",),
+        )
+        schedules = {}
+        for uid in ("alice", "bob"):
+            schedules[uid] = await repository.create_schedule(
+                tenant_id=tenant_id,
+                owner_uid=uid,
+                credential_ref=f"key:{uid}",
+                request=schedule_request,
+                idempotency_key="same-schedule-request",
+                now=now,
+            )
+        legacy_schedule = await repository.create_schedule(
+            tenant_id=tenant_id,
+            request=schedule_request,
+            idempotency_key="same-schedule-request",
+            now=now,
+        )
+        assert schedules["alice"]["schedule_id"] != schedules["bob"]["schedule_id"]
+        assert [
+            row["schedule_id"]
+            for row in await repository.list_schedules(tenant_id=tenant_id, owner_uid="alice")
+        ] == [schedules["alice"]["schedule_id"]]
+        assert (
+            await repository.create_schedule_run(
+                tenant_id=tenant_id,
+                schedule_id=UUID(str(schedules["alice"]["schedule_id"])),
+                owner_uid="bob",
+                idempotency_key="wrong-owner",
+                now=now,
+            )
+            is None
+        )
+        async with factory() as session, session.begin():
+            await session.execute(
+                update(ReportSchedule)
+                .where(ReportSchedule.tenant_id == tenant_id)
+                .values(next_fire_at_utc=now - timedelta(minutes=1))
+            )
+        assert (
+            await repository.enqueue_due_schedules(
+                tenant_id=tenant_id, now=now, user_bound_only=True
+            )
+            == 2
+        )
+        async with factory() as session:
+            legacy_run_count = await session.scalar(
+                select(func.count())
+                .select_from(ReportRun)
+                .where(
+                    ReportRun.tenant_id == tenant_id,
+                    ReportRun.schedule_id == UUID(str(legacy_schedule["schedule_id"])),
+                )
+            )
+            assert legacy_run_count == 0
+    finally:
+        await engine.dispose()
 
 
 async def _bind_test_evidence(

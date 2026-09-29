@@ -79,6 +79,7 @@ def connector_router(
     connector: Callable[..., None],
     tokens: RunTokenIssuer | None,
     static_identity: StaticRunIdentity | None,
+    credential_binding_digest: str | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -150,11 +151,14 @@ def connector_router(
             if active
             else []
         )
-        return {
+        reply: dict[str, Any] = {
             "binding_active": active,
             "policy_revision": revision,
             "allowed_offer_ids": allowed,
         }
+        if credential_binding_digest is not None:
+            reply["credential_binding_digest"] = credential_binding_digest
+        return reply
 
     return router
 

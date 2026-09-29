@@ -46,16 +46,22 @@ class _ScheduleRepository:
         request: ScheduleCreate,
         idempotency_key: str,
         now: datetime,
+        owner_uid: str | None = None,
+        credential_ref: str | None = None,
     ) -> dict[str, object]:
         assert tenant_id == "tenant-a"
         assert idempotency_key == "schedule-create-stable-1"
         assert request.local_time.isoformat() == "12:00:00"
         assert request.fixed_skus == ()
+        assert owner_uid is None and credential_ref is None
         return {"schedule_id": "00000000-0000-4000-8000-000000000001"}
 
-    async def enqueue_due_schedules(self, *, tenant_id: str, now: datetime) -> int:
+    async def enqueue_due_schedules(
+        self, *, tenant_id: str, now: datetime, user_bound_only: bool = False
+    ) -> int:
         assert tenant_id == "tenant-a"
         assert now.tzinfo is not None
+        assert user_bound_only is False
         return 2
 
 

@@ -47,7 +47,7 @@ body hashes, no buyer text or contact detail.
 | Gateway scopes | exactly `workflow:start, runtime:admission, crm.case.read, crm.context.read, crm.evidence.read, crm.capability.read, crm.compute, crm.preview` |
 | Plugin | the single `ebizhub.crm-agent` 2.0.0 (`ebiz-agent-crm`, `crm_agent.plugin:factory`, permissions `crm.compute, crm.preview`, config `policy_version`). There is no `ebizhub.crm-advisor` plugin. |
 | Catalog sets | `crm@2` and `crm-advise@1`, both shipped in the agent wheel and published by the job below |
-| Persistence | the same `supply_chain_bff` schema and Alembic chain (head `0009_conversation_profile_index`); rows are told apart by `profile_version = crm-reception.v1` and by the `agent:crm:openclaw:` session-key prefix |
+| Persistence | the same `supply_chain_bff` schema and Alembic chain (head `0010_supply_chain_user_credentials`); rows are told apart by `profile_version = crm-reception.v1` and by the `agent:crm:openclaw:` session-key prefix |
 | Session identity | tenant and actor come from crm-service's `session-principal` reply, never from the browser; the profile pins one tenant (`BFF_CRM_OPENCLAW_TENANT_ID`, D-2) and refuses every other tenant before any conversation or result can be addressed |
 
 ## Environment
@@ -90,7 +90,7 @@ having been done.
 1. Pin the CRM agent wheel (`ebiz-agent-crm` 2.0.0), the CRM adapter wheel
    (`ebiz-adapter-crm`), Runtime 0.1.6 and the Adapter package; record the
    RECORD digests (`CRM_AGENT_RECORD_DIGEST`, `CRM_ADAPTER_RECORD_DIGEST`).
-2. Migrate the BFF database to `0009_conversation_profile_index` with new
+2. Migrate the BFF database to `0010_supply_chain_user_credentials` with new
    admission still off (`BFF_CRM_OPENCLAW_ENABLED=false`,
    `CRM_TOOL_GATEWAY_ENABLED=false`).
 3. Publish the Catalog sets and the advise workflow:
