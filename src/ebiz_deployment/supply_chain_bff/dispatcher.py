@@ -178,6 +178,8 @@ class BatchCoordinator:
     ) -> str:
         """Mint a short-lived service token; browser credentials are never persisted."""
 
+        if self._settings.user_bound_credentials_enabled and not credential_ref:
+            raise ValueError("user credential reference is unavailable")
         issued_at = int(time.time())
         scopes = [
             "inventory.read",

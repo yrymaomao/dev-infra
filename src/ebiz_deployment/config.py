@@ -120,28 +120,51 @@ class SecretEnvironmentConfig(StrictModel):
         return dict(sorted(value.items()))
 
 
-class CredentialBrokerConfig(StrictModel):
-    url: str = Field(min_length=1, max_length=2048)
-    auth_secret_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")
-    allowed_provider_ids: tuple[str, ...] = Field(min_length=1)
+class UserMcpKeyQueryConfig(StrictModel):
+    signing_secret_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")
     timeout_seconds: float = Field(gt=0, le=30)
+    server_addresses: str = Field(min_length=1, max_length=2048)
+    namespace: str = Field(default="", max_length=256)
+    service_name: Literal["McpServer"] = "McpServer"
+    group_name: str = Field(default="DEFAULT_GROUP", min_length=1, max_length=128)
+    allowed_hosts: tuple[str, ...] = Field(min_length=1)
+    username_secret_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,127}$")
+    password_secret_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,127}$")
 
-    @field_validator("url")
+    @field_validator("server_addresses")
     @classmethod
-    def validate_url(cls, value: str) -> str:
-        _require_https_or_loopback(value, "credential_broker.url")
-        return value
+    def validate_addresses(cls, value: str) -> str:
+        from .service_discovery import normalize_nacos_addresses
 
-    @field_validator("allowed_provider_ids")
+        return normalize_nacos_addresses(value)
+
+    @field_validator("allowed_hosts")
     @classmethod
-    def validate_provider_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        expected = ("mcp.streamable_http", "yeaher.erp")
-        if tuple(sorted(value)) not in (
-            expected,
-            ("mcp.streamable_http", "yeaher.crm", "yeaher.erp"),
+    def validate_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value) or any(
+            not host or len(host) > 253 or re.fullmatch(r"[a-zA-Z0-9.:-]+", host) is None
+            for host in value
         ):
-            raise ValueError("allowed_provider_ids must contain only the request-auth providers")
+            raise ValueError("MCP discovery allowed_hosts are invalid")
         return tuple(sorted(value))
+
+    @model_validator(mode="after")
+    def validate_login(self) -> UserMcpKeyQueryConfig:
+        if (self.username_secret_name is None) != (self.password_secret_name is None):
+            raise ValueError("Nacos username and password secret names must be paired")
+        return self
+
+    @property
+    def secret_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in (
+                self.signing_secret_name,
+                self.username_secret_name,
+                self.password_secret_name,
+            )
+            if name is not None
+        )
 
 
 class ProviderDeploymentConfig(StrictModel):
@@ -399,7 +422,7 @@ class DeploymentCompositionConfig(StrictModel):
     schema_version: str = Field(pattern=r"^2$")
     runtime: RuntimeConfig
     secrets: SecretEnvironmentConfig
-    credential_broker: CredentialBrokerConfig
+    user_mcp_key_query: UserMcpKeyQueryConfig
     base_ai_providers: tuple[ProviderDeploymentConfig, ...] = Field(min_length=3, max_length=4)
     supply_chain_release: SupplyChainReleaseConfig
     crm_release: CrmReleaseConfig | None = None
@@ -427,8 +450,6 @@ class DeploymentCompositionConfig(StrictModel):
             raise ValueError(
                 "crm_release must be present exactly when the yeaher.crm provider is enabled"
             )
-        if set(self.credential_broker.allowed_provider_ids) != ids - {"openai.responses"}:
-            raise ValueError("credential broker must match the enabled request-auth providers")
         mcp = next(
             provider
             for provider in self.base_ai_providers
@@ -441,12 +462,14 @@ class DeploymentCompositionConfig(StrictModel):
         if not isinstance(allowed_tools, list) or set(allowed_tools) != expected_tools:
             raise ValueError("MCP tools must exactly match enabled read-only providers")
         configured = set(self.secrets.allowed_env)
-        required = {self.credential_broker.auth_secret_name}
+        required = set(self.user_mcp_key_query.secret_names)
         for provider in self.base_ai_providers:
             required.update(provider.secret_names)
         required.update(self.supply_chain_release.streaming_bff.secret_references)
         if required - configured:
-            raise ValueError("all broker and provider secret names must be in secrets.allowed_env")
+            raise ValueError(
+                "all credential and provider secret names must be in secrets.allowed_env"
+            )
         return self
 
 
@@ -655,7 +678,7 @@ __all__ = [
     "CRM_PLUGIN_ENTRY_POINT",
     "CRM_PLUGIN_ID",
     "CRM_READ_TOOL_BY_OPERATION",
-    "CredentialBrokerConfig",
+    "UserMcpKeyQueryConfig",
     "CrmAdviseWorkflowPin",
     "CrmReleaseConfig",
     "DeploymentCompositionConfig",

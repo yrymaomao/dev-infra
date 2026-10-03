@@ -86,7 +86,7 @@ def both_profiles_app(bindings: FakeBindings):
             level2_repository=bindings,  # type: ignore[arg-type]
             session_factory=object(),
             payload_store=object(),
-            crm_session_client=object(),  # type: ignore[arg-type]
+            session_principal_client=object(),  # type: ignore[arg-type]
             run_bindings=bindings,
         )
     )

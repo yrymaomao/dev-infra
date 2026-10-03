@@ -24,8 +24,8 @@ from mcp.server import MCPServer
 from pydantic import AfterValidator, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-BROKER_AUTH_TOKEN = "local-dev-broker-auth-not-production"
 CREDENTIAL_REF = "local-dev-credential-ref"
+LOCAL_USER_REF_SIGNING_KEY = "local-dev-user-ref-signing-key-not-production"
 REQUEST_ACCESS_TOKEN = "local-dev-request-access-not-production"
 OPENAI_API_KEY = "local-dev-openai-key-not-production"
 LOCAL_TENANT_ID = "tenant-local-dev"
@@ -60,8 +60,6 @@ SnapshotRef = Annotated[str, Field(min_length=1, max_length=256)]
 Cursor = Annotated[str, Field(min_length=1, max_length=2048)]
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 _CANONICAL_RFC3339_UTC_SECONDS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-
-_ALLOWED_CREDENTIAL_PROVIDERS = frozenset({"mcp.streamable_http", "yeaher.erp"})
 
 
 def _bearer(authorization: str | None) -> str:
@@ -102,31 +100,38 @@ def _last_completed_utc_day(snapshot_date: str) -> str:
 
 
 def create_provider_app() -> FastAPI:
-    """Create deterministic credential, ERP MCP, health, and model routes."""
+    """Create deterministic MCP key-query, health, and model routes."""
     app = FastAPI(title="eBizHub LOCAL_DEV_E2E Providers", docs_url=None, redoc_url=None)
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
         return {"status": "ok", "mode": "LOCAL_DEV_E2E"}
 
-    @app.post("/v1/resolve")
-    async def resolve_credential(
-        body: dict[str, Any] = Body(...), authorization: str | None = Header(default=None)
-    ) -> dict[str, str]:
-        if _bearer(authorization) != BROKER_AUTH_TOKEN:
-            raise HTTPException(status_code=401, detail="invalid local broker authorization")
-        provider_id = body.get("provider_id")
-        if provider_id not in _ALLOWED_CREDENTIAL_PROVIDERS:
-            raise HTTPException(status_code=403, detail="provider is not locally allowlisted")
-        if body.get("credential_ref") != CREDENTIAL_REF:
-            raise HTTPException(status_code=404, detail="local credential reference not found")
-        expires_at = datetime.now(UTC) + timedelta(minutes=5)
+    @app.get("/nacos/v1/ns/instance/list")
+    async def naming(serviceName: str, groupName: str = "DEFAULT_GROUP") -> dict[str, Any]:
+        """Isolated naming fixture; never discovers or registers intranet services."""
+        hosts = []
+        if serviceName == "McpServer" and groupName == "DEFAULT_GROUP":
+            hosts = [
+                {
+                    "ip": "127.0.0.1",
+                    "port": 18082,
+                    "healthy": True,
+                    "enabled": True,
+                    "weight": 1,
+                    "metadata": {"protocol": "http"},
+                }
+            ]
+        return {"hosts": hosts}
+
+    @app.post("/erp/feign/mcp/key/query/aggr-key")
+    async def query_aggr_key(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        if body.get("cid") != LOCAL_TENANT_ID or body.get("uid") != "local-dev-user":
+            return {"success": True, "code": 200, "result": None}
         return {
-            "provider_id": cast(str, provider_id),
-            "access_token": REQUEST_ACCESS_TOKEN,
-            "tenant_id": LOCAL_TENANT_ID,
-            "tenant_binding_digest": "a" * 64,
-            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+            "success": True,
+            "code": 200,
+            "result": {"keyId": 1, "mcpKey": REQUEST_ACCESS_TOKEN},
         }
 
     @app.post("/v1/responses")
@@ -1050,7 +1055,7 @@ def _sales_windows_batch(sku: str, snapshot_date: str) -> dict[str, Any]:
 async def _serve(
     provider_port: int,
     mcp_port: int,
-    broker_port: int,
+    key_query_port: int,
     *,
     tls_cert: str,
     tls_key: str,
@@ -1068,10 +1073,12 @@ async def _serve(
     mcp = uvicorn.Server(
         uvicorn.Config(create_mcp_app(), host="127.0.0.1", port=mcp_port, log_level="info")
     )
-    broker = uvicorn.Server(
-        uvicorn.Config(create_provider_app(), host="127.0.0.1", port=broker_port, log_level="info")
+    key_query = uvicorn.Server(
+        uvicorn.Config(
+            create_provider_app(), host="127.0.0.1", port=key_query_port, log_level="info"
+        )
     )
-    await asyncio.gather(provider.serve(), mcp.serve(), broker.serve())
+    await asyncio.gather(provider.serve(), mcp.serve(), key_query.serve())
 
 
 def main() -> int:
@@ -1089,8 +1096,8 @@ def main() -> int:
 
 
 __all__ = [
-    "BROKER_AUTH_TOKEN",
     "CREDENTIAL_REF",
+    "LOCAL_USER_REF_SIGNING_KEY",
     "OPENAI_API_KEY",
     "REQUEST_ACCESS_TOKEN",
     "create_mcp_app",

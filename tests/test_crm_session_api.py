@@ -12,8 +12,7 @@ import pytest
 from crm_fixtures import TENANT, advised_result
 from reception_fixtures import bff_settings
 
-from ebiz_deployment.crm_reception.session_api import (
-    CrmSessionPrincipalClient,
+from ebiz_deployment.erp_session import (
     SessionInvalid,
     SessionPrincipal,
     SessionUnavailable,
@@ -55,7 +54,7 @@ def crm_app(client: FakeSessionClient, *, level2_repository: object | None = Non
             coordinator=object(),  # type: ignore[arg-type]
             cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
             level2_repository=level2_repository,  # type: ignore[arg-type]
-            crm_session_client=client,
+            session_principal_client=client,
         )
     )
 
@@ -179,39 +178,3 @@ async def test_session_route_is_absent_when_the_crm_profile_is_disabled() -> Non
     ) as http:
         response = await http.post(SESSION, headers={"_token_": "x"})
     assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_real_client_sends_the_token_header_and_maps_crm_service_answers() -> None:
-    seen: list[httpx.Request] = []
-
-    def crm_service(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        token = request.headers.get("_token_")
-        if token == "human":
-            return httpx.Response(
-                200, json={"tenantId": TENANT, "actorId": "agent-7", "roles": ["CRM_AGENT"]}
-            )
-        if token == "machine":
-            return httpx.Response(403, json={"error": "machine session"})
-        if token == "broken":
-            return httpx.Response(200, json={"tenantId": TENANT})
-        return httpx.Response(401)
-
-    client = CrmSessionPrincipalClient(
-        "http://127.0.0.1:9090", transport=httpx.MockTransport(crm_service)
-    )
-    principal = await client.resolve("human")
-    assert principal == SessionPrincipal(TENANT, "agent-7", ("CRM_AGENT",))
-    assert seen[0].url.path == "/ai/read/v1/crm/session-principal"
-    assert seen[0].method == "GET"
-    with pytest.raises(SessionInvalid) as denied:
-        await client.resolve("machine")
-    assert denied.value.status == 403
-    with pytest.raises(SessionInvalid) as expired:
-        await client.resolve("expired")
-    assert expired.value.status == 401
-    with pytest.raises(SessionUnavailable):
-        await client.resolve("broken")
-    with pytest.raises(ValueError):
-        CrmSessionPrincipalClient("http://crm.internal:8080")

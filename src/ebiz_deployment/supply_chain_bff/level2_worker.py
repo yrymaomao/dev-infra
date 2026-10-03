@@ -94,7 +94,16 @@ class Level2Worker:
 
     def _authorization(self, tenant_id: str, credential_ref: str | None) -> str:
         if credential_ref is None:
-            # Only previously accepted rows may use the legacy fixed reference.
+            if self._settings.user_bound_credentials_enabled:
+                raise RuntimeRequestError(
+                    status_code=403,
+                    error_code="USER_CREDENTIAL_REFERENCE_UNAVAILABLE",
+                    phase="routing",
+                    category="configuration",
+                    retryable=False,
+                    safe_message="user credential reference is unavailable",
+                    request_id=None,
+                )
             return self._authorization_for_tenant(tenant_id)
         return self._authorization_for_tenant(tenant_id, credential_ref=credential_ref)
 

@@ -26,9 +26,10 @@ from ebiz_runtime_contracts.artifacts import (
 
 from .attestation import Descriptor, build_attestation_environment
 from .config import DeploymentCompositionConfig
-from .local_dev_services import BROKER_AUTH_TOKEN, CREDENTIAL_REF, OPENAI_API_KEY
+from .local_dev_services import LOCAL_USER_REF_SIGNING_KEY, OPENAI_API_KEY
 from .record_attestation import attest_installed_distribution
 from .release import write_base_ai_provider_attestation
+from .user_mcp_credentials import UserMcpRefCodec
 
 MODEL_SCHEMA_REF = "schemas/seasonality-analysis.schema.yaml"
 _CONNECTOR_FIELD_ALLOWLISTS = {
@@ -382,7 +383,7 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
         "secrets": {
             "allowed_env": {
                 "api_key": "DEPLOY_OPENAI_API_KEY",
-                "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+                "mcp_user_ref_signing_key": "MCP_USER_REF_SIGNING_KEY",
                 "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
                 "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
                 "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
@@ -390,10 +391,11 @@ def _deployment_config(plugin_policy: Path, digests: dict[str, str]) -> dict[str
                 "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY",
             }
         },
-        "credential_broker": {
-            "url": "http://127.0.0.1:18082/v1/resolve",
-            "auth_secret_name": "broker_client_token",
-            "allowed_provider_ids": ["mcp.streamable_http", "yeaher.erp"],
+        "user_mcp_key_query": {
+            "server_addresses": "127.0.0.1:18082",
+            "namespace": "local-fixture",
+            "allowed_hosts": ["127.0.0.1"],
+            "signing_secret_name": "mcp_user_ref_signing_key",
             "timeout_seconds": 5.0,
         },
         "base_ai_providers": [
@@ -521,12 +523,14 @@ def _environment(
         "MCP_PACKAGE_VERSION": "0.1.0",
         "ERP_PACKAGE_VERSION": "0.2.0",
         "OPENAI_ADAPTER_PACKAGE_VERSION": "0.1.1",
-        "CREDENTIAL_BROKER_URL": "http://127.0.0.1:18082/v1/resolve",
+        "MCP_NACOS_SERVER_ADDRESSES": "127.0.0.1:18082",
+        "MCP_NACOS_NAMESPACE": "local-fixture",
+        "MCP_KEY_QUERY_EGRESS_HOST": "127.0.0.1",
         "MCP_ENDPOINT": "http://127.0.0.1:18081/mcp",
         "MCP_EGRESS_HOST": "127.0.0.1",
         "OPENAI_ENDPOINT": "https://localhost:18080/v1",
         "OPENAI_EGRESS_HOST": "localhost",
-        "DEPLOY_BROKER_CLIENT_TOKEN": BROKER_AUTH_TOKEN,
+        "MCP_USER_REF_SIGNING_KEY": LOCAL_USER_REF_SIGNING_KEY,
         "DEPLOY_OPENAI_API_KEY": OPENAI_API_KEY,
         "LOCAL_DEV_TLS_CERT_FILE": str(assets.tls_cert),
         "LOCAL_DEV_TLS_KEY_FILE": str(assets.tls_key),
@@ -534,7 +538,9 @@ def _environment(
         "REQUESTS_CA_BUNDLE": str(assets.tls_ca),
         "SUPPLY_CHAIN_SMOKE_API_URL": "http://127.0.0.1:8000",
         "SUPPLY_CHAIN_TENANT_ID": "tenant-local-dev",
-        "SUPPLY_CHAIN_CREDENTIAL_REF": CREDENTIAL_REF,
+        "SUPPLY_CHAIN_CREDENTIAL_REF": UserMcpRefCodec(
+            LOCAL_USER_REF_SIGNING_KEY.encode("utf-8")
+        ).issue("tenant-local-dev", "local-dev-user"),
         "SUPPLY_CHAIN_MARKET_SCOPE": "NA_COMPANY",
         "SUPPLY_CHAIN_SKU": "SKU-LOCAL-1",
         # Populate only after the Skill bytes below are stored through Runtime's

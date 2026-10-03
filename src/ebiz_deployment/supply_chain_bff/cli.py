@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import AsyncExitStack
 from datetime import timedelta
 
 import httpx
@@ -11,6 +12,8 @@ import uvicorn
 from agent_runtime.cli.application import build_payload_store
 from agent_runtime.cli.configuration import DeploymentConfig
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from ebiz_deployment.erp_session import open_erp_session
 
 from .app import BffContainer, create_app
 from .config import BffSettings
@@ -38,7 +41,12 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
     await payload_store.ensure_ready()
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as http:
+    async with AsyncExitStack() as resources:
+        resources.push_async_callback(engine.dispose)
+        session_client = await resources.enter_async_context(open_erp_session(settings.erp_session))
+        http = await resources.enter_async_context(
+            httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=False)
+        )
         runtime = RuntimeClient(http, base_url=settings.runtime_url)
         artifacts = RuntimeArtifactClient(http, base_url=settings.runtime_url)
         repository = BatchRepository(
@@ -92,6 +100,7 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
                 ),
                 level2_repository=level2_repository,
                 level2_worker=level2_worker,
+                session_principal_client=session_client,
             )
         )
         server = uvicorn.Server(
@@ -104,10 +113,7 @@ async def _serve(settings: BffSettings, *, host: str, port: int) -> None:
                 proxy_headers=False,
             )
         )
-        try:
-            await server.serve()
-        finally:
-            await engine.dispose()
+        await server.serve()
 
 
 def main(argv: list[str] | None = None) -> int:

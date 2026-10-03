@@ -21,8 +21,6 @@ from jsonschema import Draft202012Validator
 from ebiz_deployment import local_dev_assets as local_assets_module
 from ebiz_deployment.local_dev_assets import build_skill_document, write_local_dev_assets
 from ebiz_deployment.local_dev_services import (
-    BROKER_AUTH_TOKEN,
-    CREDENTIAL_REF,
     LOCAL_TENANT_ID,
     OPENAI_API_KEY,
     REQUEST_ACCESS_TOKEN,
@@ -65,32 +63,20 @@ def local_fixture_install(tmp_path_factory: pytest.TempPathFactory) -> tuple[Pat
     return (installed,)
 
 
-def test_credential_broker_is_authenticated_scoped_and_short_lived() -> None:
+def test_local_aggr_key_query_scopes_key_to_cid_and_uid() -> None:
     with TestClient(create_provider_app()) as client:
-        unauthorized = client.post(
-            "/v1/resolve",
-            json={"credential_ref": CREDENTIAL_REF, "provider_id": "yeaher.erp"},
-        )
-        assert unauthorized.status_code == 401
-
         response = client.post(
-            "/v1/resolve",
-            headers={"Authorization": f"Bearer {BROKER_AUTH_TOKEN}"},
-            json={"credential_ref": CREDENTIAL_REF, "provider_id": "yeaher.erp"},
+            "/erp/feign/mcp/key/query/aggr-key",
+            json={"cid": LOCAL_TENANT_ID, "uid": "local-dev-user"},
         )
         assert response.status_code == 200
-        assert response.json()["provider_id"] == "yeaher.erp"
-        assert response.json()["access_token"] == REQUEST_ACCESS_TOKEN
-        assert response.json()["tenant_id"] == "tenant-local-dev"
-        assert len(response.json()["tenant_binding_digest"]) == 64
-        assert response.json()["expires_at"].endswith("Z")
+        assert response.json()["result"]["mcpKey"] == REQUEST_ACCESS_TOKEN
 
         rejected = client.post(
-            "/v1/resolve",
-            headers={"Authorization": f"Bearer {BROKER_AUTH_TOKEN}"},
-            json={"credential_ref": CREDENTIAL_REF, "provider_id": "unknown.provider"},
+            "/erp/feign/mcp/key/query/aggr-key",
+            json={"cid": LOCAL_TENANT_ID, "uid": "other-user"},
         )
-        assert rejected.status_code == 403
+        assert rejected.json()["result"] is None
 
 
 def test_provider_app_has_no_supply_chain_cockpit_route() -> None:
@@ -332,7 +318,7 @@ def test_openai_responses_endpoint_rejects_non_exact_or_unsatisfied_schema() -> 
     assert [response.status_code for response in responses] == [422] * len(responses)
 
 
-def test_mcp_requires_broker_token_and_exposes_supply_chain_v6_read_tools() -> None:
+def test_mcp_requires_user_key_and_exposes_supply_chain_v6_read_tools() -> None:
     init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -849,7 +835,8 @@ def test_local_assets_are_closed_valid_and_explicitly_non_production(
     environment = json.loads(assets.environment.read_text(encoding="utf-8"))
     assert environment["APP_ENV"] == "local_dev"
     assert environment["LOCAL_DEV_E2E"] == "true"
-    assert environment["CREDENTIAL_BROKER_URL"] == "http://127.0.0.1:18082/v1/resolve"
+    assert environment["MCP_NACOS_SERVER_ADDRESSES"] == "127.0.0.1:18082"
+    assert environment["MCP_KEY_QUERY_EGRESS_HOST"] == "127.0.0.1"
     assert environment["MCP_ENDPOINT"] == "http://127.0.0.1:18081/mcp"
     assert environment["OPENAI_ENDPOINT"] == "https://localhost:18080/v1"
     assert environment["SUPPLY_CHAIN_MARKET_SCOPE"] == "NA_COMPANY"

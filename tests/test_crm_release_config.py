@@ -22,7 +22,6 @@ def crm_files(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     policy["plugins"].append(crm_plugin())
     policy_path.write_text(json.dumps(policy), encoding="utf-8")
     document = deployment_document(policy_path)
-    document["credential_broker"]["allowed_provider_ids"].append("yeaher.crm")
     mcp = document["base_ai_providers"][0]
     mcp["config"]["allowed_tools"] = sorted(
         mcp["config"]["allowed_tools"] + list(CRM_READ_TOOL_BY_OPERATION.values())
@@ -57,11 +56,7 @@ def test_four_providers_one_crm_plugin_and_the_crm_release_block_load(tmp_path: 
         "yeaher.crm",
         "yeaher.erp",
     ]
-    assert config.credential_broker.allowed_provider_ids == (
-        "mcp.streamable_http",
-        "yeaher.crm",
-        "yeaher.erp",
-    )
+    assert config.user_mcp_key_query.signing_secret_name == "mcp_user_ref_signing_key"
     assert {plugin.plugin_id for plugin in config.runtime_plugin_policy.plugins} == {
         "supply-chain-planning",
         "ebizhub.crm-agent",
@@ -161,7 +156,9 @@ def test_shipped_crm_example_config_is_the_two_profile_deployment(tmp_path: Path
         "CRM_ADVISOR_WORKFLOW_DIGEST": "9" * 64,
         "CRM_POLICY_VERSION": "crm-policy-v1",
         "MCP_PACKAGE_VERSION": "0.1.0",
-        "CREDENTIAL_BROKER_URL": "https://credentials.example.com/v1/resolve",
+        "MCP_NACOS_SERVER_ADDRESSES": "127.0.0.1:8848",
+        "MCP_NACOS_NAMESPACE": "isolated-test-namespace",
+        "MCP_KEY_QUERY_EGRESS_HOST": "mcp-key.example.com",
         "MCP_ENDPOINT": "https://mcp.example.com/mcp",
         "MCP_EGRESS_HOST": "mcp.example.com",
         "OPENAI_ENDPOINT": "https://model.example.com/v1",

@@ -14,6 +14,7 @@ from test_composition_launcher import configured_files
 from ebiz_deployment.config import CRM_READ_TOOL_BY_OPERATION, load_deployment_config
 from ebiz_deployment.launcher import CRM_SCOPES, SUPPLY_CHAIN_SCOPES, launch
 from ebiz_deployment.tool_gateway import DynamicGatewayContext, SharedToolGatewayComposition
+from ebiz_deployment.user_mcp_credentials import UserMcpRefCodec
 
 CRM_DIGEST = "b" * 64
 
@@ -58,7 +59,6 @@ def crm_release():
 def configure_crm(tmp_path):
     path, policy_path, env = configured_files(tmp_path)
     document = json.loads(path.read_text())
-    document["credential_broker"]["allowed_provider_ids"].append("yeaher.crm")
     mcp = document["base_ai_providers"][0]
     mcp["config"]["allowed_tools"] = sorted(
         mcp["config"]["allowed_tools"] + list(CRM_READ_TOOL_BY_OPERATION.values())
@@ -90,7 +90,8 @@ def configure_crm(tmp_path):
             "SUPPLY_CHAIN_ON_DEMAND_WORKFLOW_DIGEST": "a" * 64,
             "CRM_ADVISOR_WORKFLOW_DIGEST": CRM_DIGEST,
             "SUPPLY_CHAIN_CREDENTIAL_REF": "opaque:supply-chain",
-            "CRM_CREDENTIAL_REF": "opaque:crm-readonly",
+            "MCP_USER_REF_SIGNING_KEY": "s" * 32,
+            "BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED": "true",
             "BFF_OPENCLAW_CONNECTOR_CREDENTIAL": "c" * 32,
             "TOOL_GATEWAY_JWT_KEY": "j" * 32,
             "SUPPLY_CHAIN_BFF_INTERNAL_URL": "http://127.0.0.1:8089",
@@ -142,8 +143,13 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
         "crm-case-advise-on-demand": 1,
     }
     profiles = tuple((reference(offer.pin), offer.authority) for offer in shared.offers)
+    codec = UserMcpRefCodec(b"s" * 32)
     resolver = DynamicGatewayContext(
-        connector_id="openclaw", tenant_id="tenant-a", profiles=profiles
+        connector_id="openclaw",
+        tenant_id="tenant-a",
+        profiles=profiles,
+        user_mcp_ref_codec=codec,
+        user_bound_offer_ids=frozenset(ref.offer_id for ref, _ in profiles),
     )
     for ref, authority in profiles:
         decision = ToolGatewayPolicyReply(
@@ -157,7 +163,9 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
         )
         resolved = resolver.resolve(decision, ref)
         assert resolved.auth.scopes == authority.scopes
-        assert resolved.auth.credential_ref == authority.credential_ref
+        assert (
+            codec.parse(resolved.auth.credential_ref, expected_tenant_id="tenant-a") == "operator"
+        )
         for changed in [
             {"generation_id": "old"},
             {"publication_digest": "f" * 64},
@@ -203,7 +211,7 @@ def test_launcher_injects_one_composition_with_two_pins_and_isolated_credentials
     [
         "write_operation",
         "write_tool",
-        "broker",
+        "key_query",
         "plugin",
         "second_plugin",
         "release_missing",
@@ -220,8 +228,8 @@ def test_crm_deployment_fails_closed_on_write_or_mismatched_authority(tmp_path, 
         document["base_ai_providers"][0]["config"]["allowed_tools"].append(
             "crm_send_case_message_v1"
         )
-    elif mutation == "broker":
-        document["credential_broker"]["allowed_provider_ids"].remove("yeaher.crm")
+    elif mutation == "key_query":
+        document["user_mcp_key_query"]["allowed_hosts"] = ["http://mcp-key.internal"]
     elif mutation == "plugin":
         policy["plugins"][-1]["permissions"].append("crm.message.send")
     elif mutation == "second_plugin":

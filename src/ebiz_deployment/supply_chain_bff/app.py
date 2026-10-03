@@ -25,12 +25,13 @@ from ebiz_deployment.crm_reception.operation_runtime import HttpOperationRuntime
 from ebiz_deployment.crm_reception.profile import PROFILE_VERSION as CRM_PROFILE_VERSION
 from ebiz_deployment.crm_reception.profile import crm_owner, crm_profile
 from ebiz_deployment.crm_reception.session_api import (
-    CrmSessionPrincipalClient,
+    WorkbenchTokenIssuer,
+    session_router,
+)
+from ebiz_deployment.erp_session import (
     SessionInvalid,
     SessionPrincipalClient,
     SessionUnavailable,
-    WorkbenchTokenIssuer,
-    session_router,
 )
 from ebiz_deployment.openclaw_reception.connector_api import (
     RunTokenIssuer,
@@ -104,8 +105,8 @@ class BffContainer:
     # absent, the Level 2 repository's own backing is reused, as before.
     session_factory: Any | None = None
     payload_store: Any | None = None
-    # Injectable crm-service session-principal client (tests use a fake).
-    crm_session_client: SessionPrincipalClient | None = None
+    # One ERP login resolver shared by all enabled receptions.
+    session_principal_client: SessionPrincipalClient | None = None
     # Injectable run-binding repository for the CRM profile (default: the shared
     # openclaw_run_binding table through the reception session factory).
     run_bindings: RunBindings | None = None
@@ -215,11 +216,9 @@ def _mount_crm(
             static_identity=None,
         )
     )
-    client = container.crm_session_client
+    client = container.session_principal_client
     if client is None:
-        if settings.crm_service_url is None:
-            raise ValueError("CRM reception requires BFF_CRM_SERVICE_URL or an injected client")
-        client = CrmSessionPrincipalClient(settings.crm_service_url)
+        raise ValueError("CRM reception requires the shared ERP session resolver")
     app.include_router(
         session_router(
             profile=profile,
@@ -252,10 +251,9 @@ def create_app(container: BffContainer) -> FastAPI:
     ):
         raise ValueError("legacy batches cannot use user-bound credentials")
     if container.settings.user_bound_credentials_enabled and (
-        container.settings.credential_bindings is None
-        or (container.settings.crm_service_url is None and container.crm_session_client is None)
+        container.settings.user_mcp_ref_codec is None or container.session_principal_client is None
     ):
-        raise ValueError("user-bound BFF requires CRM session service and credential bindings")
+        raise ValueError("user-bound BFF requires ERP session resolver and user reference signer")
     receptions = mount_receptions(container)
     supply_chain_conversations = next(
         (
@@ -344,25 +342,24 @@ def create_app(container: BffContainer) -> FastAPI:
             and request.url.path.startswith("/api/supply-chain/")
             and not request.url.path.endswith("/schedules/dispatch-due")
         ):
-            session_client = container.crm_session_client
+            session_client = container.session_principal_client
             if session_client is None:
-                crm_url = container.settings.crm_service_url
-                if crm_url is None:
-                    raise HTTPException(status_code=503, detail="session service unavailable")
-                session_client = CrmSessionPrincipalClient(crm_url)
+                raise HTTPException(status_code=503, detail="session service unavailable")
             try:
                 identity = await session_client.resolve(token)
             except SessionInvalid as error:
                 raise HTTPException(status_code=error.status, detail="session invalid") from None
             except SessionUnavailable:
                 raise HTTPException(status_code=503, detail="session service unavailable") from None
-            bindings = container.settings.credential_bindings
-            if bindings is None:
-                raise HTTPException(status_code=503, detail="credential bindings unavailable")
+            if identity.tenant_id != container.settings.openclaw_tenant_id:
+                raise HTTPException(status_code=403, detail="session tenant denied")
+            codec = container.settings.user_mcp_ref_codec
+            if codec is None:
+                raise HTTPException(status_code=503, detail="user reference signer unavailable")
             try:
-                credential_ref = bindings.resolve(identity.tenant_id, identity.actor_id)
-            except LookupError:
-                raise HTTPException(status_code=403, detail="credential binding denied") from None
+                credential_ref = codec.issue(identity.tenant_id, identity.actor_id)
+            except ValueError:
+                raise HTTPException(status_code=403, detail="user reference denied") from None
             return Principal(
                 tenant_id=identity.tenant_id,
                 principal_id=identity.actor_id,
@@ -463,8 +460,8 @@ def create_app(container: BffContainer) -> FastAPI:
                 )
             ),
             credential_binding_digest=(
-                container.settings.credential_bindings.digest
-                if container.settings.credential_bindings is not None
+                container.settings.user_mcp_ref_codec.digest
+                if container.settings.user_mcp_ref_codec is not None
                 else None
             ),
         )
@@ -685,6 +682,7 @@ def create_app(container: BffContainer) -> FastAPI:
             authorization=container.coordinator.authorization_for_tenant(
                 current.tenant_id,
                 include_model_feedback=True,
+                credential_ref=current.credential_ref,
             ),
             payload=body.model_dump(mode="json"),
         )

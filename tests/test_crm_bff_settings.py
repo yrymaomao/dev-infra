@@ -11,9 +11,10 @@ BASE_ENV = {
     "BFF_CURSOR_HMAC_SIGNING_KEY": "k" * 32,
     "APP_JWT_SECRET": "j" * 32,
     "BFF_RUNTIME_URL": "http://127.0.0.1:8000",
-    "SUPPLY_CHAIN_CREDENTIAL_REF": "opaque:runtime-service",
     "BFF_SUPPLY_CHAIN_SKILL_INPUT_REF": "payload://skill/current",
     "BFF_OPENCLAW_ENABLED": "true",
+    "BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED": "true",
+    "MCP_USER_REF_SIGNING_KEY": "u" * 32,
     "BFF_OPENCLAW_CONNECTOR_CREDENTIAL": "c" * 32,
     "TOOL_GATEWAY_JWT_KEY": "g" * 32,
 }
@@ -23,7 +24,6 @@ CRM_ENV = {
     "BFF_CRM_OPENCLAW_AGENT_ID": "crm",
     "BFF_CRM_OPENCLAW_INGRESS_URL": "http://127.0.0.1:18790/ebiz/tool-gateway/ingress",
     "BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL": "s" * 32,
-    "BFF_CRM_SERVICE_URL": "https://crm-service.example.com",
 }
 
 
@@ -33,6 +33,8 @@ def load(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> BffSetting
     for name, value in {**BASE_ENV, **CRM_ENV, **overrides}.items():
         if value is not None:
             monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
     return BffSettings.from_environment()
 
 
@@ -51,7 +53,7 @@ def test_crm_profile_is_off_by_default_and_loads_when_fully_configured(monkeypat
     assert on.crm_openclaw_tenant_id == "tenant-crm"
     assert on.crm_openclaw_ingress_url == "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
     assert on.crm_openclaw_ingress_credential == "s" * 32
-    assert on.crm_service_url == "https://crm-service.example.com"
+    assert on.erp_session is not None
     assert "s" * 32 not in repr(on)
 
 
@@ -59,9 +61,7 @@ def test_crm_profile_is_off_by_default_and_loads_when_fully_configured(monkeypat
     ("override", "message"),
     [
         ({"BFF_OPENCLAW_ENABLED": "false"}, "requires BFF_OPENCLAW_ENABLED"),
-        ({"BFF_CRM_SERVICE_URL": None}, "BFF_CRM_SERVICE_URL is required"),
-        ({"BFF_CRM_SERVICE_URL": "http://crm.internal:8080"}, "requires HTTPS"),
-        ({"BFF_CRM_SERVICE_URL": "https://user:pw@crm.example.com"}, "credential-free"),
+        ({"BFF_ERP_SESSION_REDIS_URL_FILE": None}, "BFF_ERP_SESSION_REDIS_URL_FILE"),
         ({"BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL": "short"}, "at least 32"),
         ({"BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL": None}, "at least 32"),
         (
@@ -80,3 +80,13 @@ def test_crm_profile_fails_closed_on_incomplete_or_unsafe_configuration(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         load(monkeypatch, **override)
+
+
+@pytest.fixture(autouse=True)
+def erp_secret_files(monkeypatch, tmp_path):
+    redis_file = tmp_path / "redis-url"
+    jwt_file = tmp_path / "jwt-key"
+    redis_file.write_text("redis://127.0.0.1:6379/2", encoding="utf-8")
+    jwt_file.write_text("synthetic-erp-signing-key", encoding="utf-8")
+    monkeypatch.setenv("BFF_ERP_SESSION_REDIS_URL_FILE", str(redis_file))
+    monkeypatch.setenv("BFF_ERP_SESSION_JWT_SECRET_FILE", str(jwt_file))

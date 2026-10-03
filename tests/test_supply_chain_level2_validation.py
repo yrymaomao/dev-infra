@@ -487,7 +487,7 @@ async def test_openclaw_credential_policy_and_endpoints_preserve_trusted_binding
             level2_repository=repository,  # type: ignore[arg-type]
             level2_worker=_ScheduleWorker(),  # type: ignore[arg-type]
             # The CRM profile needs a session-principal client; this test never calls it.
-            crm_session_client=object(),  # type: ignore[arg-type]
+            session_principal_client=object(),  # type: ignore[arg-type]
         )
     )
     headers = {"Authorization": f"Bearer {connector}"}

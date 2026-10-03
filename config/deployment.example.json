@@ -7,7 +7,7 @@
   "secrets": {
     "allowed_env": {
       "api_key": "DEPLOY_OPENAI_API_KEY",
-      "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+      "mcp_user_ref_signing_key": "MCP_USER_REF_SIGNING_KEY",
       "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
       "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
       "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
@@ -15,13 +15,11 @@
       "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY"
     }
   },
-  "credential_broker": {
-    "url": "${CREDENTIAL_BROKER_URL}",
-    "auth_secret_name": "broker_client_token",
-    "allowed_provider_ids": [
-      "mcp.streamable_http",
-      "yeaher.erp"
-    ],
+  "user_mcp_key_query": {
+    "server_addresses": "${MCP_NACOS_SERVER_ADDRESSES}",
+    "namespace": "${MCP_NACOS_NAMESPACE}",
+    "allowed_hosts": ["${MCP_KEY_QUERY_EGRESS_HOST}"],
+    "signing_secret_name": "mcp_user_ref_signing_key",
     "timeout_seconds": 5.0
   },
   "base_ai_providers": [

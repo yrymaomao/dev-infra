@@ -1,18 +1,4 @@
-"""Workbench session -> BFF JWT exchange for the CRM profile (decision D-1).
-
-The browser holds an ERP session (``_token_``). It never becomes a Runtime or
-Gateway credential: the BFF asks crm-service's read-only route
-``GET /ai/read/v1/crm/session-principal`` who that session is (tenant, actor,
-roles - resolved by crm-service's ``ErpSessionResolver``, never by a
-browser-supplied field), refuses anything outside this deployment's tenant
-before touching any conversation or result, and mints the same 120 s HS256 JWT
-shape the conversation routes already verify (``aud=agent-runtime``,
-``sub=actorId``, ``tenant_id``, ``session_key``, ``jti``).
-
-A 401 or 403 from crm-service is passed through with the same status and the
-fixed detail ``session invalid`` - no upstream body, no reason (a machine
-session is a 403, a missing or expired token a 401).
-"""
+"""Exchange verified ERP sessions for the unchanged short-lived CRM JWT."""
 
 from __future__ import annotations
 
@@ -20,109 +6,22 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
-from urllib.parse import urlsplit
+from typing import Any
 
-import httpx
 import jwt
 from fastapi import APIRouter, Cookie, Header, HTTPException
 
+from ebiz_deployment.erp_session import (
+    SessionInvalid,
+    SessionPrincipal,
+    SessionPrincipalClient,
+    SessionUnavailable,
+)
 from ebiz_deployment.openclaw_reception.profile import ReceptionProfile
 
-SESSION_PRINCIPAL_PATH = "/ai/read/v1/crm/session-principal"
 TOKEN_NAME = "_token_"
 _DETAIL = "session invalid"
 _MAX_TOKEN = 4096
-_MAX_TEXT = 256
-
-
-@dataclass(frozen=True, slots=True)
-class SessionPrincipal:
-    tenant_id: str
-    actor_id: str
-    roles: tuple[str, ...]
-
-
-class SessionInvalid(Exception):
-    """crm-service refused the session: 401 (no/expired token) or 403 (not a human)."""
-
-    def __init__(self, status: int) -> None:
-        super().__init__(_DETAIL)
-        self.status = status
-
-
-class SessionUnavailable(Exception):
-    """crm-service did not give a trustworthy answer."""
-
-
-class SessionPrincipalClient(Protocol):
-    async def resolve(self, token: str) -> SessionPrincipal: ...
-
-
-def _text(value: object) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > _MAX_TEXT:
-        raise SessionUnavailable()
-    return value
-
-
-class CrmSessionPrincipalClient:
-    """The real client: one GET with the session as the ``_token_`` header."""
-
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        transport: httpx.AsyncBaseTransport | None = None,
-        timeout_seconds: float = 5.0,
-    ) -> None:
-        parsed = urlsplit(base_url)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.netloc
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("crm-service base URL must be a credential-free HTTP(S) origin")
-        if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
-            raise ValueError("crm-service base URL requires HTTPS outside loopback")
-        self._base_url = base_url.rstrip("/")
-        self._transport = transport
-        self._timeout = timeout_seconds
-
-    async def resolve(self, token: str) -> SessionPrincipal:
-        try:
-            async with httpx.AsyncClient(
-                transport=self._transport,
-                trust_env=False,
-                timeout=httpx.Timeout(self._timeout),
-                follow_redirects=False,
-            ) as client:
-                response = await client.get(
-                    self._base_url + SESSION_PRINCIPAL_PATH,
-                    headers={TOKEN_NAME: token, "Accept": "application/json"},
-                )
-        except httpx.HTTPError:
-            raise SessionUnavailable() from None
-        if response.status_code in (401, 403):
-            raise SessionInvalid(response.status_code)
-        if response.status_code != 200:
-            raise SessionUnavailable()
-        try:
-            body = response.json()
-        except ValueError:
-            raise SessionUnavailable() from None
-        if not isinstance(body, dict) or not {"tenantId", "actorId", "roles"} <= set(body):
-            raise SessionUnavailable()
-        roles = body["roles"]
-        if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
-            raise SessionUnavailable()
-        return SessionPrincipal(
-            tenant_id=_text(body["tenantId"]),
-            actor_id=_text(body["actorId"]),
-            roles=tuple(roles),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,16 +103,3 @@ def session_router(
         }
 
     return router
-
-
-__all__ = [
-    "SESSION_PRINCIPAL_PATH",
-    "TOKEN_NAME",
-    "CrmSessionPrincipalClient",
-    "SessionInvalid",
-    "SessionPrincipal",
-    "SessionPrincipalClient",
-    "SessionUnavailable",
-    "WorkbenchTokenIssuer",
-    "session_router",
-]

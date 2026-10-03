@@ -6,12 +6,12 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from sqlalchemy.engine import make_url
 
-from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
+from ebiz_deployment.erp_session import ErpSessionSettings
+from ebiz_deployment.user_mcp_credentials import UserMcpRefCodec
 
 from .eta import EtaProfile
 
@@ -29,7 +29,7 @@ class BffSettings:
     skill_input_ref: str
     runtime_credential_ref: str = field(repr=False)
     user_bound_credentials_enabled: bool = False
-    credential_bindings: CredentialBindings | None = field(default=None, repr=False)
+    user_mcp_ref_codec: UserMcpRefCodec | None = field(default=None, repr=False)
     rabbitmq_url: str | None = field(default=None, repr=False)
     snapshot_time_override: datetime | None = None
     max_batch_size: int = 200
@@ -72,7 +72,7 @@ class BffSettings:
     crm_openclaw_offer_id: str = "crm-case-advice"
     crm_openclaw_ingress_url: str = "http://127.0.0.1:18790/ebiz/tool-gateway/ingress"
     crm_openclaw_ingress_credential: str | None = field(default=None, repr=False)
-    crm_service_url: str | None = None
+    erp_session: ErpSessionSettings | None = field(default=None, repr=False)
     # Phase 2 workbench operation routes (P2-G). Off by default: they need the
     # Runtime owner reads listed in docs/crm-profile.md "Workbench operation routes".
     crm_workbench_operations_enabled: bool = False
@@ -114,8 +114,8 @@ class BffSettings:
         if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost"}:
             raise ValueError("BFF_RUNTIME_URL requires HTTPS outside loopback")
         concurrency = _integer("BFF_TENANT_DISPATCH_CONCURRENCY", 4, minimum=1, maximum=64)
-        credential_ref = _required("SUPPLY_CHAIN_CREDENTIAL_REF")
-        if _CREDENTIAL_REF.fullmatch(credential_ref) is None:
+        credential_ref = os.environ.get("SUPPLY_CHAIN_CREDENTIAL_REF", "").strip()
+        if credential_ref and _CREDENTIAL_REF.fullmatch(credential_ref) is None:
             raise ValueError("SUPPLY_CHAIN_CREDENTIAL_REF must be an opaque bounded reference")
         level2_enabled = _boolean("BFF_LEVEL2_ENABLED", False)
         level2_mq_enabled = _boolean("BFF_LEVEL2_MQ_ENABLED", False)
@@ -145,19 +145,20 @@ class BffSettings:
         crm_openclaw_ingress_credential = (
             os.environ.get("BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL", "").strip() or None
         )
-        crm_service_url = os.environ.get("BFF_CRM_SERVICE_URL", "").strip() or None
         user_bound_credentials_enabled = _boolean(
             "BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", False
         )
-        credential_bindings = None
+        if (level2_enabled or openclaw_enabled) and not user_bound_credentials_enabled:
+            raise ValueError("active Supply Chain requires user-bound credentials")
+        user_mcp_ref_codec = None
+        erp_session = (
+            ErpSessionSettings.from_environment()
+            if user_bound_credentials_enabled or crm_openclaw_enabled
+            else None
+        )
         if user_bound_credentials_enabled:
-            if crm_service_url is None:
-                raise ValueError("BFF_CRM_SERVICE_URL is required for user-bound credentials")
-            _service_origin(crm_service_url, "BFF_CRM_SERVICE_URL")
-            binding_path = _required("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH")
-            binding_digest = _required("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256")
-            credential_bindings = CredentialBindings.load(
-                Path(binding_path), expected_sha256=binding_digest
+            user_mcp_ref_codec = UserMcpRefCodec(
+                _required("MCP_USER_REF_SIGNING_KEY").encode("utf-8")
             )
             if _boolean("BFF_LEGACY_BATCHES_ENABLED", False):
                 raise ValueError("legacy batches cannot use user-bound credentials")
@@ -173,11 +174,6 @@ class BffSettings:
                     "BFF_CRM_OPENCLAW_ENABLED requires BFF_OPENCLAW_ENABLED "
                     "(shared connector credential and Gateway JWT key)"
                 )
-            if crm_service_url is None:
-                raise ValueError(
-                    "BFF_CRM_SERVICE_URL is required when the CRM reception is enabled"
-                )
-            _service_origin(crm_service_url, "BFF_CRM_SERVICE_URL")
             credential = crm_openclaw_ingress_credential
             if credential is None or len(credential) < 32:
                 raise ValueError(
@@ -207,7 +203,7 @@ class BffSettings:
             skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
             runtime_credential_ref=credential_ref,
             user_bound_credentials_enabled=user_bound_credentials_enabled,
-            credential_bindings=credential_bindings,
+            user_mcp_ref_codec=user_mcp_ref_codec,
             rabbitmq_url=rabbitmq_url,
             rabbitmq_exchange=_rabbit_name("BFF_RABBITMQ_EXCHANGE", "supply-chain.report.v1"),
             rabbitmq_queue=_rabbit_name("BFF_RABBITMQ_QUEUE", "supply-chain.report-batch.v1"),
@@ -254,7 +250,7 @@ class BffSettings:
             crm_openclaw_offer_id=_bounded("BFF_CRM_OPENCLAW_OFFER_ID", "crm-case-advice"),
             crm_openclaw_ingress_url=crm_openclaw_ingress_url,
             crm_openclaw_ingress_credential=crm_openclaw_ingress_credential,
-            crm_service_url=crm_service_url,
+            erp_session=erp_session,
             crm_workbench_operations_enabled=crm_workbench_operations_enabled,
             max_selected_skus=_integer("BFF_MAX_SELECTED_SKUS", 10_000, minimum=1, maximum=10_000),
             bulk_batch_size=_integer("BFF_BULK_BATCH_SIZE", 200, minimum=1, maximum=200),
@@ -294,21 +290,6 @@ def _ingress_url(name: str, default: str) -> str:
     ):
         raise ValueError(f"{name} must be the loopback ingress path")
     return value
-
-
-def _service_origin(value: str, name: str) -> None:
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError(f"{name} must be a credential-free HTTP(S) origin")
-    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
-        raise ValueError(f"{name} requires HTTPS outside loopback")
 
 
 def _required(name: str) -> str:

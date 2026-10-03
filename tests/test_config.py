@@ -124,7 +124,7 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
         "secrets": {
             "allowed_env": {
                 "api_key": "DEPLOY_OPENAI_API_KEY",
-                "broker_client_token": "DEPLOY_BROKER_CLIENT_TOKEN",
+                "mcp_user_ref_signing_key": "MCP_USER_REF_SIGNING_KEY",
                 "supply_chain_bff_postgresql_url": "BFF_POSTGRESQL_URL",
                 "supply_chain_cursor_hmac_signing_key": "BFF_CURSOR_HMAC_SIGNING_KEY",
                 "supply_chain_bff_rabbitmq_url": "BFF_RABBITMQ_URL",
@@ -132,10 +132,10 @@ def deployment_document(runtime_policy: Path) -> dict[str, object]:
                 "supply_chain_tool_gateway_jwt_key": "TOOL_GATEWAY_JWT_KEY",
             }
         },
-        "credential_broker": {
-            "url": "https://credentials.example.com/v1/resolve",
-            "auth_secret_name": "broker_client_token",
-            "allowed_provider_ids": ["mcp.streamable_http", "yeaher.erp"],
+        "user_mcp_key_query": {
+            "server_addresses": "127.0.0.1:8848",
+            "allowed_hosts": ["mcp.example.com"],
+            "signing_secret_name": "mcp_user_ref_signing_key",
             "timeout_seconds": 2.0,
         },
         "base_ai_providers": [
@@ -278,7 +278,7 @@ def deployment_env(runtime_policy: Path) -> dict[str, str]:
         "MCP_RECORD_DIGEST": "a" * 64,
         "ERP_RECORD_DIGEST": "b" * 64,
         "OPENAI_RECORD_DIGEST": "c" * 64,
-        "DEPLOY_BROKER_CLIENT_TOKEN": "broker-secret-value",
+        "MCP_USER_REF_SIGNING_KEY": "s" * 32,
         "DEPLOY_OPENAI_API_KEY": "model-secret-value",
     }
 
@@ -407,7 +407,7 @@ def test_rejects_unknown_missing_pin_and_write_surface(
         load_module().load_deployment_config(config_path, deployment_env(runtime_policy))
 
     assert expected_name in str(error.value)
-    assert "broker-secret-value" not in str(error.value)
+    assert "s" * 32 not in str(error.value)
     assert "model-secret-value" not in str(error.value)
 
 
@@ -425,4 +425,4 @@ def test_missing_attestation_environment_fails_closed_without_secret_leak(tmp_pa
         load_module().load_deployment_config(config_path, environ)
 
     assert "MCP_RECORD_DIGEST" in str(error.value)
-    assert "broker-secret-value" not in str(error.value)
+    assert "s" * 32 not in str(error.value)

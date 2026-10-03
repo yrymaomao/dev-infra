@@ -7,7 +7,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from ebiz_deployment.crm_reception.session_api import (
+from ebiz_deployment.erp_session import (
     SessionInvalid,
     SessionPrincipal,
     SessionUnavailable,
@@ -16,7 +16,7 @@ from ebiz_deployment.supply_chain_bff.app import BffContainer, Principal, create
 from ebiz_deployment.supply_chain_bff.config import BffSettings
 from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
 from ebiz_deployment.supply_chain_bff.reception import supply_chain_owner
-from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
+from ebiz_deployment.user_mcp_credentials import UserMcpRefCodec
 
 
 class FakeSessionClient:
@@ -55,7 +55,7 @@ def test_user_bound_chat_owner_accepts_distinct_users_in_configured_tenant() -> 
     assert denied.value.status_code == 403
 
 
-def test_user_bound_bff_refuses_start_without_binding_map() -> None:
+def test_user_bound_bff_refuses_start_without_user_reference_signer() -> None:
     settings = BffSettings(
         database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
         cursor_hmac_key=b"c" * 32,
@@ -65,9 +65,8 @@ def test_user_bound_bff_refuses_start_without_binding_map() -> None:
         runtime_credential_ref="opaque:legacy",
         user_bound_credentials_enabled=True,
         legacy_batches_enabled=False,
-        crm_service_url="https://crm.example.test",
     )
-    with pytest.raises(ValueError, match="credential bindings"):
+    with pytest.raises(ValueError, match="user reference signer"):
         create_app(
             BffContainer(
                 settings=settings,
@@ -90,10 +89,8 @@ async def test_user_bound_public_route_resolves_erp_identity_and_rejects_invalid
         runtime_credential_ref="opaque:legacy",
         user_bound_credentials_enabled=True,
         legacy_batches_enabled=False,
-        credential_bindings=CredentialBindings(
-            digest="a" * 64, _by_owner={("tenant-a", "alice"): "key:alice"}
-        ),
-        crm_service_url="https://crm.example.test",
+        user_mcp_ref_codec=UserMcpRefCodec(b"s" * 32),
+        openclaw_tenant_id="tenant-a",
         crm_openclaw_enabled=True,
         crm_openclaw_tenant_id="tenant-a",
     )
@@ -104,7 +101,7 @@ async def test_user_bound_public_route_resolves_erp_identity_and_rejects_invalid
             runtime=object(),  # type: ignore[arg-type]
             coordinator=object(),  # type: ignore[arg-type]
             cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=1)),
-            crm_session_client=FakeSessionClient(),
+            session_principal_client=FakeSessionClient(),
             level2_repository=SimpleNamespace(_factory=object(), _payload_store=object()),  # type: ignore[arg-type]
         )
     )
@@ -138,6 +135,6 @@ async def test_user_bound_public_route_resolves_erp_identity_and_rejects_invalid
     assert good.status_code == 200
     assert expired.status_code == 401
     assert unavailable.status_code == 503
-    assert unbound.status_code == 403
+    assert unbound.status_code == 200
     assert wrong_tenant.status_code == 403
     assert crm_token.status_code == 401

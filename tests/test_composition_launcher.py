@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_runtime.base_ai.composition import BaseAICompositionRoot
 from test_config import deployment_document, deployment_env, write_runtime_policy
+
+from ebiz_deployment.composition import UserKeyCompositionRoot
 
 
 def composition_module() -> Any:
@@ -39,7 +40,7 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
 
     result = composition_module().build_provider_composition(config, environ)
 
-    assert isinstance(result.root, BaseAICompositionRoot)
+    assert isinstance(result.root, UserKeyCompositionRoot)
     assert [plugin.plugin_id for plugin in result.base_ai_policy.plugins] == [
         "base-ai.mcp.streamable_http",
         "base-ai.openai.responses",
@@ -85,7 +86,7 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert str(runtime_policy.resolve()) == environ["APP_PLUGIN_POLICY_PATH"]
 
 
-def test_missing_model_or_broker_secret_fails_before_composition(tmp_path: Path) -> None:
+def test_missing_model_or_user_reference_secret_fails_before_composition(tmp_path: Path) -> None:
     config_path, _, environ = configured_files(tmp_path)
     config = importlib.import_module("ebiz_deployment.config").load_deployment_config(
         config_path, environ
@@ -96,7 +97,7 @@ def test_missing_model_or_broker_secret_fails_before_composition(tmp_path: Path)
         composition_module().build_provider_composition(config, environ)
 
     assert "api_key" in str(error.value)
-    assert "broker-secret-value" not in str(error.value)
+    assert "s" * 32 not in str(error.value)
 
 
 def test_launcher_injects_composition_into_runtime_main(
@@ -116,7 +117,7 @@ def test_launcher_injects_composition_into_runtime_main(
 
     assert result == 23
     assert received["argv"] == ["--check"]
-    assert isinstance(received["provider_composition"], BaseAICompositionRoot)
+    assert isinstance(received["provider_composition"], UserKeyCompositionRoot)
 
 
 def test_launcher_fails_closed_when_runtime_policy_path_disagrees(

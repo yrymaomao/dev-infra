@@ -134,6 +134,25 @@ def test_coordinator_mints_short_lived_tenant_service_token() -> None:
     }
 
 
+def test_user_bound_coordinator_never_falls_back_to_static_reference() -> None:
+    settings = BffSettings(
+        database_url="postgresql+asyncpg://test:test@127.0.0.1/test_test",
+        cursor_hmac_key=b"c" * 32,
+        jwt_secret="j" * 32,
+        runtime_url="http://127.0.0.1:8000",
+        skill_input_ref="payload://skill/current",
+        runtime_credential_ref="opaque:global",
+        user_bound_credentials_enabled=True,
+    )
+    coordinator = BatchCoordinator(
+        repository=object(),
+        runtime=object(),
+        settings=settings,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ValueError, match="user credential reference"):
+        coordinator.authorization_for_tenant("tenant-a")
+
+
 def test_signed_cursor_binds_batch_tenant_and_sequences() -> None:
     now = datetime(2026, 9, 3, tzinfo=UTC)
     signer = CursorSigner(b"x" * 32, ttl=timedelta(minutes=5), clock=lambda: now)

@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from agent_runtime.application.tool_gateway_authorization import ToolGatewayPolicyRejected
-from agent_runtime.application.tool_gateway_operations import GatewayOperationConflict
 from ebiz_runtime_contracts.tool_gateway import ToolGatewayIdentity
 from ebiz_runtime_contracts.tool_gateway_catalog import ToolOfferReference
 from ebiz_runtime_contracts.tool_gateway_policy import (
@@ -14,13 +13,13 @@ from ebiz_runtime_contracts.tool_gateway_policy import (
     ToolGatewayPolicyRequest,
 )
 
-from ebiz_deployment.supply_chain_credential_bindings import CredentialBindings
 from ebiz_deployment.tool_gateway import (
     BffToolGatewayPolicyPort,
     DynamicGatewayContext,
     GatewayAuthorityProfile,
     GatewayPolicyRoute,
 )
+from ebiz_deployment.user_mcp_credentials import UserMcpRefCodec
 
 SUPPLY_CHAIN_KEY = "agent:main:openclaw:" + "1" * 48
 CRM_KEY = "agent:crm:openclaw:" + "2" * 48
@@ -253,10 +252,7 @@ def test_supply_chain_context_selects_only_signed_users_bound_reference() -> Non
                 ),
             ),
         ),
-        credential_bindings=CredentialBindings(
-            digest="a" * 64,
-            _by_owner={("tenant-a", "alice"): "key:alice", ("tenant-a", "bob"): "key:bob"},
-        ),
+        user_mcp_ref_codec=UserMcpRefCodec(b"s" * 32),
         user_bound_offer_ids=frozenset({reference.offer_id}),
     )
 
@@ -273,11 +269,12 @@ def test_supply_chain_context_selects_only_signed_users_bound_reference() -> Non
 
     alice = resolver.resolve(decision("alice"), reference)
     bob = resolver.resolve(decision("bob"), reference)
-    assert alice.auth.credential_ref == "key:alice"
-    assert bob.auth.credential_ref == "key:bob"
+    codec = UserMcpRefCodec(b"s" * 32)
+    assert codec.parse(alice.auth.credential_ref, expected_tenant_id="tenant-a") == "alice"
+    assert codec.parse(bob.auth.credential_ref, expected_tenant_id="tenant-a") == "bob"
     assert alice.auth.cid == bob.auth.cid == "tenant-a"
-    with pytest.raises(GatewayOperationConflict):
-        resolver.resolve(decision("charlie"), reference)
+    charlie = resolver.resolve(decision("charlie"), reference)
+    assert codec.parse(charlie.auth.credential_ref, expected_tenant_id="tenant-a") == "charlie"
 
 
 @pytest.mark.asyncio

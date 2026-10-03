@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 import pytest
 
 from ebiz_deployment.supply_chain_bff.config import BffSettings
@@ -17,6 +15,11 @@ def _required_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BFF_RUNTIME_URL", "http://127.0.0.1:8000")
     monkeypatch.setenv("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF", "payload://skill/current")
     monkeypatch.setenv("SUPPLY_CHAIN_CREDENTIAL_REF", "opaque:runtime-service")
+
+
+def _user_bound_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", "true")
+    monkeypatch.setenv("MCP_USER_REF_SIGNING_KEY", "s" * 32)
 
 
 def test_level2_flags_default_off_and_product_limits_are_bounded(
@@ -38,27 +41,37 @@ def test_level2_flags_default_off_and_product_limits_are_bounded(
     assert settings.user_bound_credentials_enabled is False
 
 
-def test_user_bound_mode_requires_crm_and_pinned_binding_file(
+def test_user_bound_mode_requires_erp_and_signing_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", "true")
-    with pytest.raises(ValueError, match="BFF_CRM_SERVICE_URL"):
+    monkeypatch.delenv("BFF_ERP_SESSION_REDIS_URL_FILE")
+    with pytest.raises(ValueError, match="BFF_ERP_SESSION_REDIS_URL_FILE"):
         BffSettings.from_environment()
-    monkeypatch.setenv("BFF_CRM_SERVICE_URL", "https://crm.example.test")
-    with pytest.raises(ValueError, match="SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH"):
+    monkeypatch.setenv("BFF_ERP_SESSION_REDIS_URL_FILE", str(tmp_path / "redis-url"))
+    with pytest.raises(ValueError, match="MCP_USER_REF_SIGNING_KEY"):
         BffSettings.from_environment()
-    document = b'{"bindings":[{"cid":"tenant-a","uid":"alice","credential_ref":"key:alice"}]}'
-    path = tmp_path / "bindings.json"
-    path.write_bytes(document)
-    monkeypatch.setenv("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH", str(path))
-    monkeypatch.setenv(
-        "SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256", hashlib.sha256(document).hexdigest()
-    )
+    monkeypatch.setenv("MCP_USER_REF_SIGNING_KEY", "s" * 32)
     settings = BffSettings.from_environment()
     assert settings.user_bound_credentials_enabled is True
-    assert settings.credential_bindings is not None
-    assert settings.credential_bindings.resolve("tenant-a", "alice") == "key:alice"
+    assert settings.user_mcp_ref_codec is not None
+    assert (
+        settings.user_mcp_ref_codec.parse(
+            settings.user_mcp_ref_codec.issue("tenant-a", "alice"),
+            expected_tenant_id="tenant-a",
+        )
+        == "alice"
+    )
+
+
+def test_active_supply_chain_refuses_static_userless_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("BFF_LEVEL2_ENABLED", "true")
+    with pytest.raises(ValueError, match="user-bound credentials"):
+        BffSettings.from_environment()
 
 
 def test_report_schema_version_rejects_v1_for_new_reports(
@@ -92,7 +105,7 @@ def test_legacy_batches_can_be_explicitly_enabled(
     assert settings.legacy_batches_enabled is True
 
 
-def test_level2_mq_requires_parent_flag_and_broker_reference(
+def test_level2_mq_requires_parent_flag_and_queue_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_environment(monkeypatch)
@@ -114,6 +127,7 @@ def test_external_rabbitmq_must_use_tls(monkeypatch: pytest.MonkeyPatch) -> None
         BffSettings.from_environment()
 
     monkeypatch.setenv("BFF_RABBITMQ_URL", "amqps://service:secret@rabbit.internal/vhost")
+    _user_bound_environment(monkeypatch)
     settings = BffSettings.from_environment()
     assert settings.level2_enabled is True
     assert settings.level2_mq_enabled is True
@@ -130,6 +144,7 @@ def test_level2_mq_names_are_explicitly_loaded_and_bounded(
     monkeypatch.setenv("BFF_RABBITMQ_EXCHANGE", "supply-chain.report.dev-r1")
     monkeypatch.setenv("BFF_RABBITMQ_QUEUE", "supply-chain.report-batch.dev-r1")
     monkeypatch.setenv("BFF_RABBITMQ_ROUTING_KEY", "supply-chain.report-batch.requested.dev-r1")
+    _user_bound_environment(monkeypatch)
 
     settings = BffSettings.from_environment()
 
@@ -162,3 +177,13 @@ def test_level2_environment_rejects_values_outside_product_bounds(
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match="outside its supported range"):
         BffSettings.from_environment()
+
+
+@pytest.fixture(autouse=True)
+def erp_secret_files(monkeypatch, tmp_path):
+    redis_file = tmp_path / "redis-url"
+    jwt_file = tmp_path / "jwt-key"
+    redis_file.write_text("redis://127.0.0.1:6379/2", encoding="utf-8")
+    jwt_file.write_text("synthetic-erp-signing-key", encoding="utf-8")
+    monkeypatch.setenv("BFF_ERP_SESSION_REDIS_URL_FILE", str(redis_file))
+    monkeypatch.setenv("BFF_ERP_SESSION_JWT_SECRET_FILE", str(jwt_file))

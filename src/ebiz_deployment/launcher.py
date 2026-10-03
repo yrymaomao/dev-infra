@@ -21,12 +21,12 @@ from .config import (
 )
 from .on_demand_provider import OnDemandProviderComposition
 from .openclaw_reception.profile import session_key_prefix_for
-from .supply_chain_credential_bindings import CredentialBindings
 from .tool_gateway import (
     GatewayAuthorityProfile,
     GatewayWorkflowOffer,
     SharedToolGatewayComposition,
 )
+from .user_mcp_credentials import UserMcpRefCodec
 
 SUPPLY_CHAIN_SCOPES = frozenset(
     {
@@ -82,7 +82,7 @@ def supply_chain_offer(environment: Mapping[str, str]) -> GatewayWorkflowOffer:
         ),
         authority=GatewayAuthorityProfile(
             cid=environment.get("TOOL_GATEWAY_CID", "supply-chain-dev"),
-            credential_ref=environment.get("SUPPLY_CHAIN_CREDENTIAL_REF", ""),
+            credential_ref=None,
             scopes=SUPPLY_CHAIN_SCOPES,
             authorize_path="/internal/supply-chain/v2/openclaw/authorize",
             session_key_prefix=session_key_prefix_for(
@@ -121,7 +121,7 @@ def crm_offer(
         ),
         authority=GatewayAuthorityProfile(
             cid=environment.get("CRM_TOOL_GATEWAY_CID", "crm-advisor"),
-            credential_ref=environment.get("CRM_CREDENTIAL_REF", ""),
+            credential_ref=None,
             scopes=CRM_SCOPES,
             authorize_path="/internal/crm/v2/openclaw/authorize",
             session_key_prefix=session_key_prefix_for(
@@ -157,18 +157,21 @@ def build_gateway_composition(
         environment.get("BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED", "false").lower()
         == "true"
     )
-    bindings = None
-    if user_bound:
-        path = environment.get("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH", "").strip()
-        digest = environment.get("SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256", "").strip()
-        if not path or not digest:
-            raise ValueError("user-bound Tool Gateway requires pinned credential bindings")
-        bindings = CredentialBindings.load(Path(path), expected_sha256=digest)
+    user_mcp_ref_codec = None
+    crm_enabled = environment.get("CRM_TOOL_GATEWAY_ENABLED", "false").lower() == "true"
+    supply_chain_enabled = (
+        environment.get("SUPPLY_CHAIN_TOOL_GATEWAY_ENABLED", "false").lower() == "true"
+    )
+    if supply_chain_enabled and not user_bound:
+        raise ValueError("Supply Chain Tool Gateway requires user-bound credentials")
+    if user_bound or crm_enabled:
+        signing_key = environment.get("MCP_USER_REF_SIGNING_KEY", "").encode("utf-8")
+        user_mcp_ref_codec = UserMcpRefCodec(signing_key)
     instance_generation_ids: dict[str, str] = {}
     generation_id = environment.get("TOOL_GATEWAY_GENERATION_ID", "supply-chain-v2-dev-1")
-    if environment.get("SUPPLY_CHAIN_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
+    if supply_chain_enabled:
         offers.append(supply_chain_offer(environment))
-    if environment.get("CRM_TOOL_GATEWAY_ENABLED", "false").lower() == "true":
+    if crm_enabled:
         offers.append(crm_offer(environment, config))
         crm_agent_id = environment.get("BFF_CRM_OPENCLAW_AGENT_ID", "crm").strip() or "crm"
         instance_generation_ids[crm_agent_id] = (
@@ -176,10 +179,14 @@ def build_gateway_composition(
         )
     if not offers:
         return None
-    supply_chain_offer_ids = frozenset(
+    user_bound_offer_ids = frozenset(
         offer.pin.offer_id
         for offer in offers
-        if offer.authority.authorize_path == "/internal/supply-chain/v2/openclaw/authorize"
+        if offer.authority.authorize_path
+        in {
+            "/internal/supply-chain/v2/openclaw/authorize",
+            "/internal/crm/v2/openclaw/authorize",
+        }
     )
     return SharedToolGatewayComposition(
         tenant_id=environment.get("BFF_OPENCLAW_TENANT_ID", "tenant-local-dev"),
@@ -192,8 +199,8 @@ def build_gateway_composition(
         generation_id=generation_id,
         catalog_revision=environment.get("TOOL_GATEWAY_CATALOG_REVISION", "supply-chain-v2-dev-1"),
         instance_generation_ids=instance_generation_ids,
-        credential_bindings=bindings,
-        user_bound_offer_ids=supply_chain_offer_ids if user_bound else frozenset(),
+        user_mcp_ref_codec=user_mcp_ref_codec,
+        user_bound_offer_ids=user_bound_offer_ids,
     )
 
 

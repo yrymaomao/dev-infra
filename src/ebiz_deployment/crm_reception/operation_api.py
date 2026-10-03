@@ -7,7 +7,7 @@ emf-crm operation page (v1.5 sections 6.3, 8.3, 12.2; integrated design 12.3).
 Order of every request, and what each step may touch:
 
 1. operation id syntax (no call);
-2. the workbench ``_token_`` through crm-service ``session-principal`` (no
+2. the workbench ``_token_`` through the shared ERP login resolver (no
    Runtime call); a missing, invalid or machine session is hidden;
 3. the tenant fence: the session's tenant must be this deployment's tenant
    (no Runtime call before this passes);
@@ -29,6 +29,11 @@ from typing import Any
 from fastapi import APIRouter, Cookie, Header, Request
 from fastapi.responses import JSONResponse
 
+from ebiz_deployment.erp_session import (
+    SessionInvalid,
+    SessionPrincipalClient,
+    SessionUnavailable,
+)
 from ebiz_deployment.openclaw_reception.profile import ReceptionProfile
 
 from .operation_contracts import (
@@ -51,12 +56,7 @@ from .operation_runtime import (
     RuntimeUnavailable,
     WorkbenchActor,
 )
-from .session_api import (
-    TOKEN_NAME,
-    SessionInvalid,
-    SessionPrincipalClient,
-    SessionUnavailable,
-)
+from .session_api import TOKEN_NAME
 
 AUDIT_PATH = "/crm/audit"
 _MAX_TOKEN = 4096

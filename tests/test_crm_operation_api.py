@@ -33,7 +33,7 @@ from ebiz_deployment.crm_reception.operation_runtime import (
     SettlementRecord,
     WorkbenchActor,
 )
-from ebiz_deployment.crm_reception.session_api import SessionInvalid, SessionPrincipal
+from ebiz_deployment.erp_session import SessionInvalid, SessionPrincipal
 from ebiz_deployment.supply_chain_bff.app import BffContainer, create_app
 from ebiz_deployment.supply_chain_bff.config import BffSettings
 from ebiz_deployment.supply_chain_bff.cursor import CursorSigner
@@ -353,7 +353,7 @@ def make_app(
             runtime=object(),  # type: ignore[arg-type]
             coordinator=object(),  # type: ignore[arg-type]
             cursor=CursorSigner(b"c" * 32, ttl=timedelta(days=7)),
-            crm_session_client=client,
+            session_principal_client=client,
             crm_operation_runtime=runtime,
         )
     )
