@@ -82,9 +82,9 @@ Start from:
 
 All identities, versions, workflow digest, and canonical wheel RECORD digests
 are mandatory. Unknown fields and extra/missing operations fail closed. ERP
-access is limited to five allowlisted read-only MCP tools. The Adapter validates
-the credential broker's trusted tenant binding; Deployment never stores an MCP
-key or login token.
+access is restricted to the configured read-only MCP tools. The Adapter uses a
+signed user reference and request-scoped AGGR Key resolution; no independent
+Credential Broker or hand-maintained user binding file is used.
 
 The attestation command derives digests from installed, non-editable wheels:
 
@@ -149,7 +149,7 @@ and requires the exact materialized EvidenceRef count:
 ```
 
 Real-dev files must stay under an ignored `.local` directory and inject the
-MCP endpoint, key, broker URL, and model endpoint at process start. This repo
+MCP endpoint, Nacos discovery configuration, and model endpoint at process start. This repo
 contains no fixed development/production endpoint or credential and does not
 call an intranet service during build or test.
 
@@ -207,7 +207,7 @@ contributes a `ReceptionProfile`. Supply Chain (`supply_chain_bff/reception.py`)
 keeps its routes, permission and report projection unchanged. The CRM profile
 (`ebiz_deployment.crm_reception`) adds the read-only Phase 1 of the OpenClaw x
 CRM integration: `POST /api/crm/v2/openclaw/session` exchanges the workbench
-`_token_` for the BFF JWT through crm-service's `session-principal` route, the
+`_token_` for the BFF JWT through the shared ERP JWT/Redis resolver; the
 `crm-case-advice` offer projects `crm-case-advise-on-demand@1` with exactly
 eight scopes beside the Supply Chain pin, and `ebiz-crm-advise-publish`
 (`tools/publish_crm_advise.py`) publishes `crm@2`, `crm-advise@1` and the
@@ -215,29 +215,53 @@ workflow from the installed CRM wheel, failing unless the checksum equals the
 reviewed digest. Both profiles share the `supply_chain_bff` schema and one
 Alembic chain (head `0010_supply_chain_user_credentials`).
 
-### Supply Chain user-bound MCP credential references (opt-in)
+### Shared ERP login and user MCP Key resolution
 
-Set `BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED=true` in both the BFF and
-Tool Gateway environments. Both processes must receive the same absolute
-`SUPPLY_CHAIN_CREDENTIAL_BINDINGS_PATH` and pinned
-`SUPPLY_CHAIN_CREDENTIAL_BINDINGS_SHA256`. The file is a deployment-controlled
-JSON document containing **references only**, for example:
+Supply Chain accepts the existing ERP Bearer token. CRM accepts the existing
+`_token_` header/cookie and keeps its 120-second internal JWT. Both resolve
+identity through one read-only ERP Redis pool. Enabling login does not require
+enabling CRM Workbench.
 
-```json
-{"bindings":[{"cid":"tenant-id","uid":"user-id","credential_ref":"opaque:reference"}]}
-```
+Set `BFF_ERP_SESSION_REDIS_URL_FILE` and `BFF_ERP_SESSION_JWT_SECRET_FILE`
+to controlled secret files from the existing ERP login system, and
+`BFF_ERP_SESSION_TIMEOUT_SECONDS=2`. The URL selects the ERP login Redis,
+not Runtime's own Redis. Missing files fail startup; Redis unavailability is
+503, with no fixed-user or CRM HTTP fallback.
 
-Every `(cid, uid)` may occur only once. The BFF obtains both identifiers from
-`BFF_CRM_SERVICE_URL`'s trusted `session-principal` response to the browser's
-ERP bearer; the browser cannot provide a reference. The Gateway verifies the
-same binding-file digest through its authenticated BFF policy response before
-starting a new on-demand operation. Missing/mismatched bindings fail closed.
-Migrate the BFF database to `0010_supply_chain_user_credentials` before
-enabling this mode. Existing ownerless reports can finish in the background
-using `SUPPLY_CHAIN_CREDENTIAL_REF`, but are not readable by new user sessions;
-ownerless schedules do not fire again. The file and any MCP Key remain outside
-Git. Disable the feature flag to retain the previous dev behavior while no
-user-owned records have been created.
+BFF and Gateway must use the same `MCP_USER_REF_SIGNING_KEY` and enable
+`BFF_SUPPLY_CHAIN_USER_BOUND_CREDENTIALS_ENABLED`. Trusted uid/cid produce
+a tenant-bound signed user reference, fixed on the execution/report. A browser
+cannot select the credential reference or override identity.
+
+The Provider host's `user_mcp_key_query` configuration contains Nacos
+`server_addresses`, `namespace`, `group_name` (default DEFAULT_GROUP),
+`allowed_hosts`, `signing_secret_name` and `timeout_seconds`.
+The service name is fixed to McpServer. Optional Nacos login requires paired
+`username_secret_name` and `password_secret_name`, declared in
+`secrets.allowed_env`. No Key or Nacos password belongs in Git.
+
+Only healthy/enabled positive-weight instances are considered. Discovery
+expires after five seconds; expired discovery is never used on failure.
+Both Nacos and the discovered AGGR origin require HTTPS (HTTP only for
+loopback); the AGGR origin must also be allowlisted. TLS certificates and
+hostnames are verified; redirects are refused. SDK 0.1.17 does not support
+IPv6 Nacos addresses, which are rejected at startup. There is no fixed-address fallback. Public-namespace installations
+can set `namespace: ""` directly in controlled JSON instead of using the
+example's environment placeholder.
+
+The host posts `{cid,uid}` to
+`/erp/feign/mcp/key/query/aggr-key`, accepts only a successful envelope
+with nonempty `result.mcpKey`, and sends the original Key using
+`X-Mcp-Key`. Multiple-Key selection and Meta retrieval stay in MCP Server.
+Keys are not cached, persisted or logged. SDK raw logging is disabled because
+Nacos SDK 0.1.17 logs access tokens and response bodies.
+
+Existing reports with a valid signed user reference may continue with their
+original pinned reference. Reports without a reference are not reauthorized
+with a global Key and do not interrupt other reports' reconciliation;
+ordinary users cannot read ownerless reports or reactivate their schedules. This change
+adds no database migration; deployments retain the existing BFF migration head.
+
 
 Phase 2 adds the workbench operation routes behind
 `BFF_CRM_WORKBENCH_OPERATIONS_ENABLED` (`GET`/`POST
@@ -250,8 +274,7 @@ as the CRM session's human actor; see "Workbench operation routes" in
 still owes.
 
 See `docs/crm-profile.md` for the chain, the `BFF_CRM_*` / `CRM_*` variables,
-the enablement order and the note that CRM call segments answer 401 until the
-crm-service JWT change and `session-principal` route are deployed. Start from
+the enablement order and the shared ERP login requirements. Start from
 `config/deployment.crm.example.json` and
 `config/runtime-plugin-policy.crm.example.json` for a two-profile deployment.
 

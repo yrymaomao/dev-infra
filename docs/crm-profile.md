@@ -15,7 +15,7 @@ emf-crm Case page
   |  POST .../conversations/{cid}/turns, GET .../turns/{tid}, GET .../turns/{tid}/events (SSE)
   v
 BFF: ebiz_deployment.openclaw_reception x crm_reception profile
-  |  GET  crm-service /ai/read/v1/crm/session-principal   (session exchange only)
+  |  ERP JWT verification + Redis LoginUser              (shared identity resolver)
   |  worker: GET/POST <BFF_CRM_OPENCLAW_INGRESS_URL>/../turns  (ingress bearer)
   v
 CRM OpenClaw host instance (its own Adapter process, agent id BFF_CRM_OPENCLAW_AGENT_ID)
@@ -48,7 +48,7 @@ body hashes, no buyer text or contact detail.
 | Plugin | the single `ebizhub.crm-agent` 2.0.0 (`ebiz-agent-crm`, `crm_agent.plugin:factory`, permissions `crm.compute, crm.preview`, config `policy_version`). There is no `ebizhub.crm-advisor` plugin. |
 | Catalog sets | `crm@2` and `crm-advise@1`, both shipped in the agent wheel and published by the job below |
 | Persistence | the same `supply_chain_bff` schema and Alembic chain (head `0010_supply_chain_user_credentials`); rows are told apart by `profile_version = crm-reception.v1` and by the `agent:crm:openclaw:` session-key prefix |
-| Session identity | tenant and actor come from crm-service's `session-principal` reply, never from the browser; the profile pins one tenant (`BFF_CRM_OPENCLAW_TENANT_ID`, D-2) and refuses every other tenant before any conversation or result can be addressed |
+| Session identity | tenant and actor come from the shared ERP JWT/Redis resolver, never from the browser; the profile pins one tenant (`BFF_CRM_OPENCLAW_TENANT_ID`, D-2) and refuses every other tenant before any conversation or result can be addressed |
 
 ## Environment
 
@@ -62,7 +62,8 @@ BFF process (`ebiz-supply-chain-bff`):
 | `BFF_CRM_OPENCLAW_AGENT_ID` | the CRM host instance's agent id (default `crm`); the Runtime launcher reads the same variable to route policy queries |
 | `BFF_CRM_OPENCLAW_OFFER_ID` | default `crm-case-advice` |
 | `BFF_CRM_OPENCLAW_INGRESS_URL`, `BFF_CRM_OPENCLAW_INGRESS_CREDENTIAL` | the CRM host instance's loopback ingress (must differ from the Supply Chain one) and its bearer |
-| `BFF_CRM_SERVICE_URL` | crm-service origin for `GET /ai/read/v1/crm/session-principal` (HTTPS outside loopback) |
+| `BFF_ERP_SESSION_REDIS_URL_FILE`, `BFF_ERP_SESSION_JWT_SECRET_FILE` | existing ERP login Redis URL and JWT secret, loaded from controlled files; shared with Supply Chain |
+| `BFF_ERP_SESSION_TIMEOUT_SECONDS` | whole login-store lookup deadline, default 2 seconds |
 | `BFF_CRM_WORKBENCH_OPERATIONS_ENABLED` | Phase 2: mounts the workbench operation routes (default `false`; requires `BFF_CRM_OPENCLAW_ENABLED`); they reuse `BFF_RUNTIME_URL` and `APP_JWT_SECRET`, no new credential |
 
 Runtime process (`ebiz-runtime-deployment`), on top of `SUPPLY_CHAIN_TOOL_GATEWAY_*` /
@@ -72,7 +73,7 @@ Runtime process (`ebiz-runtime-deployment`), on top of `SUPPLY_CHAIN_TOOL_GATEWA
 | --- | --- |
 | `CRM_TOOL_GATEWAY_ENABLED` | adds the CRM pin to the shared composition |
 | `CRM_ADVISOR_WORKFLOW_DIGEST` | the checksum printed by the publish job; must equal `crm_release.advise_workflow.digest` |
-| `CRM_CREDENTIAL_REF` | opaque, tenant-bound CRM read-only broker reference (one per tenant) |
+| `MCP_USER_REF_SIGNING_KEY` | shared signing key for tenant-bound user MCP references; never sent to the browser |
 | `CRM_TOOL_GATEWAY_CID` | trusted caller id of the CRM offer (default `crm-advisor`) |
 | `CRM_TOOL_GATEWAY_GENERATION_ID` | the CRM host instance's own generation id (default `<TOOL_GATEWAY_GENERATION_ID>-crm`, must differ) |
 | `CRM_ADAPTER_RECORD_DIGEST`, `CRM_AGENT_RECORD_DIGEST`, `CRM_POLICY_VERSION` | release pins consumed by `config/deployment.crm.example.json` and `config/runtime-plugin-policy.crm.example.json` |
@@ -120,26 +121,20 @@ having been done.
    projection (ADVISED with draft, BLOCKED, TAKEOVER, failure).
 6. Enable one tenant (`BFF_CRM_OPENCLAW_ENABLED=true`, `CRM_TOOL_GATEWAY_ENABLED=true`).
 
-**Until the crm-service JWT change and the `session-principal` route
-(crm-service branch `codex/crm-session-principal`) are deployed, every CRM call
-segment answers 401**: the session exchange returns `401 session invalid`
-(crm-service `CRM-401-UNAUTHENTICATED`) and no BFF JWT is minted, and the
-Runtime's `yeaher.crm` reads are refused by crm-service. Record that in the
-acceptance log rather than working around it.
+## Shared ERP login contract
 
-## What the BFF expects from crm-service (P1-D)
+Deployment verifies HS256 and expiration, reads `KEY.USER`, refuses machine
+sessions, and reads `_Cache_Login_User_Data_<uid>` (at most two JSON decodes).
+Cached id must match uid and company supplies cid. The current token, or the
+still-present `_Cache_Old_Token_<uid>` during ERP's own refresh grace, must
+match. No Redis write, token refresh or TTL extension is performed.
 
-`GET /ai/read/v1/crm/session-principal`, token in the `_token_` header (the
-BFF forwards it there; crm-service also accepts `_refresh_token_` and the
-`_token_` cookie):
-
-- `200` bare `{"tenantId": "...", "actorId": "...", "roles": [...]}`
-- `401` (`CRM-401-UNAUTHENTICATED`, no/invalid/expired token) and `403`
-  (`CRM-403-FORBIDDEN`, machine key or no tenant) are passed through with the
-  same status and the fixed detail `session invalid`; the `IngressResponse`
-  envelope body is never forwarded
-- any other status (for example `502` on a session-store failure) becomes
-  `503 session service unavailable`
+Invalid sessions return 401/403; login-store unavailability returns 503.
+Workbench operation routes retain their uniform 404 owner-hiding rule.
+CRM session exchange still issues the same internal JWT for 120 seconds.
+There is no `session-principal` HTTP call or Workbench dependency for login.
+See [shared credential deployment](../README.md#shared-erp-login-and-user-mcp-key-resolution)
+for Nacos, AGGR Key and controlled-secret configuration.
 
 ## What the host deployment must configure (P1-E)
 
@@ -208,7 +203,7 @@ request_id}`. Operation ids must match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`.
 
 1. operation id syntax (no call);
 2. the workbench `_token_` (header or cookie, as the session exchange reads
-   it) through crm-service `GET /ai/read/v1/crm/session-principal`; a
+   it) through the shared ERP JWT/Redis resolver; a
    missing, invalid (401) or machine (403) session is hidden;
 3. the tenant fence: the session's tenant must be `BFF_CRM_OPENCLAW_TENANT_ID`
    - **no Runtime call happens before this passes**;
