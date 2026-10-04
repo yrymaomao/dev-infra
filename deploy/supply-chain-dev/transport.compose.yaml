@@ -1,0 +1,42 @@
+# Compose overlay for the approved dev-only transport, not a READY application.
+# The image must match the installed Python-image ID in the release manifest.
+x-transport: &transport
+  image: ${SC_PYTHON_IMAGE:?verified Python image required}
+  restart: unless-stopped
+  network_mode: service:app-network
+  depends_on: [app-network]
+  user: "65532:65532"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=16m,noexec,nosuid,nodev]
+  volumes:
+    - ./passthrough.py:/opt/sc-transport/passthrough.py:ro
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  app-network:
+    image: ${SC_PYTHON_IMAGE:?verified Python image required}
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: ["/opt/venv/bin/python", "-B", "-c", "import time; time.sleep(2147483647)"]
+    networks: [existing-dev]
+    # No host ports: attach an explicitly approved API ingress later.
+  nacos-transport:
+    <<: *transport
+    command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "nacos"]
+  mcp-transport:
+    <<: *transport
+    command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "mcp"]
+  mq-transport:
+    <<: *transport
+    command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "mq"]
+
+networks:
+  existing-dev:
+    external: true
+    name: supply-chain-dev
