@@ -10,7 +10,7 @@ production TLS solution or a complete application deployment by itself.
 | Loopback listener | Fixed upstream | Allowed traffic |
 | --- | --- | --- |
 | 18848 | dev host 8848 | Nacos login, read-only McpServer discovery |
-| 18249 | dev host 9249 | Existing AGGR-key query and `/mcp` POST/GET/DELETE |
+| 18249 | dev host 9249 | AGGR-key query; local `/mcp` maps to `/erp/aggr-mcp` POST/GET/DELETE |
 | 18672 | dev host 5672 | AMQP bytes only; no management interface |
 
 The literal dev host is defined once in `passthrough.py`. Calls cannot select

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 HOST = "192.168.10.18"
 KEY_PATH = "/erp/feign/mcp/key/query/aggr-key"
+MCP_UPSTREAM_PATH = "/erp/aggr-mcp"
 NAMING_PATH = "/nacos/v1/ns/instance/list"
 LOGIN_PATH = "/nacos/v1/auth/login"
 MAX_BODY = 8 * 1024 * 1024
@@ -134,7 +135,7 @@ def create_app(kind: str, injected_client: httpx.AsyncClient | None = None) -> F
         headers = forward_headers(request.headers)
         headers["accept-encoding"] = "identity"
         origin = f"http://{HOST}:{8848 if kind == 'nacos' else 9249}"
-        target = origin + path
+        target = origin + (MCP_UPSTREAM_PATH if mcp else path)
         if request.url.query:
             target += "?" + request.url.query
         client = app.state.client

@@ -67,7 +67,7 @@ async def test_mcp_forwards_key_session_and_bytes_without_global_fallback():
                 assert response.headers["mcp-session-id"] == "session-1"
             assert [r.headers["x-mcp-key"] for r in seen] == ["user-a", "user-b"]
             assert seen[0].content == b'{"jsonrpc":"2.0"}'
-            assert str(seen[0].url) == "http://192.168.10.18:9249/mcp"
+            assert str(seen[0].url) == "http://192.168.10.18:9249/erp/aggr-mcp"
             assert (await browser.get("/mcp")).status_code == 401
 
 
