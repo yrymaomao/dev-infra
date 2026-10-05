@@ -9,7 +9,7 @@ x-transport: &transport
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
-  tmpfs: [/tmp:size=16m,noexec,nosuid,nodev]
+  tmpfs: ["/tmp:size=16m,noexec,nosuid,nodev"]
   volumes:
     - ./passthrough.py:/opt/sc-transport/passthrough.py:ro
   environment:
