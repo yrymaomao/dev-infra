@@ -15,6 +15,15 @@ TABLES = ("selection_preview", "report_run", "report_schedule")
 
 
 def upgrade() -> None:
+    # Alembic creates version_num as VARCHAR(32); this revision identifier is
+    # longer, so widen the column before Alembic records the new head.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        schema=SCHEMA,
+        existing_type=sa.String(32),
+        type_=sa.String(64),
+    )
     for table in TABLES:
         op.add_column(table, sa.Column("owner_uid", sa.String(256)), schema=SCHEMA)
         op.add_column(table, sa.Column("credential_ref", sa.String(256)), schema=SCHEMA)
