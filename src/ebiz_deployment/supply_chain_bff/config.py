@@ -200,7 +200,11 @@ class BffSettings:
             cursor_hmac_key=key,
             jwt_secret=jwt_secret,
             runtime_url=runtime_url,
-            skill_input_ref=_required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF"),
+            skill_input_ref=(
+                _required("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF")
+                if _boolean("BFF_LEGACY_BATCHES_ENABLED", False)
+                else os.environ.get("BFF_SUPPLY_CHAIN_SKILL_INPUT_REF", "").strip()
+            ),
             runtime_credential_ref=credential_ref,
             user_bound_credentials_enabled=user_bound_credentials_enabled,
             user_mcp_ref_codec=user_mcp_ref_codec,
