@@ -252,6 +252,11 @@ example's environment placeholder.
 The host posts trusted `{cid,uid}` to the explicitly configured key family:
 `service_type: AGGR` uses `/erp/feign/mcp/key/query/aggr-key` (legacy default);
 `service_type: ERP` uses `/erp/feign/mcp/key/query/erp-key` for Supply Chain.
+For the dev loopback transport, also set `SC_MCP_SERVICE_TYPE=ERP` (Compose)
+or `passthrough.py mcp --mcp-service-type ERP`; the legacy default remains AGGR.
+The bridge permits only the selected family's query path and MCP upstream,
+passes internal query Authorization unchanged, and never switches family based
+on a caller's payload. Keep resolver and transport families consistent.
 ERP requires `token_secret_name` in `secrets.allowed_env`, resolved from a
 controlled secret into the internal Authorization header. It is not the user
 login token or the MCP Key. ERP responses must match the requested cid/uid.

@@ -220,3 +220,50 @@ async def test_timeout_is_safe_and_not_retried():
             assert response.status_code == 502
             assert response.content == b""
             assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "family,query_path,mcp_path",
+    [
+        ("ERP", "/erp/feign/mcp/key/query/erp-key", "/erp/mcp"),
+        ("AGGR", "/erp/feign/mcp/key/query/aggr-key", "/erp/aggr-mcp"),
+    ],
+)
+async def test_explicit_key_family_routes_query_and_mcp_without_cross_family_fallback(
+    family,
+    query_path,
+    mcp_path,
+):
+    seen = []
+
+    def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, content=b"{}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as outbound:
+        app = proxy.create_app("mcp", outbound, service_type=family)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://local"
+        ) as caller:
+            assert (
+                await caller.post(
+                    query_path,
+                    json={"cid": "222260", "uid": "846"},
+                    headers={"Authorization": "Bearer test-only-query-token"},
+                )
+            ).status_code == 200
+            assert seen[0].url.path == query_path
+            assert seen[0].headers["authorization"] == "Bearer test-only-query-token"
+            assert (
+                await caller.post("/mcp", headers={"X-Mcp-Key": "test-user-key"})
+            ).status_code == 200
+            assert seen[1].url.path == mcp_path
+            other = "/erp/feign/mcp/key/query/" + ("aggr-key" if family == "ERP" else "erp-key")
+            assert (await caller.post(other, json={})).status_code == 404
+            assert len(seen) == 2
+
+
+def test_unknown_key_family_is_rejected_before_startup():
+    with pytest.raises(ValueError):
+        proxy.create_app("mcp", service_type="AUTO")

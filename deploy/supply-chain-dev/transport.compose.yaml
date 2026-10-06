@@ -31,7 +31,7 @@ services:
     command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "nacos"]
   mcp-transport:
     <<: *transport
-    command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "mcp"]
+    command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "mcp", "--mcp-service-type", "${SC_MCP_SERVICE_TYPE:-AGGR}"]
   mq-transport:
     <<: *transport
     command: ["/opt/venv/bin/python", "-B", "/opt/sc-transport/passthrough.py", "mq"]

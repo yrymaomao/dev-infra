@@ -21,8 +21,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 HOST = "192.168.10.18"
-KEY_PATH = "/erp/feign/mcp/key/query/aggr-key"
-MCP_UPSTREAM_PATH = "/erp/aggr-mcp"
+MCP_ROUTES = {
+    "AGGR": ("/erp/feign/mcp/key/query/aggr-key", "/erp/aggr-mcp"),
+    "ERP": ("/erp/feign/mcp/key/query/erp-key", "/erp/mcp"),
+}
 NAMING_PATH = "/nacos/v1/ns/instance/list"
 LOGIN_PATH = "/nacos/v1/auth/login"
 MAX_BODY = 8 * 1024 * 1024
@@ -83,9 +85,14 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def create_app(kind: str, injected_client: httpx.AsyncClient | None = None) -> FastAPI:
+def create_app(
+    kind: str, injected_client: httpx.AsyncClient | None = None, *, service_type: str = "AGGR"
+) -> FastAPI:
     if kind not in {"nacos", "mcp"}:
         raise ValueError("Unknown transport")
+    if service_type not in MCP_ROUTES:
+        raise ValueError("Unknown MCP service type")
+    key_path, mcp_upstream_path = MCP_ROUTES[service_type]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -116,7 +123,7 @@ def create_app(kind: str, injected_client: httpx.AsyncClient | None = None) -> F
         method = request.method
         naming = kind == "nacos" and path == NAMING_PATH and method == "GET"
         login = kind == "nacos" and path == LOGIN_PATH and method == "POST"
-        key_query = kind == "mcp" and path == KEY_PATH and method == "POST"
+        key_query = kind == "mcp" and path == key_path and method == "POST"
         mcp = kind == "mcp" and path == "/mcp" and method in {"GET", "POST", "DELETE"}
         if not (naming or login or key_query or mcp):
             return Response(status_code=404)
@@ -135,7 +142,7 @@ def create_app(kind: str, injected_client: httpx.AsyncClient | None = None) -> F
         headers = forward_headers(request.headers)
         headers["accept-encoding"] = "identity"
         origin = f"http://{HOST}:{8848 if kind == 'nacos' else 9249}"
-        target = origin + (MCP_UPSTREAM_PATH if mcp else path)
+        target = origin + (mcp_upstream_path if mcp else path)
         if request.url.query:
             target += "?" + request.url.query
         client = app.state.client
@@ -224,12 +231,13 @@ async def mq_tunnel() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("transport", choices=("nacos", "mcp", "mq"))
+    parser.add_argument("--mcp-service-type", choices=("ERP", "AGGR"), default="AGGR")
     args = parser.parse_args()
     if args.transport == "mq":
         asyncio.run(mq_tunnel())
     else:
         uvicorn.run(
-            create_app(args.transport),
+            create_app(args.transport, service_type=args.mcp_service_type),
             host="127.0.0.1",
             port=18848 if args.transport == "nacos" else 18249,
             access_log=False,
