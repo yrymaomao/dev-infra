@@ -1,10 +1,11 @@
-"""Trusted user references and request-scoped MCP AGGR key lookup."""
+"""Trusted user references and request-scoped, service-specific MCP key lookup."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
 import re
+from typing import Literal
 
 import httpx
 from base_ai.providers import ResolvedRequestCredential
@@ -12,7 +13,10 @@ from base_ai.providers import ResolvedRequestCredential
 from .service_discovery import ServiceResolver
 
 _REFERENCE = re.compile(r"mcpuser\.v1\.([0-9a-f]+)\.([0-9a-f]{64})\Z")
-_KEY_PATH = "/erp/feign/mcp/key/query/aggr-key"
+_KEY_PATHS = {
+    "AGGR": "/erp/feign/mcp/key/query/aggr-key",
+    "ERP": "/erp/feign/mcp/key/query/erp-key",
+}
 
 
 class UserMcpRefCodec:
@@ -67,7 +71,7 @@ class UserMcpRefCodec:
 
 
 class McpUserKeyResolver:
-    """Call the existing internal AGGR-key contract once per MCP request."""
+    """Query exactly one configured key family; never try another user's/family's key."""
 
     def __init__(
         self,
@@ -77,9 +81,18 @@ class McpUserKeyResolver:
         codec: UserMcpRefCodec,
         group_name: str = "DEFAULT_GROUP",
         timeout_seconds: float = 5.0,
+        service_type: Literal["ERP", "AGGR"] = "AGGR",
+        query_token: str | None = None,
     ) -> None:
         if not 0 < timeout_seconds <= 30 or not group_name:
             raise ValueError("MCP key query settings are invalid")
+        if service_type not in _KEY_PATHS or (
+            service_type == "ERP"
+            and (query_token is None or re.fullmatch(r"[A-Za-z0-9_-]{32,512}", query_token) is None)
+        ):
+            raise ValueError("MCP key query settings are invalid")
+        self._service_type = service_type
+        self._query_token = query_token
         self._discovery = discovery
         self._client = client
         self._group = group_name
@@ -92,12 +105,15 @@ class McpUserKeyResolver:
         if provider_id != "mcp.streamable_http":
             raise ValueError("MCP key unavailable")
         uid = self._codec.parse(credential_ref, expected_tenant_id=expected_tenant_id)
+        headers = {"Accept": "application/json"}
+        if self._service_type == "ERP":
+            headers["Authorization"] = f"Bearer {self._query_token}"
         try:
             origin = await self._discovery.resolve("McpServer", self._group)
             response = await self._client.post(
-                origin + _KEY_PATH,
+                origin + _KEY_PATHS[self._service_type],
                 json={"cid": expected_tenant_id, "uid": uid},
-                headers={"Accept": "application/json"},
+                headers=headers,
                 timeout=self._timeout,
                 follow_redirects=False,
             )
@@ -110,12 +126,17 @@ class McpUserKeyResolver:
         result = body.get("result")
         if not isinstance(result, dict):
             raise ValueError("MCP key unavailable")
+        # ERP's new contract always includes identity. Legacy AGGR may omit it,
+        # but any declared identity must still match the trusted request.
+        for name, expected in (("cid", expected_tenant_id), ("uid", uid)):
+            if (self._service_type == "ERP" or name in result) and result.get(name) != expected:
+                raise ValueError("MCP key unavailable")
         key = result.get("mcpKey")
         if not isinstance(key, str) or not key.strip():
             raise ValueError("MCP key unavailable")
         key_id = result.get("keyId")
         binding = hashlib.sha256(
-            f"mcp-aggr-key\0{expected_tenant_id}\0{uid}\0{key_id}".encode()
+            f"mcp-{self._service_type.lower()}-key\0{expected_tenant_id}\0{uid}\0{key_id}".encode()
         ).hexdigest()
         return ResolvedRequestCredential(
             secret_value=key,

@@ -115,6 +115,106 @@ def test_resolver_rejects_other_provider_before_discovery() -> None:
         )
 
 
+def test_erp_resolver_uses_authenticated_erp_query_without_aggr_fallback() -> None:
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer " + "t" * 40
+        assert json.loads(request.content) == {"cid": "222260", "uid": "alice"}
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "code": 200,
+                "result": {
+                    "keyId": 8,
+                    "cid": "222260",
+                    "uid": "alice",
+                    "mcpKey": "erp-user-key",
+                },
+            },
+        )
+
+    codec = _codec()
+    resolver = McpUserKeyResolver(
+        discovery=_discovery(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        codec=codec,
+        service_type="ERP",
+        query_token="t" * 40,
+    )
+    resolved = asyncio.run(
+        resolver.resolve(
+            codec.issue("222260", "alice"),
+            provider_id="mcp.streamable_http",
+            expected_tenant_id="222260",
+        )
+    )
+    assert calls == ["/erp/feign/mcp/key/query/erp-key"]
+    assert resolved.secret_value == "erp-user-key"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        None,
+        {},
+        {"cid": "other", "uid": "alice", "mcpKey": "secret"},
+        {"cid": "222260", "uid": "bob", "mcpKey": "secret"},
+        {"mcpKey": "secret"},
+    ],
+)
+def test_erp_resolver_rejects_missing_key_or_mismatched_identity_without_retry(result) -> None:
+    paths: list[str] = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"success": True, "code": 200, "result": result})
+
+    codec = _codec()
+    resolver = McpUserKeyResolver(
+        discovery=_discovery(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        codec=codec,
+        service_type="ERP",
+        query_token="t" * 40,
+    )
+    with pytest.raises(ValueError, match="MCP key unavailable"):
+        asyncio.run(
+            resolver.resolve(
+                codec.issue("222260", "alice"),
+                provider_id="mcp.streamable_http",
+                expected_tenant_id="222260",
+            )
+        )
+    assert paths == ["/erp/feign/mcp/key/query/erp-key"]
+
+
+def test_erp_query_requires_internal_authentication_configuration() -> None:
+    with pytest.raises(ValueError):
+        McpUserKeyResolver(
+            discovery=_discovery(), client=httpx.AsyncClient(), codec=_codec(), service_type="ERP"
+        )
+
+
+def test_query_configuration_requires_erp_token_and_rejects_unknown_service() -> None:
+    from ebiz_deployment.config import UserMcpKeyQueryConfig
+
+    values = dict(
+        signing_secret_name="signer",
+        timeout_seconds=5,
+        server_addresses="127.0.0.1:8848",
+        allowed_hosts=("127.0.0.1",),
+    )
+    with pytest.raises(ValueError):
+        UserMcpKeyQueryConfig(**values, service_type="ERP")
+    with pytest.raises(ValueError):
+        UserMcpKeyQueryConfig(**values, service_type="ANY")
+    config = UserMcpKeyQueryConfig(**values, service_type="ERP", token_secret_name="query_token")
+    assert config.secret_names == ("signer", "query_token")
+
+
 def test_local_user_key_query_grants_mcp_tools_list_without_a_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

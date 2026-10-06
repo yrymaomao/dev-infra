@@ -16,6 +16,7 @@
     }
   },
   "user_mcp_key_query": {
+    "service_type": "AGGR",
     "server_addresses": "${MCP_NACOS_SERVER_ADDRESSES}",
     "namespace": "${MCP_NACOS_NAMESPACE}",
     "allowed_hosts": ["${MCP_KEY_QUERY_EGRESS_HOST}"],

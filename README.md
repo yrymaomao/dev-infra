@@ -249,8 +249,15 @@ IPv6 Nacos addresses, which are rejected at startup. There is no fixed-address f
 can set `namespace: ""` directly in controlled JSON instead of using the
 example's environment placeholder.
 
-The host posts `{cid,uid}` to
-`/erp/feign/mcp/key/query/aggr-key`, accepts only a successful envelope
+The host posts trusted `{cid,uid}` to the explicitly configured key family:
+`service_type: AGGR` uses `/erp/feign/mcp/key/query/aggr-key` (legacy default);
+`service_type: ERP` uses `/erp/feign/mcp/key/query/erp-key` for Supply Chain.
+ERP requires `token_secret_name` in `secrets.allowed_env`, resolved from a
+controlled secret into the internal Authorization header. It is not the user
+login token or the MCP Key. ERP responses must match the requested cid/uid.
+Configure the MCP transport for the same family (`/erp/mcp` for ERP,
+`/erp/aggr-mcp` for AGGR); retain the existing HTTPS/loopback transport policy.
+Neither family falls back to the other or to a global Key. The host accepts only a successful envelope
 with nonempty `result.mcpKey`, and sends the original Key using
 `X-Mcp-Key`. Multiple-Key selection and Meta retrieval stay in MCP Server.
 Keys are not cached, persisted or logged. SDK raw logging is disabled because

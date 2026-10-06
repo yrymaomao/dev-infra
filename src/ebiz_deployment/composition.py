@@ -129,6 +129,8 @@ def build_provider_composition(
             ),
             client=client,
             codec=UserMcpRefCodec(environ[signing_env].encode("utf-8")),
+            service_type=query.service_type,
+            query_token=secret(query.token_secret_name),
             group_name=query.group_name,
             timeout_seconds=query.timeout_seconds,
         )

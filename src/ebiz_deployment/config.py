@@ -122,6 +122,8 @@ class SecretEnvironmentConfig(StrictModel):
 
 class UserMcpKeyQueryConfig(StrictModel):
     signing_secret_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")
+    service_type: Literal["ERP", "AGGR"] = "AGGR"
+    token_secret_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,127}$")
     timeout_seconds: float = Field(gt=0, le=30)
     server_addresses: str = Field(min_length=1, max_length=2048)
     namespace: str = Field(default="", max_length=256)
@@ -150,6 +152,8 @@ class UserMcpKeyQueryConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_login(self) -> UserMcpKeyQueryConfig:
+        if self.service_type == "ERP" and self.token_secret_name is None:
+            raise ValueError("ERP key query requires an internal authentication secret")
         if (self.username_secret_name is None) != (self.password_secret_name is None):
             raise ValueError("Nacos username and password secret names must be paired")
         return self
@@ -160,6 +164,7 @@ class UserMcpKeyQueryConfig(StrictModel):
             name
             for name in (
                 self.signing_secret_name,
+                self.token_secret_name,
                 self.username_secret_name,
                 self.password_secret_name,
             )
