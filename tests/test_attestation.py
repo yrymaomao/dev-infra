@@ -15,12 +15,11 @@ from typing import Any
 
 import pytest
 
-SUPPLY_CHAIN_PROJECT = Path(
-    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v2-level2-agent-v6/agents/supply-chain"
+AGENTS_CHECKOUT = Path(
+    os.environ.get("EBIZ_AGENTS_CHECKOUT", str(Path(__file__).resolve().parents[2] / "ebiz-agents"))
 )
-PLANNING_PROJECT = Path(
-    "C:/ebizhub/.local/worktrees/ebiz-agents-supply-chain-v2-level2-agent-v6/capabilities/supply-chain"
-)
+SUPPLY_CHAIN_PROJECT = AGENTS_CHECKOUT / "agents/supply-chain"
+PLANNING_PROJECT = AGENTS_CHECKOUT / "capabilities/supply-chain"
 UV_COMMAND = Path(os.environ.get("UV_EXECUTABLE", shutil.which("uv") or "uv"))
 
 

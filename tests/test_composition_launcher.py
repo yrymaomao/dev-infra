@@ -86,6 +86,29 @@ def test_builds_three_provider_root_and_exact_base_ai_policy(tmp_path: Path) -> 
     assert str(runtime_policy.resolve()) == environ["APP_PLUGIN_POLICY_PATH"]
 
 
+def test_erp_composition_requires_shared_login_files_not_internal_query_token(tmp_path):
+    config_path, _, environ = configured_files(tmp_path)
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    document["user_mcp_key_query"]["service_type"] = "ERP"
+    config_path.write_text(json.dumps(document), encoding="utf-8")
+    config = importlib.import_module("ebiz_deployment.config").load_deployment_config(
+        config_path, environ
+    )
+    with pytest.raises(ValueError, match="BFF_ERP_SESSION_REDIS_URL_FILE"):
+        composition_module().build_provider_composition(config, environ)
+    redis_file, jwt_file = tmp_path / "redis", tmp_path / "jwt"
+    redis_file.write_text("redis://127.0.0.1:6379/2", encoding="utf-8")
+    jwt_file.write_text("test-only-jwt-secret", encoding="utf-8")
+    environ.update(
+        BFF_ERP_SESSION_REDIS_URL_FILE=str(redis_file),
+        BFF_ERP_SESSION_JWT_SECRET_FILE=str(jwt_file),
+    )
+    assert isinstance(
+        composition_module().build_provider_composition(config, environ).root,
+        UserKeyCompositionRoot,
+    )
+
+
 def test_missing_model_or_user_reference_secret_fails_before_composition(tmp_path: Path) -> None:
     config_path, _, environ = configured_files(tmp_path)
     config = importlib.import_module("ebiz_deployment.config").load_deployment_config(

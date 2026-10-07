@@ -35,11 +35,17 @@ from ebiz_deployment.release import (
     write_base_ai_provider_attestation,
 )
 
-AGENTS = Path("C:/ebizhub/.local/worktrees/openclaw-scv2-agent")
+INSTALLED_AGENT = Path(
+    str(
+        metadata.distribution("ebiz-agent-inventory-supply-chain").locate_file(
+            "inventory_supply_chain_agent"
+        )
+    )
+)
 CONTRACT_ROOTS = {
-    "inventory.core": AGENTS / "capabilities/inventory/contracts/v4",
-    "commerce-sales.analytics": AGENTS / "capabilities/commerce-sales/contracts/v4",
-    "supply-chain.planning": AGENTS / "capabilities/supply-chain/contracts/v3",
+    "inventory.core": INSTALLED_AGENT / "registry/catalogs/inventory",
+    "commerce-sales.analytics": INSTALLED_AGENT / "registry/catalogs/commerce-sales",
+    "supply-chain.planning": INSTALLED_AGENT / "registry/catalogs/planning",
 }
 WORKFLOW_VERSION_ID = "00000000-0000-4000-8000-000000000040"
 AGENT_VERSION_ID = "00000000-0000-4000-8000-000000000041"
@@ -296,7 +302,7 @@ def test_release_uses_runtime_base_ai_attestation_for_all_catalog_commands(
         "yeaher.erp",
     ]
     raw = attestation_path.read_text(encoding="utf-8")
-    assert "broker-secret-value" not in raw
+    assert "s" * 32 not in raw
     assert "model-secret-value" not in raw
     assert len(commands) == 3
     assert all("--base-ai-provider-attestation" in command for command in commands)
@@ -363,7 +369,8 @@ def test_local_fixture_uses_existing_publisher_and_is_guarded(tmp_path: Path) ->
 
 def test_workflow_draft_binds_source_digest_and_all_resources(tmp_path: Path) -> None:
     config = release_config(tmp_path)
-    agent_root = AGENTS / "agents/supply-chain"
+    # The deployment gate verifies its installed release, not another checkout's HEAD.
+    agent_root = INSTALLED_AGENT
     workflow = agent_root / "workflows/inventory-supply-chain-batch-weekly.yaml"
     release = config.supply_chain_release.model_copy(
         update={"workflow_artifact_digest": hashlib.sha256(workflow.read_bytes()).hexdigest()}

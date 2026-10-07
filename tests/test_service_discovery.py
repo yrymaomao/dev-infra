@@ -173,26 +173,47 @@ def test_real_sdk_configuration_uses_supported_options_without_logging_secrets(t
 
 
 @pytest.mark.asyncio
-async def test_query_pool_closes_on_start_failure_and_normal_shutdown():
+@pytest.mark.parametrize("erp", [False, True])
+async def test_query_pool_closes_on_start_failure_and_normal_shutdown(erp):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, patch
 
     from ebiz_deployment.composition import UserKeyCompositionRoot
+    from ebiz_deployment.erp_session import ErpSessionPrincipalResolver, ErpSessionSettings
 
     store = AsyncMock()
+    redis = AsyncMock()
+    settings = ErpSessionSettings("redis://127.0.0.1:6379/2", "test-secret") if erp else None
     base = SimpleNamespace(snapshot=object(), aclose=AsyncMock())
     factory = SimpleNamespace(start=AsyncMock(return_value=base))
-    with patch("ebiz_deployment.composition.httpx.AsyncClient", return_value=store):
-        root = UserKeyCompositionRoot(lambda _client: factory)
+
+    def build(client, login):
+        assert client is store
+        assert isinstance(login, ErpSessionPrincipalResolver) if erp else login is None
+        return factory
+
+    with (
+        patch("ebiz_deployment.composition.httpx.AsyncClient", return_value=store),
+        patch("ebiz_deployment.erp_session.Redis.from_url", return_value=redis),
+    ):
+        root = UserKeyCompositionRoot(build, settings)
         composition = await root.start()
         assert composition.snapshot is base.snapshot
         await composition.aclose()
         await composition.aclose()
         store.aclose.assert_awaited_once()
         base.aclose.assert_awaited_once()
+        if erp:
+            redis.aclose.assert_awaited_once()
     store = AsyncMock()
+    redis = AsyncMock()
     factory.start = AsyncMock(side_effect=RuntimeError("start failure"))
-    with patch("ebiz_deployment.composition.httpx.AsyncClient", return_value=store):
+    with (
+        patch("ebiz_deployment.composition.httpx.AsyncClient", return_value=store),
+        patch("ebiz_deployment.erp_session.Redis.from_url", return_value=redis),
+    ):
         with pytest.raises(RuntimeError, match="start failure"):
-            await UserKeyCompositionRoot(lambda _client: factory).start()
+            await UserKeyCompositionRoot(build, settings).start()
         store.aclose.assert_awaited_once()
+        if erp:
+            redis.aclose.assert_awaited_once()

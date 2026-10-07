@@ -9,11 +9,15 @@ from types import MappingProxyType
 
 import httpx
 from agent_runtime.application.provider_composition import (
-    ManagedProviderComposition,
     ProviderCompositionRoot,
 )
-from agent_runtime.base_ai.composition import BaseAICompositionRoot, BaseAIProviderDeployment
+from agent_runtime.base_ai.composition import (
+    BaseAIComposition,
+    BaseAICompositionRoot,
+    BaseAIProviderDeployment,
+)
 from agent_runtime.plugins.contracts import PluginSnapshot
+from agent_runtime.plugins.health import PluginHealthReport
 from agent_runtime.plugins.manifest import AllowedPlugin, PluginHostPolicy
 from base_ai.providers import ProviderBootstrapContext
 
@@ -27,9 +31,14 @@ from .user_mcp_credentials import McpUserKeyResolver, UserMcpRefCodec
 @dataclass(slots=True)
 class _UserKeyComposition:
     snapshot: PluginSnapshot
-    _base: ManagedProviderComposition
+    _base: BaseAIComposition
     _resources: AsyncExitStack
     _closed: bool = False
+
+    @property
+    def health_report(self) -> PluginHealthReport:
+        """Preserve the underlying provider startup health through the lifecycle wrapper."""
+        return self._base.health_report
 
     async def aclose(self) -> None:
         if self._closed:
