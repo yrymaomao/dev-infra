@@ -22,6 +22,10 @@ from .payloads import RestrictedPayloadAccess
 from .profile import ReceptionProfile
 
 TERMINAL = frozenset({"completed", "failed", "interrupted"})
+_TEXT_EVENT_KINDS = frozenset(
+    {"assistant.text.delta", "assistant.text.replaced", "assistant.message.completed"}
+)
+_SNAPSHOT_EVENT_KINDS = _TEXT_EVENT_KINDS | {"operation.updated", "turn.failed"}
 KINDS = frozenset(
     {
         "turn.accepted",
@@ -300,7 +304,21 @@ class ConversationRepository(RestrictedPayloadAccess):
         operations: dict[str, Any] = {}
         analyses: dict[str, Any] = {}
         error = None
+        # Activity and superseded text remain in the durable journal/SSE, but
+        # their storage blobs cannot affect the reconstructed snapshot.
+        last_text_reset = max(
+            (
+                row.sequence
+                for row in rows
+                if row.kind in {"assistant.text.replaced", "assistant.message.completed"}
+            ),
+            default=0,
+        )
         for row in rows:
+            if row.kind not in _SNAPSHOT_EVENT_KINDS:
+                continue
+            if row.kind in _TEXT_EVENT_KINDS and row.sequence < last_text_reset:
+                continue
             p = await self._load(tenant, row.payload_ref, row.payload_hash)
             if row.kind == "assistant.text.delta":
                 message += p["text"]
