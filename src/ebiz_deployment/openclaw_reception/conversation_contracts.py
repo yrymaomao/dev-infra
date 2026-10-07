@@ -34,12 +34,21 @@ class OperationErrorView(BaseModel):
     request_id: str
 
 
+class CancelErrorView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    safe_message: str
+    retryable: bool
+
+
 class OperationView(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation_id: str
     state: str
     execution_id: str | None = None
     error: OperationErrorView | None = None
+    cancel_requested: bool | None = None
+    cancel_error: CancelErrorView | None = None
 
 
 class TurnSnapshot(TurnAccepted):

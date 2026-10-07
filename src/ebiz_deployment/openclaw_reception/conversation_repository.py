@@ -45,17 +45,38 @@ def project_event(kind: str, payload: object) -> dict[str, Any]:
     if kind not in KINDS or not isinstance(payload, dict):
         raise ValueError("Invalid conversation event")
     if kind == "operation.updated":
-        allowed = {"operation_id", "state", "execution_id", "error"}
+        allowed = {
+            "operation_id",
+            "state",
+            "execution_id",
+            "error",
+            "cancel_requested",
+            "cancel_error",
+        }
         if (
             not {"operation_id", "state"}.issubset(payload)
             or not set(payload).issubset(allowed)
             or any(not isinstance(payload.get(key), str) for key in ("operation_id", "state"))
             or ("execution_id" in payload and not isinstance(payload.get("execution_id"), str))
+            or ("cancel_requested" in payload and not isinstance(payload["cancel_requested"], bool))
+            or ("cancel_error" in payload and payload.get("cancel_requested") is not True)
         ):
             raise ValueError("Invalid conversation payload")
         projected = {key: value for key, value in payload.items() if key != "error"}
         if "error" in payload:
             projected["error"] = _project_runtime_error(payload["error"])
+        if "cancel_error" in payload:
+            cancel_error = payload["cancel_error"]
+            if (
+                not isinstance(cancel_error, dict)
+                or set(cancel_error) != {"code", "safe_message", "retryable"}
+                or not isinstance(cancel_error["code"], str)
+                or not 0 < len(cancel_error["code"]) <= 128
+                or not isinstance(cancel_error["safe_message"], str)
+                or not 0 < len(cancel_error["safe_message"]) <= 1024
+                or not isinstance(cancel_error["retryable"], bool)
+            ):
+                raise ValueError("Invalid cancellation error")
         return projected
     allowed = {
         "assistant.text.delta": {"text"},
@@ -137,6 +158,16 @@ def project_operation_update(
         error = current.get("error")
     if error is not None:
         result["error"] = error
+    cancel_requested = payload.get("cancel_requested")
+    if cancel_requested is None and current is not None:
+        cancel_requested = current.get("cancel_requested")
+    if cancel_requested is not None:
+        result["cancel_requested"] = cancel_requested
+    cancel_error = payload.get("cancel_error")
+    if cancel_error is None and current is not None and cancel_requested is not False:
+        cancel_error = current.get("cancel_error")
+    if cancel_error is not None:
+        result["cancel_error"] = cancel_error
     return result
 
 
