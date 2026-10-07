@@ -9,7 +9,7 @@ import math
 import os
 import re
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,8 +26,8 @@ _MAX_TOKEN = 4096
 _MAX_DOCUMENT = 65536
 
 
-def _secret_file(name: str) -> str:
-    filename = os.environ.get(name, "").strip()
+def _secret_file(name: str, environ: Mapping[str, str]) -> str:
+    filename = environ.get(name, "").strip()
     if not filename:
         raise ValueError(f"{name} is required")
     try:
@@ -60,11 +60,12 @@ class ErpSessionSettings:
             raise ValueError("ERP session settings are invalid")
 
     @classmethod
-    def from_environment(cls) -> ErpSessionSettings:
-        redis_url = _secret_file("BFF_ERP_SESSION_REDIS_URL_FILE")
-        secret = _secret_file("BFF_ERP_SESSION_JWT_SECRET_FILE")
+    def from_environment(cls, environ: Mapping[str, str] | None = None) -> ErpSessionSettings:
+        values = os.environ if environ is None else environ
+        redis_url = _secret_file("BFF_ERP_SESSION_REDIS_URL_FILE", values)
+        secret = _secret_file("BFF_ERP_SESSION_JWT_SECRET_FILE", values)
         try:
-            timeout = float(os.environ.get("BFF_ERP_SESSION_TIMEOUT_SECONDS", "2"))
+            timeout = float(values.get("BFF_ERP_SESSION_TIMEOUT_SECONDS", "2"))
         except ValueError:
             raise ValueError("ERP session timeout is invalid") from None
         return cls(redis_url, secret, timeout)
@@ -113,6 +114,10 @@ class SessionPrincipalClient(Protocol):
     async def resolve(self, token: str) -> SessionPrincipal: ...
 
 
+class UserLoginTokenSource(Protocol):
+    async def current_token(self, uid: str, *, expected_tenant_id: str) -> str: ...
+
+
 class LoginStateStore(Protocol):
     async def get(self, key: str) -> str | bytes | None: ...
 
@@ -150,6 +155,31 @@ class ErpSessionPrincipalResolver:
         self._store = store
         self._secret = jwt_secret
         self._timeout = timeout_seconds
+
+    async def current_token(self, uid: str, *, expected_tenant_id: str) -> str:
+        """For a trusted execution identity only; never expose or persist the token.
+
+        Existing ERP Key APIs require login, not an arbitrary user ID. Reuse the
+        same JWT/cache checks as ingress rather than introducing another auth API.
+        Logout/expiry fails closed; this does not extend the user's session.
+        """
+        uid = _identity(uid)
+        expected_tenant_id = _identity(expected_tenant_id)
+        try:
+            async with asyncio.timeout(self._timeout):
+                raw = await self._store.get(f"_Cache_Login_User_Data_{uid}")
+                state = _decode(raw) if raw is not None else None
+                if not isinstance(state, dict):
+                    raise SessionInvalid(401)
+                token: object = state.get("token")
+                if not isinstance(token, str):
+                    raise SessionInvalid(401)
+                principal = await self.resolve(token)
+                if principal.actor_id != uid or principal.tenant_id != expected_tenant_id:
+                    raise SessionInvalid(403)
+                return token
+        except (RedisError, TimeoutError, OSError):
+            raise SessionUnavailable() from None
 
     async def resolve(self, token: str) -> SessionPrincipal:
         if not token or len(token) > _MAX_TOKEN or not token.isascii():

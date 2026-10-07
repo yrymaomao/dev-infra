@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -18,6 +19,7 @@ from base_ai.providers import ProviderBootstrapContext
 
 from .config import DeploymentCompositionConfig
 from .credentials import EnvironmentSecretResolver
+from .erp_session import ErpSessionPrincipalResolver, ErpSessionSettings, open_erp_session
 from .service_discovery import NacosServiceResolver, create_nacos_client
 from .user_mcp_credentials import McpUserKeyResolver, UserMcpRefCodec
 
@@ -26,7 +28,7 @@ from .user_mcp_credentials import McpUserKeyResolver, UserMcpRefCodec
 class _UserKeyComposition:
     snapshot: PluginSnapshot
     _base: ManagedProviderComposition
-    _client: httpx.AsyncClient
+    _resources: AsyncExitStack
     _closed: bool = False
 
     async def aclose(self) -> None:
@@ -36,23 +38,33 @@ class _UserKeyComposition:
         try:
             await self._base.aclose()
         finally:
-            await self._client.aclose()
+            await self._resources.aclose()
 
 
 class UserKeyCompositionRoot:
     """Acquire the Key-query connection pool only when Runtime starts providers."""
 
-    def __init__(self, build: Callable[[httpx.AsyncClient], BaseAICompositionRoot]) -> None:
+    def __init__(
+        self,
+        build: Callable[
+            [httpx.AsyncClient, ErpSessionPrincipalResolver | None], BaseAICompositionRoot
+        ],
+        session_settings: ErpSessionSettings | None = None,
+    ) -> None:
         self._build = build
+        self._session_settings = session_settings
 
     async def start(self) -> _UserKeyComposition:
+        resources = AsyncExitStack()
         client = httpx.AsyncClient(trust_env=False, follow_redirects=False)
+        resources.push_async_callback(client.aclose)
         try:
-            base = await self._build(client).start()
+            login = await resources.enter_async_context(open_erp_session(self._session_settings))
+            base = await self._build(client, login).start()
         except BaseException:
-            await client.aclose()
+            await resources.aclose()
             raise
-        return _UserKeyComposition(base.snapshot, base, client)
+        return _UserKeyComposition(base.snapshot, base, resources)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +122,15 @@ def build_provider_composition(
         )
     )
 
-    def build_root(client: httpx.AsyncClient) -> BaseAICompositionRoot:
+    session_settings = (
+        ErpSessionSettings.from_environment(environ)
+        if config.user_mcp_key_query.service_type == "ERP"
+        else None
+    )
+
+    def build_root(
+        client: httpx.AsyncClient, login: ErpSessionPrincipalResolver | None
+    ) -> BaseAICompositionRoot:
         query = config.user_mcp_key_query
 
         def secret(name: str | None) -> str | None:
@@ -130,7 +150,7 @@ def build_provider_composition(
             client=client,
             codec=UserMcpRefCodec(environ[signing_env].encode("utf-8")),
             service_type=query.service_type,
-            query_token=secret(query.token_secret_name),
+            login_session=login,
             group_name=query.group_name,
             timeout_seconds=query.timeout_seconds,
         )
@@ -145,7 +165,7 @@ def build_provider_composition(
             supported_runtime_api_version=config.runtime.supported_api_version,
         )
 
-    root = UserKeyCompositionRoot(build_root)
+    root = UserKeyCompositionRoot(build_root, session_settings)
     return CompositionArtifacts(
         root=root,
         deployments=deployments,

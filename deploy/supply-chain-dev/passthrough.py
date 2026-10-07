@@ -22,8 +22,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 HOST = "192.168.10.18"
 MCP_ROUTES = {
-    "AGGR": ("/erp/feign/mcp/key/query/aggr-key", "/erp/aggr-mcp"),
-    "ERP": ("/erp/feign/mcp/key/query/erp-key", "/erp/mcp"),
+    "AGGR": (("/erp/feign/mcp/key/query/aggr-key",), "/erp/aggr-mcp"),
+    "ERP": (("/erp/mcp-key/list", "/erp/mcp-key/detail"), "/erp/mcp"),
 }
 NAMING_PATH = "/nacos/v1/ns/instance/list"
 LOGIN_PATH = "/nacos/v1/auth/login"
@@ -92,7 +92,7 @@ def create_app(
         raise ValueError("Unknown transport")
     if service_type not in MCP_ROUTES:
         raise ValueError("Unknown MCP service type")
-    key_path, mcp_upstream_path = MCP_ROUTES[service_type]
+    key_paths, mcp_upstream_path = MCP_ROUTES[service_type]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -123,7 +123,7 @@ def create_app(
         method = request.method
         naming = kind == "nacos" and path == NAMING_PATH and method == "GET"
         login = kind == "nacos" and path == LOGIN_PATH and method == "POST"
-        key_query = kind == "mcp" and path == key_path and method == "POST"
+        key_query = kind == "mcp" and path in key_paths and method == "POST"
         mcp = kind == "mcp" and path == "/mcp" and method in {"GET", "POST", "DELETE"}
         if not (naming or login or key_query or mcp):
             return Response(status_code=404)
@@ -133,6 +133,8 @@ def create_app(
         ):
             return Response(status_code=403)
         if mcp and not request.headers.get("x-mcp-key", "").strip():
+            return Response(status_code=401)
+        if key_query and service_type == "ERP" and not request.headers.get("_token_", "").strip():
             return Response(status_code=401)
         body = bytearray()
         async for chunk in request.stream():

@@ -226,7 +226,8 @@ async def test_timeout_is_safe_and_not_retried():
 @pytest.mark.parametrize(
     "family,query_path,mcp_path",
     [
-        ("ERP", "/erp/feign/mcp/key/query/erp-key", "/erp/mcp"),
+        ("ERP", "/erp/mcp-key/list", "/erp/mcp"),
+        ("ERP", "/erp/mcp-key/detail", "/erp/mcp"),
         ("AGGR", "/erp/feign/mcp/key/query/aggr-key", "/erp/aggr-mcp"),
     ],
 )
@@ -250,17 +251,25 @@ async def test_explicit_key_family_routes_query_and_mcp_without_cross_family_fal
                 await caller.post(
                     query_path,
                     json={"cid": "222260", "uid": "846"},
-                    headers={"Authorization": "Bearer test-only-query-token"},
+                    headers={"_token_": "test-only-user-token", "timezone": "0"},
                 )
             ).status_code == 200
             assert seen[0].url.path == query_path
-            assert seen[0].headers["authorization"] == "Bearer test-only-query-token"
+            assert seen[0].headers["_token_"] == "test-only-user-token"
+            assert seen[0].headers["timezone"] == "0"
             assert (
                 await caller.post("/mcp", headers={"X-Mcp-Key": "test-user-key"})
             ).status_code == 200
             assert seen[1].url.path == mcp_path
-            other = "/erp/feign/mcp/key/query/" + ("aggr-key" if family == "ERP" else "erp-key")
+            other = "/erp/feign/mcp/key/query/aggr-key" if family == "ERP" else "/erp/mcp-key/list"
             assert (await caller.post(other, json={})).status_code == 404
+            assert (
+                await caller.post("/erp/feign/mcp/key/query/erp-key", json={})
+            ).status_code == 404
+            assert (await caller.post("/erp/mcp-key/tenant-list", json={})).status_code == 404
+            assert (await caller.post("/erp/mcp-key/create", json={})).status_code == 404
+            if family == "ERP":
+                assert (await caller.post(query_path, json={})).status_code == 401
             assert len(seen) == 2
 
 
