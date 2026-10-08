@@ -442,20 +442,25 @@ class ConversationRepository(RestrictedPayloadAccess):
             public = project_event(event["kind"], raw)
             if result is not None:
                 public["analysis"] = await self._profile.project_result(self, tenant, result)
+            publication = (
+                await self._prepare_result(tenant, result, event) if result is not None else None
+            )
             payload = await self._stage(tenant, public)
             await self._commit_staged(tenant, payload)
-            staged.append((event, payload))
+            staged.append((event, payload, publication))
         async with self._factory() as session, session.begin():
             row = await session.scalar(
                 select(ConversationTurn).where(ConversationTurn.id == tid).with_for_update()
             )
             if row is None or row.lease_owner != owner:
                 raise ConversationConflict("TURN_LEASE_LOST")
-            for event, payload in staged:
+            for event, payload, publication in staged:
                 if event["sequence"] <= row.sequence:
                     continue
                 if event["sequence"] != row.sequence + 1:
                     raise ValueError("Non-contiguous turn events")
+                if publication is not None:
+                    await self._commit_result(session, row, publication)
                 session.add(
                     ConversationEvent(
                         turn_id=tid,
@@ -474,6 +479,15 @@ class ConversationRepository(RestrictedPayloadAccess):
                 row.state = "running"
             row.lease_owner = None
             row.lease_until = datetime.now(UTC) + timedelta(milliseconds=500)
+
+    async def _prepare_result(self, tenant: str, result: object, event: dict[str, Any]) -> object:
+        """Optional owner projection; default receptions publish no separate resource."""
+        return None
+
+    async def _commit_result(
+        self, session: AsyncSession, turn: ConversationTurn, publication: object
+    ) -> None:
+        """Commit an owner projection in the same transaction as its durable event."""
 
 
 __all__ = [

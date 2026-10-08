@@ -149,7 +149,13 @@ def mount_receptions(container: BffContainer) -> list[MountedReception]:
     factory, payload_store = backing
     if settings.openclaw_reception_enabled:
         profile = supply_chain_profile(settings)
-        repository = ConversationRepository(factory, payload_store=payload_store, profile=profile)
+        from .conversation_reports import SupplyChainConversationRepository
+
+        codec = settings.user_mcp_ref_codec if settings.user_bound_credentials_enabled else None
+        repository: ConversationRepository = SupplyChainConversationRepository(
+            factory, payload_store=payload_store, profile=profile,
+            credential_reference=codec.issue if codec is not None else None,
+        )
         receptions.append(
             MountedReception(
                 profile=profile,

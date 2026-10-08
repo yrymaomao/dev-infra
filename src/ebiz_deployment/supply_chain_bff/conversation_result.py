@@ -30,7 +30,9 @@ def qualify_unowned_currency_symbols(text: str, analyses: object) -> str:
     return _UNQUALIFIED_CURRENCY_AMOUNT.sub(r"\1 (currency unspecified)", text)
 
 
-async def project_analysis(repository: Any, tenant: str, value: object) -> dict[str, Any]:
+async def validated_analysis_artifact(
+    repository: Any, tenant: str, value: object
+) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("tenant_id") != tenant:
         raise ValueError("Conversation result tenant mismatch")
     payload = value.get("payload")
@@ -53,6 +55,11 @@ async def project_analysis(repository: Any, tenant: str, value: object) -> dict[
         expected_item_count=output["item_count"],
         expected_counts=(output["complete_count"], output["blocked_count"], output["failed_count"]),
     )
+    return validated
+
+
+async def project_analysis(repository: Any, tenant: str, value: object) -> dict[str, Any]:
+    validated = await validated_analysis_artifact(repository, tenant, value)
     items = []
     for row in validated["items"]:
         item = {
