@@ -153,7 +153,9 @@ def mount_receptions(container: BffContainer) -> list[MountedReception]:
 
         codec = settings.user_mcp_ref_codec if settings.user_bound_credentials_enabled else None
         repository: ConversationRepository = SupplyChainConversationRepository(
-            factory, payload_store=payload_store, profile=profile,
+            factory,
+            payload_store=payload_store,
+            profile=profile,
             credential_reference=codec.issue if codec is not None else None,
         )
         receptions.append(
