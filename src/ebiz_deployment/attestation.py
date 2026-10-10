@@ -38,6 +38,14 @@ _PROVIDERS = {
         "responses/v1",
     ),
 }
+_CRM_PROVIDER = {
+    "yeaher.crm": (
+        "CRM_ADAPTER_RECORD_DIGEST",
+        "ebiz-adapter-crm",
+        "ebiz_adapter_crm:CrmProviderFactory",
+        "v1",
+    ),
+}
 
 
 class Descriptor(Protocol):
@@ -53,16 +61,20 @@ class Descriptor(Protocol):
 def build_attestation_environment(
     descriptors: Sequence[Descriptor],
     *,
+    include_crm: bool = False,
     supply_chain_search_paths: Sequence[Path] | None = None,
     planning_search_paths: Sequence[Path] | None = None,
     inventory_catalog_search_paths: Sequence[Path] | None = None,
     commerce_sales_catalog_search_paths: Sequence[Path] | None = None,
 ) -> dict[str, str]:
-    """Return only digests after checking the installed descriptor identities."""
+    """Attest the exact default set, or its explicit CRM-only extension."""
 
+    if type(include_crm) is not bool:
+        raise ValueError("explicit CRM attestation selection required")
+    expected = _PROVIDERS | (_CRM_PROVIDER if include_crm else {})
     supply_chain = attest_installed_supply_chain(search_paths=supply_chain_search_paths)
     by_id = {descriptor.name: descriptor for descriptor in descriptors}
-    if len(by_id) != len(descriptors) or set(by_id) != set(_PROVIDERS):
+    if len(by_id) != len(descriptors) or set(by_id) != set(expected):
         raise ValueError("Base AI artifact attestation set is incomplete or contains extras")
     planning = attest_installed_supply_chain_planning(search_paths=planning_search_paths)
     inventory = attest_installed_inventory_catalog(search_paths=inventory_catalog_search_paths)
@@ -75,7 +87,7 @@ def build_attestation_environment(
         "SUPPLY_CHAIN_AGENT_RECORD_DIGEST": supply_chain.canonical_digest,
         "SUPPLY_CHAIN_PLANNING_RECORD_DIGEST": planning.canonical_digest,
     }
-    for provider_id, (environment_name, package_name, value, api_version) in _PROVIDERS.items():
+    for provider_id, (environment_name, package_name, value, api_version) in expected.items():
         descriptor = by_id[provider_id]
         if (
             descriptor.production_eligible is not True
@@ -165,9 +177,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Emit digest environment inputs from installed production wheels"
     )
-    parser.parse_args(argv)
+    parser.add_argument(
+        "--with-crm", action="store_true", help="require the exact CRM-enabled Provider set"
+    )
+    args = parser.parse_args(argv)
     result = build_attestation_environment(
         cast(Sequence[Descriptor], discover_provider_factory_descriptors()),
+        include_crm=args.with_crm,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
