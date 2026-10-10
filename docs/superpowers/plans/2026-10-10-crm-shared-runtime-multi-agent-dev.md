@@ -154,5 +154,11 @@
 ## 6. 执行记录
 
 - 2026-10-10：已批准计划；保存六仓 WIP 快照，无修改原 WIP、无服务重启。当前快照见本地证据目录。
-- P0 尚未完成：需本轮 Dev 运行版本、回退包及 Adapter WIP 归属证据。
-- P1–P7 尚未完成；以前独立实例证据不能当本次共享架构验收。
+- P0 部分完成：Jenkins readiness #300 只读审计 SUCCESS；现有 Runtime/BFF 镜像 0a91b8172803…、OpenClaw 77454d64191c…，CRM 启动排序缺失且未安装 CRM Adapter/Agent。原 WIP 指纹未改。回退包保护尚未完成。
+- 用户已授权向“supplychain后端开发”发送一次交接请求。交接文件 one-click-kit-20261010/handoff-to-crm.json 表明其冻结 Runtime 89b3ea4、集成源 3876ac3，不切共享流量，候选镜像尚未冻结；不声明主工作区 WIP 所有权。
+- 只读定位到“supplychain后端开发 (2)”负责主目录 persistent-adapter、BFF conversation progress、SC 前端等未提交修复。不能把这些 WIP 当已发布基线；对该任务的额外交接请求尚未授权。
+- P2 部分完成：Adapter 同名 CRM 分支新增 HostAdapterManager 1af79a2（10 单测），精确多 generation manifest 15850a1（5 新用例加 2 旧用例）；未接入 plugin.ts、宿主钩子或真实接待路由，未构建/部署生产安装包。
+- P3 部分完成：Deployment 85f574b 新增显式 --with-crm/精确四 Provider attestation，默认三 Provider 保持；12 单测、Ruff check/format 通过。Workflow 发布前零写门禁尚待实现，不触碰其他任务修改的发布源码。
+- P5 部分完成：Manager/manifest 17 单测通过、模块 TypeScript 检查通过；插件注册回归 2 passed/2 failed，现有硬编码本地宿主与签封不一致（13,218 测量文件仅 10,337 存在、9,728 摘要匹配），报 Unsupported OpenClaw build。未绕过签封，原生验收/完整门禁未完成。
+- P1/P4/P6/P7 未完成；未切换、重启共享服务，未业务写入。以前独立实例证据不能当本次共享架构验收。
+- 命令、解释器、真实统计、源码摘要和失败记录见本地 focused-test-manifest.json 与日志；计划及源码提交不代表发布完成。
